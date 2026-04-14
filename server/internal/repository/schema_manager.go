@@ -750,7 +750,8 @@ func (m *SchemaManager) indexSpecs() []schemaIndexSpec {
 		{table: "torrents", name: "idx_torrents_hash", columns: []string{"hash"}},
 		{table: "torrents", name: "idx_torrents_hash_last_seen", columns: []string{"hash", "last_seen"}},
 		{table: "torrents", name: "idx_torrents_hidden_hash_last_seen", columns: []string{"is_hidden", "hash", "last_seen"}},
-		{table: "torrents", name: "idx_torrents_name_size_sites_hidden", columns: []string{"name", "size", "sites", "is_hidden"}},
+		// 移除 idx_torrents_name_size_sites_hidden - 复合索引超长
+		// {table: "torrents", name: "idx_torrents_name_size_sites_hidden", columns: []string{"name", "size", "sites", "is_hidden"}},
 		{table: "seed_parameters", name: "idx_seed_parameters_hash", columns: []string{"hash"}},
 		{table: "seed_parameters", name: "idx_seed_parameters_created_at", columns: []string{"created_at"}},
 		{table: "seed_parameters", name: "idx_seed_parameters_torrent_site", columns: []string{"torrent_id", "site_name"}},
