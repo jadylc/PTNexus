@@ -121,6 +121,10 @@
 
 # 更新日志
 
+### v4.0.57（2026.10.05）
+
+- 新增：新增站点适配（1ptba、aling、audiences、hdbao、hdclone、hdvideo、lemon、mteam、mypt、oshen、ptfans、pthome、ptsbao、tjupt、ttg、xdypt、yemapt），支持站点数量由 55 增至 72
+
 ### v4.0.56（2026.07.16）
 
 - 优化：维护种子获取数据弹窗改为先分页再加载明细，并消除已完成与已维护筛选的重复关联扫描
