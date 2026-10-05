@@ -17,7 +17,15 @@
       "url": "https://ghproxy.net/https://github.com/jadylc/PTNexus/releases/download/{version}/{filename}"
     }
   ],
-"history": [
+  "history": [
+    {
+      "version": "v4.0.59",
+      "date": "2026.10.05",
+      "changes": [
+        "优化：一站多种与转种任务加载性能（review 判定必要条件下推、全表聚合收敛、映射文件缓存）",
+        "优化：转种入队后仅轻量刷新列表并跳转发种日志页，不再串行等待全量种子刷新"
+      ]
+    },
     {
       "version": "v4.0.58",
       "date": "2026.10.05",
