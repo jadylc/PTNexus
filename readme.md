@@ -256,6 +256,10 @@ wget -O - https://github.com/jadylc/PTNexus/releases/latest/download/install-pt-
 
 # 更新日志
 
+### v4.0.58（2026.10.05）
+
+- 修复：对齐上游站点迁移数据（server/sites_data.json），支持站点数量由 48 增至 66，hdclone 等站点进入转种目标列表
+
 ### v4.0.57（2026.10.05）
 
 - 新增：新增站点适配（1ptba、aling、audiences、hdbao、hdclone、hdvideo、lemon、mteam、mypt、oshen、ptfans、pthome、ptsbao、tjupt、ttg、xdypt、yemapt），支持站点数量由 55 增至 72
