@@ -39,11 +39,14 @@ func buildReviewStatusCondition(dbType string, reviewStatus string) (string, []a
 
 func buildCurrentTorrentsSubquery(dbType string) string {
 	// Match Python build_current_torrents_subquery().
+	// 收敛：ct 只 JOIN seed_parameters 中存在的 hash，全 torrents 聚合按 hash 去重时
+	// 可显著缩小排序/分组范围；不存在于 seed_parameters 的 torrents 对 JOIN 结果无贡献。
 	if strings.EqualFold(dbType, "postgresql") {
 		return fmt.Sprintf(`
 			SELECT DISTINCT ON (t.hash) t.hash, t.name, t.size, t.save_path, t.downloader_id, t.state, t.last_seen
 			FROM torrents t
 			WHERE (t.is_hidden = 0 OR t.is_hidden IS NULL)
+			  AND EXISTS (SELECT 1 FROM seed_parameters sp WHERE sp.hash = t.hash)
 			ORDER BY t.hash, %s, t.last_seen DESC
 		`, stateRankExpr("t"))
 	}
@@ -56,6 +59,7 @@ func buildCurrentTorrentsSubquery(dbType string) string {
 			       MAX(last_seen) AS max_last_seen
 			FROM torrents t2
 			WHERE (t2.is_hidden = 0 OR t2.is_hidden IS NULL)
+			  AND EXISTS (SELECT 1 FROM seed_parameters sp WHERE sp.hash = t2.hash)
 			GROUP BY hash
 		) ranked ON t.hash = ranked.hash
 		WHERE %s = ranked.state_rank
@@ -156,6 +160,20 @@ func (s *CrossSeedService) QueryData(params CrossSeedQueryParams) (map[string]an
 			args = append(args, reviewArgs...)
 		}
 	}
+	// 将 review 判定的必要条件下推到 SQL，避免普通路径在无 LIMIT 时全量扫描：
+	// - reviewed = is_publishable => 必需 is_reviewed=1 且未删除（ct 存在）
+	// - unreviewed = 未删除且不可发布 => 必需未删除
+	// - error = 已删除 => 必需 ct 不存在
+	// 这些只是必要条件，最终仍由 Go 侧 matchesReviewStatus 精确判定，语义不变。
+	switch normalizedReviewStatus {
+	case "reviewed":
+		whereConditions = append(whereConditions, "sp.is_reviewed = 1", "ct.hash IS NOT NULL")
+	case "unreviewed":
+		whereConditions = append(whereConditions, "ct.hash IS NOT NULL")
+	case "error":
+		whereConditions = append(whereConditions, "ct.hash IS NULL")
+	}
+
 	if excludedTarget := strings.TrimSpace(params.ExcludeTargetSites); excludedTarget != "" {
 		excludeJoins, excludeJoinArgs, excludeCondition, excludeArgs, err := s.buildExcludeTargetCondition(dbType, excludedTarget, hasPublishQueueTable, hasPublishLogTable)
 		if err != nil {
@@ -326,6 +344,7 @@ func (s *CrossSeedService) buildExcludeTargetCondition(dbType string, excludedTa
 			SELECT DISTINCT target_hash_source.hash
 			FROM torrents target_hash_source
 			WHERE (target_hash_source.is_hidden = 0 OR target_hash_source.is_hidden IS NULL)
+			  AND EXISTS (SELECT 1 FROM seed_parameters sp WHERE sp.hash = target_hash_source.hash)
 			  AND %s
 		) target_hashes ON target_hashes.hash = ct.hash
 		LEFT JOIN (

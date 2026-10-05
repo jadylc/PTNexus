@@ -1659,7 +1659,9 @@ const enqueueDirectTransfer = async () => {
       }),
     })
     ElMessage.success(`已加入队列：${response.data.group_id}`)
-    await refreshBackendAndReload()
+    // 入队成功后将跳转到发种日志页，无需在此触发全量 refresh_data + 全量数据加载，
+    // 仅轻量刷新当前列表即可回到可交互状态，避免整页 loading 阻塞转种后续操作。
+    await fetchDataWithoutLoadingControl()
     await router.push({
       path: '/publish-logs',
       query: buildDirectTransferRouteTarget({

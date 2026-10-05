@@ -1134,9 +1134,7 @@ const buildBatchCrossSeedPayload = (rows: SeedParameter[], targetSiteName: strin
 const routeToPublishLogs = async (queueGroupId?: string) => {
   await router.push({
     path: '/publish-logs',
-    query: {
-      ...(queueGroupId ? { queue_group_id: queueGroupId } : {}),
-    },
+    query: (queueGroupId ? { queue_group_id: queueGroupId } : {}),
   })
 }
 

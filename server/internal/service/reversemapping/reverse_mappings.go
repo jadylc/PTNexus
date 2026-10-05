@@ -5,12 +5,62 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/pt-nexus/server/internal/config"
 	"gopkg.in/yaml.v3"
 )
 
+// yamlReverseMapCache 缓存 YAML 全局标准键映射的构建结果。
+// 每次请求都重新读取并解析映射文件性价比极低，文件内容变化不频繁。
+// 缓存键为映射文件路径 + 修改时间 + 大小，文件变化后自动重建。
+var yamlReverseMapCache struct {
+	sync.RWMutex
+	entries map[string]map[string]any // key: "path|mtime|size"
+}
+
+func cachedYAMLReverseMap() (map[string]any, bool) {
+	paths := config.ResolveRuntimePaths()
+	mappingPath := strings.TrimSpace(paths.GlobalMapYML)
+	if mappingPath == "" {
+		return nil, false
+	}
+	fileInfo, err := os.Stat(mappingPath)
+	if err != nil {
+		return nil, false
+	}
+	cacheKey := fmt.Sprintf("%s|%d|%d", mappingPath, fileInfo.ModTime().UnixNano(), fileInfo.Size())
+
+	yamlReverseMapCache.RLock()
+	if cached, exists := yamlReverseMapCache.entries[cacheKey]; exists {
+		yamlReverseMapCache.RUnlock()
+		return cached, true
+	}
+	yamlReverseMapCache.RUnlock()
+
+	reverse := newEmptyReverseMap()
+	if !applyReverseMappingsFromYAML(reverse) {
+		return nil, false
+	}
+	addFallbackMappings(reverse)
+	built := toAnyMap(reverse)
+
+	yamlReverseMapCache.Lock()
+	// 防止缓存无限增长：只保留最近一次构建结果（映射文件只有单个）。
+	if len(yamlReverseMapCache.entries) == 0 {
+		yamlReverseMapCache.entries = map[string]map[string]any{cacheKey: built}
+	} else {
+		yamlReverseMapCache.entries = map[string]map[string]any{cacheKey: built}
+	}
+	yamlReverseMapCache.Unlock()
+	return built, true
+}
+
 func Build(configData map[string]any) map[string]any {
+	if reverseMappings, ok := cachedYAMLReverseMap(); ok {
+		return reverseMappings
+	}
+
 	reverse := newEmptyReverseMap()
 	if applyReverseMappingsFromYAML(reverse) {
 		addFallbackMappings(reverse)

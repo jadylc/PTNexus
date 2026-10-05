@@ -52,6 +52,20 @@ func (s *CrossSeedService) queryReviewFilteredData(params CrossSeedQueryParams, 
 		}
 	}
 
+	// 将 reviewed/unreviewed/error 的判定必要条件下推到 SQL，缩小全量扫描范围：
+	// - reviewed = is_publishable => 必需 is_reviewed=1 且未删除（存在非隐藏 torrent）
+	// - unreviewed = 未删除 且 不可发布 => 必需未删除
+	// - error = 已删除 => 必需不存在非隐藏 torrent
+	// 这些条件只是"必要条件"，最终仍由 Go 侧 matchesReviewStatus 完成精确判定，语义不变。
+	if strings.EqualFold(reviewStatus, "reviewed") {
+		whereConditions = append(whereConditions, "sp.is_reviewed = 1")
+		whereConditions = append(whereConditions, reviewExistsActiveTorrentCondition(dbType, "sp"))
+	} else if strings.EqualFold(reviewStatus, "unreviewed") {
+		whereConditions = append(whereConditions, reviewExistsActiveTorrentCondition(dbType, "sp"))
+	} else if strings.EqualFold(reviewStatus, "error") {
+		whereConditions = append(whereConditions, reviewMissingActiveTorrentCondition(dbType, "sp"))
+	}
+
 	classificationQuery := fmt.Sprintf(`
 		SELECT sp.hash, sp.torrent_id, sp.site_name,
 		       sp.type, sp.medium, sp.video_codec, sp.audio_codec, sp.resolution,
@@ -106,6 +120,26 @@ func reviewIsDeletedExpr(dbType string, seedAlias string) string {
 		) THEN false ELSE true END AS is_deleted`, seedAlias)
 	}
 	return expression
+}
+
+// reviewExistsActiveTorrentCondition 返回"存在未隐藏同名种子"的 SQL 条件，
+// 用于把 reviewed/unreviewed 的"未删除"必要条件下推，缩小全量扫描范围。
+func reviewExistsActiveTorrentCondition(dbType string, seedAlias string) string {
+	return fmt.Sprintf(`EXISTS (
+		SELECT 1 FROM torrents current_torrent
+		WHERE current_torrent.hash = %s.hash
+		  AND (current_torrent.is_hidden = 0 OR current_torrent.is_hidden IS NULL)
+	)`, seedAlias)
+}
+
+// reviewMissingActiveTorrentCondition 返回"不存在未隐藏同名种子"的 SQL 条件，
+// 用于把 error（已删除）的必要条件下推。
+func reviewMissingActiveTorrentCondition(dbType string, seedAlias string) string {
+	return fmt.Sprintf(`NOT EXISTS (
+		SELECT 1 FROM torrents current_torrent
+		WHERE current_torrent.hash = %s.hash
+		  AND (current_torrent.is_hidden = 0 OR current_torrent.is_hidden IS NULL)
+	)`, seedAlias)
 }
 
 func (s *CrossSeedService) loadCrossSeedPageDetails(pageRows []map[string]any, reverseMappings map[string]any) ([]map[string]any, error) {
