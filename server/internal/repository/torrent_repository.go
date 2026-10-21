@@ -11,12 +11,20 @@ import (
 // traffic_stats 是分钟级采样流水表，30s 内多次请求/页面并发无需重复跑同一条聚合查询。
 var trafficTodayCacheTTL = 30 * time.Second
 
+// trafficTotalsCacheTTL 累计流量聚合结果的进程内缓存时长。
+// 累计值取每个下载器最近一条采样，同样避免 30s 内多个页面/请求并发重复全表聚合。
+var trafficTotalsCacheTTL = 30 * time.Second
+
 type TorrentRepository struct {
 	store *Store
 
 	trafficTodayMu       sync.RWMutex
 	trafficTodayCache    map[string]map[string]int64
 	trafficTodayCachedAt time.Time
+
+	trafficTotalsMu       sync.RWMutex
+	trafficTotalsCache    map[string]map[string]int64
+	trafficTotalsCachedAt time.Time
 }
 
 func NewTorrentRepository(store *Store) *TorrentRepository {
@@ -56,20 +64,36 @@ func (r *TorrentRepository) DistinctPaths() ([]string, error) {
 }
 
 func (r *TorrentRepository) TrafficTotals() (map[string]map[string]int64, error) {
+	r.trafficTotalsMu.RLock()
+	if r.trafficTotalsCache != nil && time.Since(r.trafficTotalsCachedAt) < trafficTotalsCacheTTL {
+		cached := cloneTrafficMap(r.trafficTotalsCache)
+		r.trafficTotalsMu.RUnlock()
+		return cached, nil
+	}
+	r.trafficTotalsMu.RUnlock()
+
+	// 累计值为单调不减的采样快照，取每个下载器最近一条累计记录即可，
+	// 不需要对整张 traffic_stats 流水表做 MAX 聚合。子查询按主键
+	// (stat_datetime, downloader_id) 有序扫描，外层按主键等值回表，
+	// 避免原有 WHERE ... OR ... 条件下无法利用主键的全表扫描。
 	sqlDB, err := r.store.DB.DB()
 	if err != nil {
 		return nil, err
 	}
 	rows, err := sqlDB.Query(`
-		SELECT downloader_id,
-		       MAX(cumulative_downloaded) as total_dl,
-		       MAX(cumulative_uploaded) as total_ul
-		FROM traffic_stats
-		WHERE cumulative_downloaded > 0 OR cumulative_uploaded > 0
-		GROUP BY downloader_id
+		SELECT t.downloader_id,
+		       t.cumulative_downloaded as total_dl,
+		       t.cumulative_uploaded as total_ul
+		FROM traffic_stats t
+		JOIN (
+			SELECT downloader_id, MAX(stat_datetime) AS max_dt
+			FROM traffic_stats
+			WHERE cumulative_uploaded > 0 OR cumulative_downloaded > 0
+			GROUP BY downloader_id
+		) last ON t.downloader_id = last.downloader_id AND t.stat_datetime = last.max_dt
 	`)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("query total traffic failed: %w", err)
 	}
 	defer rows.Close()
 
@@ -86,6 +110,12 @@ func (r *TorrentRepository) TrafficTotals() (map[string]map[string]int64, error)
 			"total_ul": normalizeToInt64(totalUL),
 		}
 	}
+
+	r.trafficTotalsMu.Lock()
+	r.trafficTotalsCache = result
+	r.trafficTotalsCachedAt = time.Now()
+	r.trafficTotalsMu.Unlock()
+
 	return result, nil
 }
 

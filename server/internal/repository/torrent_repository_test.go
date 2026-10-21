@@ -135,3 +135,78 @@ func TestTrafficTodayCachesWithinTTL(t *testing.T) {
 		t.Fatalf("unexpected refreshed traffic: %#v", fresh["qb-1"])
 	}
 }
+
+func TestTrafficTotalsReturnsLatestCumulative(t *testing.T) {
+	store := newTorrentRepositoryTestStore(t)
+	repo := NewTorrentRepository(store)
+
+	now := time.Now()
+	// qb-1 有一条历史更大但更早的记录：累计值应按最近一条返回，而不是历史 MAX。
+	insertTrafficStat(t, store.DB, now.Add(-3*time.Hour), "qb-1", 999, 999)
+	insertTrafficStat(t, store.DB, now.Add(-5*time.Minute), "qb-1", 100, 100)
+	insertTrafficStat(t, store.DB, now.Add(-1*time.Minute), "qb-1", 200, 300)
+	insertTrafficStat(t, store.DB, now.Add(-2*time.Minute), "tr-2", 50, 70)
+
+	result, err := repo.TrafficTotals()
+	if err != nil {
+		t.Fatalf("TrafficTotals failed: %v", err)
+	}
+
+	if len(result) != 2 {
+		t.Fatalf("unexpected downloader count: %d result=%#v", len(result), result)
+	}
+	qb := result["qb-1"]
+	if qb == nil {
+		t.Fatalf("qb-1 missing from result: %#v", result)
+	}
+	if qb["total_dl"] != 300 || qb["total_ul"] != 200 {
+		t.Fatalf("qb-1 unexpected total traffic (should be latest cumulative): %#v", qb)
+	}
+	tr := result["tr-2"]
+	if tr == nil {
+		t.Fatalf("tr-2 missing from result: %#v", result)
+	}
+	if tr["total_dl"] != 70 || tr["total_ul"] != 50 {
+		t.Fatalf("tr-2 unexpected total traffic: %#v", tr)
+	}
+}
+
+func TestTrafficTotalsCachesWithinTTL(t *testing.T) {
+	origTTL := trafficTotalsCacheTTL
+	trafficTotalsCacheTTL = 50 * time.Millisecond
+	defer func() { trafficTotalsCacheTTL = origTTL }()
+
+	store := newTorrentRepositoryTestStore(t)
+	repo := NewTorrentRepository(store)
+
+	now := time.Now()
+	insertTrafficStat(t, store.DB, now.Add(-1*time.Minute), "qb-1", 100, 100)
+
+	first, err := repo.TrafficTotals()
+	if err != nil {
+		t.Fatalf("TrafficTotals failed: %v", err)
+	}
+	if first["qb-1"]["total_dl"] != 100 || first["qb-1"]["total_ul"] != 100 {
+		t.Fatalf("unexpected initial totals: %#v", first["qb-1"])
+	}
+
+	// TTL 内新增数据后立即查询，应命中缓存并返回旧值。
+	insertTrafficStat(t, store.DB, now.Add(-30*time.Second), "qb-1", 200, 300)
+	cached, err := repo.TrafficTotals()
+	if err != nil {
+		t.Fatalf("TrafficTotals (cached) failed: %v", err)
+	}
+	if cached["qb-1"]["total_dl"] != 100 || cached["qb-1"]["total_ul"] != 100 {
+		t.Fatalf("cache miss: expected stale totals, got %#v", cached["qb-1"])
+	}
+
+	// TTL 过期后再次查询应拿到最新数据。
+	time.Sleep(80 * time.Millisecond)
+	fresh, err := repo.TrafficTotals()
+	if err != nil {
+		t.Fatalf("TrafficTotals (fresh) failed: %v", err)
+	}
+	if fresh["qb-1"]["total_dl"] != 300 || fresh["qb-1"]["total_ul"] != 200 {
+		t.Fatalf("unexpected refreshed totals: %#v", fresh["qb-1"])
+	}
+}
