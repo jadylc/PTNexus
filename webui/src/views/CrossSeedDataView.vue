@@ -1139,10 +1139,21 @@ const routeToPublishLogs = async (queueGroupId?: string) => {
 }
 
 const enqueueCrossSeedRows = async (rows: SeedParameter[], targetSiteName: string) => {
-  const response = await axios.post('/api/migrate/publish_queue/enqueue_batch', {
-    ...buildBatchCrossSeedPayload(rows, targetSiteName),
-    publish_scene: 'multi_torrent',
-  })
+  let response
+  try {
+    response = await axios.post('/api/migrate/publish_queue/enqueue_batch', {
+      ...buildBatchCrossSeedPayload(rows, targetSiteName),
+      publish_scene: 'multi_torrent',
+    }, { timeout: 30000 })
+  } catch (error: unknown) {
+    if (
+      axios.isAxiosError(error) &&
+      (error.code === 'ECONNABORTED' || /timeout/i.test(error.message || ''))
+    ) {
+      throw new Error('批量入队请求超时：任务可能已被受理，请稍后到发种日志页确认任务状态')
+    }
+    throw error
+  }
 
   const result = response.data
   if (!result.success) {

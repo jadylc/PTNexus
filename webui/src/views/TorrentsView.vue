@@ -1482,7 +1482,7 @@ const confirmSourceSiteAndProceed = async (sourceSite: SourceSiteOption | null) 
 
   const sourceSiteIdentifier =
     allSourceSitesStatus.value.find((s) => s.name === siteName)?.site || siteName.toLowerCase()
-  ElMessage.success(`正在准备站点 [${siteName}] 的转种数据...`)
+  ElMessage.success(`正在准备站点 [${siteName}] 的转种数据，抓取源站数据可能耗时较长，请耐心等待...`)
   const sourceInfo: ISourceInfo = {
     name: siteName,
     site: sourceSiteIdentifier,
@@ -1631,17 +1631,21 @@ const enqueueDirectTransfer = async () => {
   })
 
   try {
-    const response = await axios.post('/api/migrate/publish_queue/enqueue', {
-      task_id: directTransferTaskId.value,
-      upload_data: directTransferUploadData.value,
-      targetSites: directTransferSelectedTargets.value,
-      sourceSite: directTransferSourceSite.value,
-      downloaderId: row.downloaderId,
-      auto_add_to_downloader: true,
-      auto_add_existing_to_downloader: autoAddExistingToDownloader.value,
-      auto_update_existing_torrent: autoUpdateExistingTorrent.value,
-      publish_scene: 'multi_site',
-    })
+    const response = await axios.post(
+      '/api/migrate/publish_queue/enqueue',
+      {
+        task_id: directTransferTaskId.value,
+        upload_data: directTransferUploadData.value,
+        targetSites: directTransferSelectedTargets.value,
+        sourceSite: directTransferSourceSite.value,
+        downloaderId: row.downloaderId,
+        auto_add_to_downloader: true,
+        auto_add_existing_to_downloader: autoAddExistingToDownloader.value,
+        auto_update_existing_torrent: autoUpdateExistingTorrent.value,
+        publish_scene: 'multi_site',
+      },
+      { timeout: 30000 },
+    )
 
     if (!response.data?.success || !response.data?.group_id) {
       throw new Error(response.data?.message || '加入队列失败')
@@ -1661,7 +1665,8 @@ const enqueueDirectTransfer = async () => {
     ElMessage.success(`已加入队列：${response.data.group_id}`)
     // 入队成功后将跳转到发种日志页，无需在此触发全量 refresh_data + 全量数据加载，
     // 仅轻量刷新当前列表即可回到可交互状态，避免整页 loading 阻塞转种后续操作。
-    await fetchDataWithoutLoadingControl()
+    // 先跳转再异步刷新列表，避免列表接口慢时阻塞发种日志页跳转。
+    void fetchDataWithoutLoadingControl()
     await router.push({
       path: '/publish-logs',
       query: buildDirectTransferRouteTarget({
@@ -1671,6 +1676,9 @@ const enqueueDirectTransfer = async () => {
     })
     closeDirectTransferDialog()
   } catch (error: unknown) {
+    const isTimeout =
+      axios.isAxiosError(error) &&
+      (error.code === 'ECONNABORTED' || /timeout/i.test(error.message || ''))
     const message = axios.isAxiosError(error)
       ? (error.response?.data as { logs?: string; message?: string } | undefined)?.logs ||
         (error.response?.data as { message?: string } | undefined)?.message ||
@@ -1682,12 +1690,19 @@ const enqueueDirectTransfer = async () => {
       kind: 'publish_queue',
       rawId: directTransferTaskId.value,
       title: '发布任务入队',
-      message: '加入队列失败',
+      message: isTimeout ? '加入队列请求超时，状态待确认' : '加入队列失败',
       progressText: `目标站点 ${directTransferSelectedTargets.value.length} 个`,
       error: message,
       routeTarget: buildDirectTransferRouteTarget({ status: 'failed' }),
     })
-    ElMessage.error(message)
+    if (isTimeout) {
+      ElMessage.warning('加入队列请求超时：任务可能已被受理，正在跳转到发种日志页确认任务状态。')
+    } else {
+      ElMessage.error(message)
+    }
+    // 结果不确定时兜底跳转发种日志页，避免页面停留在弹窗或 loading 卡死。
+    await router.push(buildDirectTransferRouteTarget({ search: directTransferTaskId.value || undefined }))
+    closeDirectTransferDialog()
   } finally {
     directTransferLoading.value = false
   }
@@ -1717,17 +1732,21 @@ const publishDirectTransfer = async () => {
   })
 
   try {
-    const response = await axios.post('/api/migrate/publish_batch/start', {
-      task_id: directTransferTaskId.value,
-      upload_data: directTransferUploadData.value,
-      targetSites: directTransferSelectedTargets.value,
-      sourceSite: directTransferSourceSite.value,
-      downloaderId: row.downloaderId,
-      auto_add_to_downloader: true,
-      auto_add_existing_to_downloader: autoAddExistingToDownloader.value,
-      auto_update_existing_torrent: autoUpdateExistingTorrent.value,
-      publish_scene: 'multi_site',
-    })
+    const response = await axios.post(
+      '/api/migrate/publish_batch/start',
+      {
+        task_id: directTransferTaskId.value,
+        upload_data: directTransferUploadData.value,
+        targetSites: directTransferSelectedTargets.value,
+        sourceSite: directTransferSourceSite.value,
+        downloaderId: row.downloaderId,
+        auto_add_to_downloader: true,
+        auto_add_existing_to_downloader: autoAddExistingToDownloader.value,
+        auto_update_existing_torrent: autoUpdateExistingTorrent.value,
+        publish_scene: 'multi_site',
+      },
+      { timeout: 30000 },
+    )
 
     if (!response.data?.success || !response.data?.batch_id) {
       throw new Error(response.data?.message || '启动发布失败')
@@ -1754,6 +1773,9 @@ const publishDirectTransfer = async () => {
     })
     closeDirectTransferDialog()
   } catch (error: unknown) {
+    const isTimeout =
+      axios.isAxiosError(error) &&
+      (error.code === 'ECONNABORTED' || /timeout/i.test(error.message || ''))
     const message = axios.isAxiosError(error)
       ? (error.response?.data as { logs?: string; message?: string } | undefined)?.logs ||
         (error.response?.data as { message?: string } | undefined)?.message ||
@@ -1765,12 +1787,19 @@ const publishDirectTransfer = async () => {
       kind: 'publish_batch',
       rawId: directTransferTaskId.value,
       title: '直接转种发布',
-      message: '启动发布失败',
+      message: isTimeout ? '启动发布请求超时，状态待确认' : '启动发布失败',
       progressText: `目标站点 ${directTransferSelectedTargets.value.length} 个`,
       error: message,
       routeTarget: buildDirectTransferRouteTarget({ status: 'failed' }),
     })
-    ElMessage.error(message)
+    if (isTimeout) {
+      ElMessage.warning('启动发布请求超时：任务可能已被受理，正在跳转到发种日志页确认任务状态。')
+    } else {
+      ElMessage.error(message)
+    }
+    // 结果不确定时兜底跳转发种日志页，避免页面停留在弹窗或 loading 卡死。
+    await router.push(buildDirectTransferRouteTarget({ search: directTransferTaskId.value || undefined }))
+    closeDirectTransferDialog()
   } finally {
     directTransferLoading.value = false
   }

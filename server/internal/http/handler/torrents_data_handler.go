@@ -44,7 +44,7 @@ func (h *TorrentDataHandler) Data(c *gin.Context) {
 		SkipMetadata:              boolQuery(c, "skip_metadata") || strings.EqualFold(strings.TrimSpace(c.Query("include_metadata")), "false"),
 		MetadataOnly:              boolQuery(c, "metadata_only"),
 	}
-	result, err := h.service.GetData(params)
+	result, err := h.service.GetData(c.Request.Context(), params)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "从数据库检索种子数据失败", "success": false})
 		return

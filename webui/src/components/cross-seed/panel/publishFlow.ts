@@ -354,20 +354,24 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
         }),
       })
 
-      const startResponse = await axios.post('/api/migrate/publish_batch/start', {
-        task_id: taskId.value,
-        upload_data: {
-          ...torrentData.value,
-          save_path: currentTorrent.save_path,
+      const startResponse = await axios.post(
+        '/api/migrate/publish_batch/start',
+        {
+          task_id: taskId.value,
+          upload_data: {
+            ...torrentData.value,
+            save_path: currentTorrent.save_path,
+          },
+          targetSites: selectedTargetSites.value,
+          sourceSite: sourceSite.value,
+          downloaderId: currentTorrent.downloaderId,
+          auto_add_to_downloader: true,
+          auto_add_existing_to_downloader: autoAddExistingToDownloader.value,
+          auto_update_existing_torrent: autoUpdateExistingTorrent.value,
+          publish_scene: publishScene,
         },
-        targetSites: selectedTargetSites.value,
-        sourceSite: sourceSite.value,
-        downloaderId: currentTorrent.downloaderId,
-        auto_add_to_downloader: true,
-        auto_add_existing_to_downloader: autoAddExistingToDownloader.value,
-        auto_update_existing_torrent: autoUpdateExistingTorrent.value,
-        publish_scene: publishScene,
-      })
+        { timeout: 30000 },
+      )
 
       if (!startResponse.data?.success || !startResponse.data?.batch_id) {
         throw new Error(startResponse.data?.message || '批量发布任务启动失败')
@@ -583,14 +587,19 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
       resetBatchPublishRuntime()
       stopPublishBatchSSE()
       ElNotification.closeAll()
-      const message = axios.isAxiosError(error)
-        ? (error.response?.data as { logs?: string; message?: string } | undefined)?.logs ||
-          (error.response?.data as { message?: string } | undefined)?.message ||
-          error.message ||
-          '批量发布启动失败'
-        : error instanceof Error
-          ? error.message || '批量发布启动失败'
-          : '批量发布启动失败'
+      const isTimeout =
+        axios.isAxiosError(error) &&
+        (error.code === 'ECONNABORTED' || /timeout/i.test(error.message || ''))
+      const message = isTimeout
+        ? '批量发布启动请求超时：任务可能已在后台执行，请到发种日志页查看进度'
+        : axios.isAxiosError(error)
+          ? (error.response?.data as { logs?: string; message?: string } | undefined)?.logs ||
+            (error.response?.data as { message?: string } | undefined)?.message ||
+            error.message ||
+            '批量发布启动失败'
+          : error instanceof Error
+            ? error.message || '批量发布启动失败'
+            : '批量发布启动失败'
       if (batchPublishMonitorKey.value) {
         taskMonitorStore.markFailed(batchPublishMonitorKey.value, {
           kind: 'publish_batch',
@@ -693,20 +702,24 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
         }),
       })
       try {
-        const response = await axios.post('/api/migrate/publish', {
-          task_id: taskId.value,
-          upload_data: {
-            ...torrentData.value,
-            save_path: currentTorrent.save_path, // 添加 save_path
+        const response = await axios.post(
+          '/api/migrate/publish',
+          {
+            task_id: taskId.value,
+            upload_data: {
+              ...torrentData.value,
+              save_path: currentTorrent.save_path, // 添加 save_path
+            },
+            targetSite: siteName,
+            sourceSite: sourceSite.value,
+            downloaderId: currentTorrent.downloaderId, // 新增：传递下载器ID
+            auto_add_to_downloader: true, // 新增：启用自动添加
+            auto_add_existing_to_downloader: autoAddExistingToDownloader.value,
+            auto_update_existing_torrent: autoUpdateExistingTorrent.value,
+            publish_scene: publishScene,
           },
-          targetSite: siteName,
-          sourceSite: sourceSite.value,
-          downloaderId: currentTorrent.downloaderId, // 新增：传递下载器ID
-          auto_add_to_downloader: true, // 新增：启用自动添加
-          auto_add_existing_to_downloader: autoAddExistingToDownloader.value,
-          auto_update_existing_torrent: autoUpdateExistingTorrent.value,
-          publish_scene: publishScene,
-        })
+          { timeout: 120000 },
+        )
 
         const fallbackMessage = response.data?.success === false ? '发布失败' : '发布成功'
         const result = {
@@ -879,13 +892,18 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
           }
         }
       } catch (error: unknown) {
-        const logs = axios.isAxiosError(error)
-          ? (error.response?.data as { logs?: string; message?: string } | undefined)?.logs ||
-            (error.response?.data as { message?: string } | undefined)?.message ||
-            error.message
-          : error instanceof Error
-            ? error.message
-            : String(error)
+        const isTimeout =
+          axios.isAxiosError(error) &&
+          (error.code === 'ECONNABORTED' || /timeout/i.test(error.message || ''))
+        const logs = isTimeout
+          ? '发布请求超时：任务可能已在目标站执行，请到发种日志页确认结果'
+          : axios.isAxiosError(error)
+            ? (error.response?.data as { logs?: string; message?: string } | undefined)?.logs ||
+              (error.response?.data as { message?: string } | undefined)?.message ||
+              error.message
+            : error instanceof Error
+              ? error.message
+              : String(error)
         const result = {
           siteName,
           success: false,
@@ -1055,20 +1073,24 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
       }),
     })
     try {
-      const response = await axios.post('/api/migrate/publish_queue/enqueue', {
-        task_id: taskId.value,
-        upload_data: {
-          ...torrentData.value,
-          save_path: currentTorrent.save_path,
+      const response = await axios.post(
+        '/api/migrate/publish_queue/enqueue',
+        {
+          task_id: taskId.value,
+          upload_data: {
+            ...torrentData.value,
+            save_path: currentTorrent.save_path,
+          },
+          targetSites: selectedTargetSites.value,
+          sourceSite: sourceSite.value,
+          downloaderId: currentTorrent.downloaderId,
+          auto_add_to_downloader: true,
+          auto_add_existing_to_downloader: autoAddExistingToDownloader.value,
+          auto_update_existing_torrent: autoUpdateExistingTorrent.value,
+          publish_scene: publishScene,
         },
-        targetSites: selectedTargetSites.value,
-        sourceSite: sourceSite.value,
-        downloaderId: currentTorrent.downloaderId,
-        auto_add_to_downloader: true,
-        auto_add_existing_to_downloader: autoAddExistingToDownloader.value,
-        auto_update_existing_torrent: autoUpdateExistingTorrent.value,
-        publish_scene: publishScene,
-      })
+        { timeout: 30000 },
+      )
 
       if (!response.data?.success || !response.data?.group_id) {
         throw new Error(response.data?.message || '加入队列失败')
@@ -1094,14 +1116,19 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
       })
       emit('cancel')
     } catch (error: unknown) {
-      const message = axios.isAxiosError(error)
-        ? (error.response?.data as { logs?: string; message?: string } | undefined)?.logs ||
-          (error.response?.data as { message?: string } | undefined)?.message ||
-          error.message ||
-          '加入队列失败'
-        : error instanceof Error
-          ? error.message || '加入队列失败'
-          : '加入队列失败'
+      const isTimeout =
+        axios.isAxiosError(error) &&
+        (error.code === 'ECONNABORTED' || /timeout/i.test(error.message || ''))
+      const message = isTimeout
+        ? '加入队列请求超时：任务可能已被受理，请到发种日志页确认任务状态'
+        : axios.isAxiosError(error)
+          ? (error.response?.data as { logs?: string; message?: string } | undefined)?.logs ||
+            (error.response?.data as { message?: string } | undefined)?.message ||
+            error.message ||
+            '加入队列失败'
+          : error instanceof Error
+            ? error.message || '加入队列失败'
+            : '加入队列失败'
       taskMonitorStore.markFailed(queueMonitorKey, {
         kind: 'publish_queue',
         rawId: taskId.value,

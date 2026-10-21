@@ -18,6 +18,9 @@ type schemaIndexSpec struct {
 	table   string
 	name    string
 	columns []string
+	// mysqlPrefixes 指定 MySQL 下 TEXT/BLOB 列的前缀索引长度（如 name: 255），
+	// 其他数据库忽略；SQLite/PostgreSQL 的 TEXT 列可直接建全列索引。
+	mysqlPrefixes map[string]int
 }
 
 // SchemaManager 负责初始化数据库核心表结构并补齐缺失列。
@@ -754,6 +757,7 @@ func (m *SchemaManager) indexSpecs() []schemaIndexSpec {
 		{table: "torrents", name: "idx_torrents_hidden_state_size", columns: []string{"is_hidden", "state", "size"}},
 		{table: "torrents", name: "idx_torrents_hidden_downloader_size", columns: []string{"is_hidden", "downloader_id", "size"}},
 		{table: "torrents", name: "idx_torrents_hidden_size_progress", columns: []string{"is_hidden", "size", "progress"}},
+		{table: "torrents", name: "idx_torrents_name_size", columns: []string{"name", "size"}, mysqlPrefixes: map[string]int{"name": 255}},
 		{table: "torrent_upload_stats", name: "idx_torrent_upload_stats_hidden_hash", columns: []string{"is_hidden", "hash"}},
 		{table: "seed_parameters", name: "idx_seed_parameters_hash", columns: []string{"hash"}},
 		{table: "seed_parameters", name: "idx_seed_parameters_created_at", columns: []string{"created_at"}},
@@ -876,7 +880,13 @@ func (m *SchemaManager) ensureIndex(spec schemaIndexSpec) error {
 
 	columnList := make([]string, 0, len(spec.columns))
 	for _, column := range spec.columns {
-		columnList = append(columnList, quoteIdentifierByDB(m.store.DBType, column))
+		quoted := quoteIdentifierByDB(m.store.DBType, column)
+		if m.store.DBType == "mysql" {
+			if prefix, ok := spec.mysqlPrefixes[column]; ok && prefix > 0 {
+				quoted = fmt.Sprintf("%s(%d)", quoted, prefix)
+			}
+		}
+		columnList = append(columnList, quoted)
 	}
 
 	switch m.store.DBType {

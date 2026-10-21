@@ -219,9 +219,39 @@ func (s *MigrateService) EnqueuePublishQueue(payload map[string]any) (map[string
 	}
 
 	queueTasks := make([]repository.PublishQueueTask, 0, len(targetSites))
+	skippedExisting := 0
 	for _, target := range targetSites {
 		targetSite := strings.TrimSpace(target)
 		if targetSite == "" {
+			continue
+		}
+
+		// 目标站已存在检测：命中且用户未显式开启“更新/添加已存在种子”时跳过入队。
+		checkResult := s.CheckTargetExists(TargetExistsCheckInput{
+			Hash:       strings.TrimSpace(ctx.Hash),
+			Name:       strings.TrimSpace(ctx.Name),
+			Size:       int64(processingshared.ToFloat(uploadData["size"])),
+			TorrentID:  torrentID,
+			SourceSite: sourceSite,
+			TargetSite: targetSite,
+		})
+		if checkResult.Exists && !publishTargetUpdateIntent(payload) {
+			skippedExisting++
+			s.insertBatchQueueSkipLog(ExternalPublishLogInput{
+				Trigger:       trigger,
+				Scene:         scene,
+				QueueGroupID:  groupID,
+				TorrentID:     firstNonEmptyString(torrentID, title),
+				SourceSite:    sourceSite,
+				TargetSite:    targetSite,
+				DownloaderID:  downloaderID,
+				Title:         title,
+				Status:        "exists",
+				Logs:          "目标站已存在该种子（" + checkResult.Source + "），已跳过入队",
+				AutoAddResult: queueAutoAddNotRunJSON,
+			})
+			logx.Infof(publishQueueLogModule, "目标站已存在跳过入队 group_id=%s task_id=%s torrent_id=%s target=%s source=%s",
+				groupID, taskID, torrentID, targetSite, checkResult.Source)
 			continue
 		}
 
@@ -274,6 +304,15 @@ func (s *MigrateService) EnqueuePublishQueue(payload map[string]any) (map[string
 	}
 
 	if len(queueTasks) == 0 {
+		if skippedExisting > 0 {
+			return map[string]any{
+				"success":          true,
+				"message":          fmt.Sprintf("目标站均已有该种子（%d 个站点），已跳过入队", skippedExisting),
+				"group_id":         groupID,
+				"count":            0,
+				"skipped_existing": skippedExisting,
+			}, 200
+		}
 		return map[string]any{"success": false, "message": "没有可入队的站点"}, 400
 	}
 
@@ -283,13 +322,20 @@ func (s *MigrateService) EnqueuePublishQueue(payload map[string]any) (map[string
 	}
 	s.insertQueuedPublishLogs(createdTasks)
 
-	logx.Infof(publishQueueLogModule, "已入队 group_id=%s task_id=%s torrent_id=%s sites=%d", groupID, taskID, torrentID, len(queueTasks))
-	return map[string]any{
+	message := fmt.Sprintf("已加入队列（%d 个站点）", len(queueTasks))
+	respBody := map[string]any{
 		"success":  true,
-		"message":  fmt.Sprintf("已加入队列（%d 个站点）", len(queueTasks)),
+		"message":  message,
 		"group_id": groupID,
 		"count":    len(queueTasks),
-	}, 200
+	}
+	if skippedExisting > 0 {
+		message = fmt.Sprintf("已加入队列（%d 个站点），%d 个站点已存在已跳过", len(queueTasks), skippedExisting)
+		respBody["message"] = message
+		respBody["skipped_existing"] = skippedExisting
+	}
+	logx.Infof(publishQueueLogModule, "已入队 group_id=%s task_id=%s torrent_id=%s sites=%d skipped_existing=%d", groupID, taskID, torrentID, len(queueTasks), skippedExisting)
+	return respBody, 200
 }
 
 // EnqueuePublishQueueBatch 将“一站多种”批量转种请求批量写入发布队列。
@@ -343,6 +389,9 @@ func (s *MigrateService) EnqueuePublishQueueBatch(payload map[string]any) (map[s
 	groupID := s.newID("queue")
 	now := time.Now()
 	nowText := now.Format(repository.PublishQueueTimeLayout)
+
+	// 目标站别名一次性解析，循环内复用，避免每个种子重复查询 sites 表。
+	targetAliases := s.ResolveTargetSiteAliases(targetSite)
 
 	queueTasks := make([]repository.PublishQueueTask, 0, len(rawSeeds))
 	skipped := 0
@@ -435,6 +484,35 @@ func (s *MigrateService) EnqueuePublishQueueBatch(payload map[string]any) (map[s
 			title = strings.TrimSpace(torrentID)
 		}
 		uploadData["title"] = title
+
+		// 目标站已存在检测：命中且用户未显式开启“更新/添加已存在种子”时跳过入队。
+		checkResult := s.CheckTargetExistsWithAliases(TargetExistsCheckInput{
+			Hash:       strings.TrimSpace(processingshared.ToString(uploadData["hash"], strings.TrimSpace(lookup.Hash))),
+			Name:       strings.TrimSpace(processingshared.ToString(uploadData["name"], strings.TrimSpace(lookup.Name))),
+			Size:       int64(processingshared.ToFloat(uploadData["size"])),
+			TorrentID:  torrentID,
+			SourceSite: sourceSite,
+			TargetSite: targetSite,
+		}, targetAliases)
+		if checkResult.Exists && !publishTargetUpdateIntent(payload) {
+			skipped++
+			s.insertBatchQueueSkipLog(ExternalPublishLogInput{
+				Trigger:       publishTrigger,
+				Scene:         scene,
+				QueueGroupID:  groupID,
+				TorrentID:     torrentID,
+				SourceSite:    sourceSite,
+				TargetSite:    targetSite,
+				DownloaderID:  downloaderID,
+				Title:         title,
+				Status:        "exists",
+				Logs:          "目标站已存在该种子（" + checkResult.Source + "），已跳过入队",
+				AutoAddResult: queueAutoAddNotRunJSON,
+			})
+			logx.Infof(publishQueueLogModule, "批量入队目标站已存在跳过 group_id=%s torrent_id=%s target=%s source=%s",
+				groupID, torrentID, targetSite, checkResult.Source)
+			continue
+		}
 
 		ctxTaskID := s.newID("ctx")
 		ctx := publishworkflow.BuildContextFromDBRow(

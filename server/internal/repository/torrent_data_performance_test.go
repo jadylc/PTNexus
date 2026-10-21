@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"fmt"
 	"testing"
 )
@@ -39,7 +40,7 @@ func BenchmarkListTorrentsForBatchFetch(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		groups, err := repo.ListTorrentGroupKeysWithFilters(TorrentListFilters{
+		groups, err := repo.ListTorrentGroupKeysWithFilters(context.Background(), TorrentListFilters{
 			OnlyCompleted:   true,
 			ExcludeExisting: true,
 		})
@@ -49,7 +50,7 @@ func BenchmarkListTorrentsForBatchFetch(b *testing.B) {
 		if len(groups) > 20 {
 			groups = groups[:20]
 		}
-		rows, err := repo.ListTorrentsWithFilters(TorrentListFilters{Groups: groups})
+		rows, err := repo.ListTorrentsWithFilters(context.Background(), TorrentListFilters{Groups: groups})
 		if err != nil {
 			b.Fatal(err)
 		}

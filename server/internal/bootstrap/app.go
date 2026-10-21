@@ -8,6 +8,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -26,6 +27,30 @@ import (
 type App struct {
 	Engine        *gin.Engine
 	trackerWorker *service.TrackerService
+}
+
+// ServeHTTP 使用显式 http.Server 配置启动服务。
+// 说明：gin.Engine.Run 不会设置任何超时（ReadTimeout/WriteTimeout/IdleTimeout），
+// 一旦数据库连接池被慢查询/长任务占满，后续请求会在 database/sql 层无限等待，
+// 前端超时断开后服务端 goroutine 也不会取消。这里显式配置超时兜底：
+//   - WriteTimeout 设为 900s，覆盖 fetch_and_store 等同步长任务（前端 10 分钟上限），
+//     同时保证其他异常挂起请求最终会被切断，避免无限占用连接与 goroutine。
+func (a *App) ServeHTTP(addr string) error {
+	if a == nil || a.Engine == nil {
+		return fmt.Errorf("app engine is nil")
+	}
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           a.Engine,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      900 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		return err
+	}
+	return nil
 }
 
 // NewApp 初始化配置、数据库、服务与路由，并返回可运行的应用实例。

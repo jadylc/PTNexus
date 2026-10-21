@@ -1,6 +1,7 @@
 package torrentdata
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -9,10 +10,10 @@ import (
 )
 
 // GetData 聚合维护种子列表数据并按查询条件分页返回。
-// 参数/返回：params 为页面、筛选、排序和 metadata 控制参数；返回前端表格数据及可选筛选元数据。
+// 参数/返回：ctx 为请求上下文，客户端断开后数据库查询可取消；params 为页面、筛选、排序和 metadata 控制参数；返回前端表格数据及可选筛选元数据。
 // 失败场景：站点配置、种子列表或筛选元数据查询失败时返回错误。
 // 副作用：仅读取数据库和运行配置，不写入数据。
-func (s *TorrentDataService) GetData(params TorrentsDataParams) (map[string]any, error) {
+func (s *TorrentDataService) GetData(ctx context.Context, params TorrentsDataParams) (map[string]any, error) {
 	if params.Page < 1 {
 		params.Page = 1
 	}
@@ -24,10 +25,10 @@ func (s *TorrentDataService) GetData(params TorrentsDataParams) (map[string]any,
 	}
 
 	if params.MetadataOnly {
-		return s.getDataMetadataResponse(params)
+		return s.getDataMetadataResponse(ctx, params)
 	}
 
-	siteConfigs, err := s.repo.ListSiteConfigs()
+	siteConfigs, err := s.repo.ListSiteConfigs(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("load site configs failed: %w", err)
 	}
@@ -40,7 +41,7 @@ func (s *TorrentDataService) GetData(params TorrentsDataParams) (map[string]any,
 		}
 	}
 
-	allDiscoveredSites, err := s.repo.ListAllDiscoveredSites()
+	allDiscoveredSites, err := s.repo.ListAllDiscoveredSites(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("load discovered sites failed: %w", err)
 	}
@@ -56,7 +57,7 @@ func (s *TorrentDataService) GetData(params TorrentsDataParams) (map[string]any,
 	databasePaginated := canPrePaginateTorrentGroups(params)
 	databasePaginatedTotal := 0
 	if databasePaginated {
-		groupKeys, groupErr := s.repo.ListTorrentGroupKeysWithFilters(listFilters)
+		groupKeys, groupErr := s.repo.ListTorrentGroupKeysWithFilters(ctx, listFilters)
 		if groupErr != nil {
 			return nil, fmt.Errorf("load torrent group keys failed: %w", groupErr)
 		}
@@ -73,12 +74,12 @@ func (s *TorrentDataService) GetData(params TorrentsDataParams) (map[string]any,
 
 	torrentRows := make([]repository.TorrentRecord, 0)
 	if !databasePaginated || len(listFilters.Groups) > 0 {
-		torrentRows, err = s.repo.ListTorrentsWithFilters(listFilters)
+		torrentRows, err = s.repo.ListTorrentsWithFilters(ctx, listFilters)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("load torrents failed: %w", err)
 	}
-	uploadTotals, err := s.repo.UploadTotalsByHashes(torrentRecordHashes(torrentRows))
+	uploadTotals, err := s.repo.UploadTotalsByHashes(ctx, torrentRecordHashes(torrentRows))
 	if err != nil {
 		uploadTotals = map[string]int64{}
 	}
@@ -221,7 +222,7 @@ func (s *TorrentDataService) GetData(params TorrentsDataParams) (map[string]any,
 		"pageSize": params.PageSize,
 	}
 	if !params.SkipMetadata {
-		metadata, err := s.dataMetadata(params, allDiscoveredSites)
+		metadata, err := s.dataMetadata(ctx, params, allDiscoveredSites)
 		if err != nil {
 			return nil, err
 		}
@@ -302,12 +303,12 @@ func paginateTorrentGroupKeys(groups []repository.TorrentNameSizeKey, page int, 
 // 参数/返回：params 只使用完成状态和当前路径筛选；返回空 data 与路径、状态、站点、链接规则等选项。
 // 失败场景：站点或筛选选项查询失败时返回错误。
 // 副作用：仅读取数据库，不写入数据。
-func (s *TorrentDataService) getDataMetadataResponse(params TorrentsDataParams) (map[string]any, error) {
-	allDiscoveredSites, err := s.repo.ListAllDiscoveredSites()
+func (s *TorrentDataService) getDataMetadataResponse(ctx context.Context, params TorrentsDataParams) (map[string]any, error) {
+	allDiscoveredSites, err := s.repo.ListAllDiscoveredSites(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("load discovered sites failed: %w", err)
 	}
-	metadata, err := s.dataMetadata(params, allDiscoveredSites)
+	metadata, err := s.dataMetadata(ctx, params, allDiscoveredSites)
 	if err != nil {
 		return nil, err
 	}
@@ -319,10 +320,10 @@ func (s *TorrentDataService) getDataMetadataResponse(params TorrentsDataParams) 
 }
 
 // dataMetadata 读取列表筛选和链接展示所需的元数据。
-// 参数/返回：allDiscoveredSites 可复用主列表已查询的站点集合；返回 unique_paths、unique_states、all_discovered_sites 等字段。
+// 参数/返回：ctx 为请求上下文；allDiscoveredSites 可复用主列表已查询的站点集合；返回 unique_paths、unique_states、all_discovered_sites 等字段。
 // 失败场景：路径/状态候选查询失败时返回错误，站点链接规则失败时降级为空 map。
 // 副作用：仅读取数据库，不写入数据。
-func (s *TorrentDataService) dataMetadata(params TorrentsDataParams, allDiscoveredSites []string) (map[string]any, error) {
+func (s *TorrentDataService) dataMetadata(ctx context.Context, params TorrentsDataParams, allDiscoveredSites []string) (map[string]any, error) {
 	uniquePaths, uniqueStates, err := s.repo.ListTorrentFilterOptions(params.OnlyCompleted)
 	if err != nil {
 		return nil, fmt.Errorf("load torrent filter options failed: %w", err)

@@ -1,6 +1,7 @@
 package torrentdata
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -72,7 +73,7 @@ func BenchmarkBatchFetchFirstPage(b *testing.B) {
 	b.ResetTimer()
 	b.Run("List", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			result, err := service.GetData(TorrentsDataParams{
+			result, err := service.GetData(context.Background(), TorrentsDataParams{
 				Page:            1,
 				PageSize:        20,
 				ExcludeExisting: true,
@@ -89,7 +90,7 @@ func BenchmarkBatchFetchFirstPage(b *testing.B) {
 	})
 	b.Run("Metadata", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			result, err := service.GetData(TorrentsDataParams{
+			result, err := service.GetData(context.Background(), TorrentsDataParams{
 				Page:          1,
 				PageSize:      1,
 				OnlyCompleted: true,

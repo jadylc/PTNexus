@@ -4,12 +4,35 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"gorm.io/gorm"
 )
 
 type MigrateRepository struct {
 	store *Store
+
+	// tableExistsCache 缓存表存在性判断结果，避免批量检测时对每个种子重复查询 information_schema/sqlite_master。
+	tableExistsMu    sync.Mutex
+	tableExistsCache map[string]bool
+}
+
+// hasTableCached 返回表是否存在（带进程内缓存，生命周期内表结构稳定）。
+func (r *MigrateRepository) hasTableCached(table string) bool {
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return false
+	}
+	r.tableExistsMu.Lock()
+	defer r.tableExistsMu.Unlock()
+	if r.tableExistsCache == nil {
+		r.tableExistsCache = map[string]bool{}
+	}
+	if known, ok := r.tableExistsCache[table]; ok {
+		return known
+	}
+	exists := r.store.DB.Migrator().HasTable(table)
+	r.tableExistsCache[table] = exists
+	return exists
 }
 
 func NewMigrateRepository(store *Store) *MigrateRepository {

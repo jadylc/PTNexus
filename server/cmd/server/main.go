@@ -38,7 +38,7 @@ func main() {
 	addr := host + ":" + port
 
 	logx.Infof("启动", "PT Nexus Go 服务启动完成，监听地址: http://%s", addr)
-	if err := app.Engine.Run(addr); err != nil {
+	if err := app.ServeHTTP(addr); err != nil {
 		logx.Errorf("启动", "服务运行失败: %v", err)
 		log.Fatalf("服务运行失败: %v", err)
 	}

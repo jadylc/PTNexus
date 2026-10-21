@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -108,7 +109,7 @@ func TestListTorrentsWithFiltersKeepsWholeMatchedGroup(t *testing.T) {
 	mustExecTorrentDataRepoTest(t, store.DB, `INSERT INTO torrents (hash, name, save_path, size, progress, state, sites, downloader_id, last_seen, is_hidden) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
 		"hash-other", "Other", "/movie", 2000, 100.0, "暂停", "憨憨", "tr", "2026-07-01 00:00:00")
 
-	rows, err := repo.ListTorrentsWithFilters(TorrentListFilters{DownloaderFilters: []string{"qb"}})
+	rows, err := repo.ListTorrentsWithFilters(context.Background(), TorrentListFilters{DownloaderFilters: []string{"qb"}})
 	if err != nil {
 		t.Fatalf("ListTorrentsWithFilters returned error: %v", err)
 	}
@@ -137,7 +138,7 @@ func TestListTorrentsWithFiltersExcludeExisting(t *testing.T) {
 	mustExecTorrentDataRepoTest(t, store.DB, `INSERT INTO seed_parameters (hash, name, type) VALUES (?, ?, ?)`,
 		"hash-existing", "Existing", "category.movie")
 
-	rows, err := repo.ListTorrentsWithFilters(TorrentListFilters{ExcludeExisting: true})
+	rows, err := repo.ListTorrentsWithFilters(context.Background(), TorrentListFilters{ExcludeExisting: true})
 	if err != nil {
 		t.Fatalf("ListTorrentsWithFilters returned error: %v", err)
 	}
@@ -199,7 +200,7 @@ func TestListTorrentGroupKeysWithFiltersSupportsPageDetailLookup(t *testing.T) {
 	mustExecTorrentDataRepoTest(t, store.DB, `INSERT INTO seed_parameters (hash, name, type) VALUES (?, ?, ?)`,
 		"hash-c", "Release.C", "category.movie")
 
-	groups, err := repo.ListTorrentGroupKeysWithFilters(TorrentListFilters{OnlyCompleted: true, ExcludeExisting: true})
+	groups, err := repo.ListTorrentGroupKeysWithFilters(context.Background(), TorrentListFilters{OnlyCompleted: true, ExcludeExisting: true})
 	if err != nil {
 		t.Fatalf("ListTorrentGroupKeysWithFilters returned error: %v", err)
 	}
@@ -207,7 +208,7 @@ func TestListTorrentGroupKeysWithFiltersSupportsPageDetailLookup(t *testing.T) {
 		t.Fatalf("expected 2 non-existing groups, got %d: %#v", len(groups), groups)
 	}
 
-	rows, err := repo.ListTorrentsWithFilters(TorrentListFilters{Groups: []TorrentNameSizeKey{{Name: "Release.A", Size: 1000}}})
+	rows, err := repo.ListTorrentsWithFilters(context.Background(), TorrentListFilters{Groups: []TorrentNameSizeKey{{Name: "Release.A", Size: 1000}}})
 	if err != nil {
 		t.Fatalf("page detail lookup returned error: %v", err)
 	}

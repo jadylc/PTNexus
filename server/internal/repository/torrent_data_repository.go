@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"sort"
@@ -70,9 +71,9 @@ func NewTorrentDataRepository(store *Store) *TorrentDataRepository {
 	return &TorrentDataRepository{store: store}
 }
 
-func (r *TorrentDataRepository) ListSiteConfigs() ([]SiteConfig, error) {
+func (r *TorrentDataRepository) ListSiteConfigs(ctx context.Context) ([]SiteConfig, error) {
 	rows := make([]SiteConfig, 0)
-	err := r.store.DB.Raw("SELECT nickname, migration, cookie FROM sites").Scan(&rows).Error
+	err := r.store.DB.WithContext(ctx).Raw("SELECT nickname, migration, cookie FROM sites").Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}
@@ -96,11 +97,11 @@ func (r *TorrentDataRepository) SiteLinkRules() (map[string]any, error) {
 	return result, nil
 }
 
-func (r *TorrentDataRepository) ListAllDiscoveredSites() ([]string, error) {
+func (r *TorrentDataRepository) ListAllDiscoveredSites(ctx context.Context) ([]string, error) {
 	sitesSet := map[string]struct{}{}
 
 	var torrentSites []string
-	if err := r.store.DB.Raw("SELECT DISTINCT sites FROM torrents WHERE sites IS NOT NULL AND sites != '' AND (is_hidden = 0 OR is_hidden IS NULL)").Pluck("sites", &torrentSites).Error; err != nil {
+	if err := r.store.DB.WithContext(ctx).Raw("SELECT DISTINCT sites FROM torrents WHERE sites IS NOT NULL AND sites != '' AND (is_hidden = 0 OR is_hidden IS NULL)").Pluck("sites", &torrentSites).Error; err != nil {
 		return nil, err
 	}
 	for _, site := range torrentSites {
@@ -111,7 +112,7 @@ func (r *TorrentDataRepository) ListAllDiscoveredSites() ([]string, error) {
 	}
 
 	var sitesWithCookie []string
-	if err := r.store.DB.Raw("SELECT nickname FROM sites WHERE cookie IS NOT NULL AND cookie != ''").Pluck("nickname", &sitesWithCookie).Error; err != nil {
+	if err := r.store.DB.WithContext(ctx).Raw("SELECT nickname FROM sites WHERE cookie IS NOT NULL AND cookie != ''").Pluck("nickname", &sitesWithCookie).Error; err != nil {
 		return nil, err
 	}
 	for _, site := range sitesWithCookie {
@@ -353,33 +354,33 @@ func (r *TorrentDataRepository) UpdateIYUUCheckAndFillDetails(name string, size 
 // 失败场景：数据库查询失败时返回错误。
 // 副作用：仅读取 torrents/seed_parameters，不写入数据。
 func (r *TorrentDataRepository) ListTorrents(onlyCompleted bool) ([]TorrentRecord, error) {
-	return r.ListTorrentsWithFilters(TorrentListFilters{OnlyCompleted: onlyCompleted})
+	return r.ListTorrentsWithFilters(context.Background(), TorrentListFilters{OnlyCompleted: onlyCompleted})
 }
 
 // ListTorrentsWithFilters 按维护列表查询条件读取可展示的下载器种子记录。
-// 参数/返回：filters 中的名称、路径、状态、下载器和已存在排除会在 SQL 层先收敛；返回值仍是原始 torrents 行，聚合由 Service 层完成。
+// 参数/返回：ctx 为调用方请求上下文，客户端断开后查询可取消；filters 中的名称、路径、状态、下载器和已存在排除会在 SQL 层先收敛；返回值仍是原始 torrents 行，聚合由 Service 层完成。
 // 失败场景：数据库查询失败时返回错误。
 // 副作用：仅读取 torrents/seed_parameters，不写入数据。
-func (r *TorrentDataRepository) ListTorrentsWithFilters(filters TorrentListFilters) ([]TorrentRecord, error) {
+func (r *TorrentDataRepository) ListTorrentsWithFilters(ctx context.Context, filters TorrentListFilters) ([]TorrentRecord, error) {
 	groupColumn := r.store.GroupColumn()
 	fromWhere, args := r.buildTorrentListFromWhere(filters)
 	query := `SELECT t.hash, t.name, t.save_path, t.size, t.progress, t.state, t.sites, ` + groupColumn + ` AS torrent_group, t.details, t.downloader_id AS downloader, t.last_seen, t.iyuu_last_check AS iyuu_last, t.seeders` + fromWhere
 
 	rows := make([]TorrentRecord, 0)
-	if err := r.store.DB.Raw(query, args...).Scan(&rows).Error; err != nil {
+	if err := r.store.DB.WithContext(ctx).Raw(query, args...).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 	return rows, nil
 }
 
 // ListTorrentGroupKeysWithFilters 只读取匹配列表条件的 name+size 分组键。
-// 参数/返回：filters 与 ListTorrentsWithFilters 一致；返回去重后的轻量分组键，供 Service 先分页再读取当前页明细。
+// 参数/返回：ctx 为调用方请求上下文，客户端断开后查询可取消；filters 与 ListTorrentsWithFilters 一致；返回去重后的轻量分组键，供 Service 先分页再读取当前页明细。
 // 失败场景：数据库查询失败时返回错误。
 // 副作用：仅读取 torrents/seed_parameters，不写入数据。
-func (r *TorrentDataRepository) ListTorrentGroupKeysWithFilters(filters TorrentListFilters) ([]TorrentNameSizeKey, error) {
+func (r *TorrentDataRepository) ListTorrentGroupKeysWithFilters(ctx context.Context, filters TorrentListFilters) ([]TorrentNameSizeKey, error) {
 	fromWhere, args := r.buildTorrentListFromWhere(filters)
 	rows := make([]TorrentNameSizeKey, 0)
-	if err := r.store.DB.Raw(`SELECT DISTINCT t.name AS name, t.size AS size`+fromWhere, args...).Scan(&rows).Error; err != nil {
+	if err := r.store.DB.WithContext(ctx).Raw(`SELECT DISTINCT t.name AS name, t.size AS size`+fromWhere, args...).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 	return rows, nil
@@ -394,7 +395,9 @@ func (r *TorrentDataRepository) buildTorrentListFromWhere(filters TorrentListFil
 	joinArgs := make([]any, 0)
 	whereConditions := []string{
 		"t.state != ?",
-		"(t.is_hidden = 0 OR t.is_hidden IS NULL)",
+		// COALESCE 形式让 SQLite 选择 (name, size) 联合索引做 DISTINCT 顺序扫描，
+		// 避免 (is_hidden = 0 OR is_hidden IS NULL) 触发的 MULTI-INDEX OR + 临时 B 树去重。
+		"COALESCE(t.is_hidden, 0) = 0",
 	}
 	whereArgs := []any{"不存在"}
 	if len(filters.Groups) > 0 {
@@ -424,7 +427,7 @@ func (r *TorrentDataRepository) buildTorrentListFromWhere(filters TorrentListFil
 			SELECT DISTINCT name, size
 			FROM torrents
 			WHERE state != ?
-			  AND (is_hidden = 0 OR is_hidden IS NULL)
+			  AND COALESCE(is_hidden, 0) = 0
 			  AND progress >= 100
 		) completed_groups ON completed_groups.name = t.name AND completed_groups.size = t.size`
 		joinArgs = append(joinArgs, "不存在")
@@ -443,7 +446,7 @@ func (r *TorrentDataRepository) buildTorrentListFromWhere(filters TorrentListFil
 			WHERE sp_existing.name IS NOT NULL
 			  AND TRIM(sp_existing.name) != ''
 			  AND t_existing.size > 0
-			  AND (t_existing.is_hidden = 0 OR t_existing.is_hidden IS NULL)
+			  AND COALESCE(t_existing.is_hidden, 0) = 0
 		) existing_groups ON existing_groups.name = t.name AND existing_groups.size = t.size`
 		whereConditions = append(whereConditions, "existing_groups.name IS NULL")
 	}
@@ -520,10 +523,10 @@ func (r *TorrentDataRepository) UploadTotalsByHash() (map[string]int64, error) {
 }
 
 // UploadTotalsByHashes 按指定 hash 集合汇总上传量。
-// 参数/返回：hashes 为空时直接返回空 map；返回 map[hash]uploaded 供列表聚合展示。
+// 参数/返回：ctx 为调用方请求上下文，客户端断开后查询可取消；hashes 为空时直接返回空 map；返回 map[hash]uploaded 供列表聚合展示。
 // 失败场景：数据库查询失败时返回错误。
 // 副作用：仅读取 torrent_upload_stats，不写入数据。
-func (r *TorrentDataRepository) UploadTotalsByHashes(hashes []string) (map[string]int64, error) {
+func (r *TorrentDataRepository) UploadTotalsByHashes(ctx context.Context, hashes []string) (map[string]int64, error) {
 	cleaned := cleanStringValues(hashes)
 	if len(cleaned) == 0 {
 		return map[string]int64{}, nil
@@ -537,7 +540,7 @@ func (r *TorrentDataRepository) UploadTotalsByHashes(hashes []string) (map[strin
 			end = len(cleaned)
 		}
 		rows := make([]TorrentUploadTotal, 0)
-		if err := r.store.DB.Table("torrent_upload_stats").
+		if err := r.store.DB.WithContext(ctx).Table("torrent_upload_stats").
 			Select("hash, SUM(uploaded) AS total_uploaded").
 			Where("(is_hidden = 0 OR is_hidden IS NULL)").
 			Where("hash IN ?", cleaned[start:end]).

@@ -1,10 +1,12 @@
 package migrationflow
 
 import (
+	"fmt"
 	"runtime"
 	"strings"
 	"time"
 
+	"github.com/pt-nexus/server/internal/platform/logx"
 	acquirefetch "github.com/pt-nexus/server/internal/service/acquire/fetch"
 	processingshared "github.com/pt-nexus/server/internal/service/processing/shared"
 	publishworkflow "github.com/pt-nexus/server/internal/service/publish/workflow"
@@ -16,6 +18,36 @@ func (s *MigrateService) Publish(payload map[string]any) (map[string]any, int) {
 
 	normalizedPayload := s.normalizePublishPayloadWithCrossSeedDefaults(payload)
 	defaultDownloaderID := s.resolveDefaultPublishDownloaderID()
+
+	// 目标站已存在检测：命中且用户未显式开启“更新/添加已存在种子”时跳过发种请求。
+	targetSite := strings.TrimSpace(processingshared.ToString(normalizedPayload["targetSite"], processingshared.ToString(normalizedPayload["target_site"], "")))
+	if targetSite != "" && !publishTargetUpdateIntent(normalizedPayload) {
+		hash, name, size, torrentID, sourceSite := targetExistsCheckPayloadFingerprint(normalizedPayload)
+		checkResult := s.CheckTargetExists(TargetExistsCheckInput{
+			Hash:       hash,
+			Name:       name,
+			Size:       size,
+			TorrentID:  torrentID,
+			SourceSite: sourceSite,
+			TargetSite: targetSite,
+		})
+		if checkResult.Exists {
+			message := fmt.Sprintf("目标站已存在该种子（%s），已跳过发种请求；如需更新请在发布设置中开启“自动更新已存在种子”", checkResult.Source)
+			logx.Infof(publishLogModule, "发布前目标站已存在跳过 target=%s torrent_id=%s source=%s", targetSite, torrentID, checkResult.Source)
+			ctxTaskID := strings.TrimSpace(processingshared.ToString(normalizedPayload["task_id"], processingshared.ToString(normalizedPayload["taskId"], "")))
+			result := map[string]any{
+				"success":        false,
+				"logs":           message,
+				"message":        message,
+				"limit_reached":  true,
+				"pre_check":      true,
+				"exists_skipped": true,
+				"url":            nil,
+			}
+			s.appendPublishLog(normalizedPayload, ctxTaskID, torrentID, result, 200, time.Since(startedAt))
+			return result, 200
+		}
+	}
 
 	result, status := publishworkflow.ExecutePublishFromPayload(
 		publishworkflow.PublishFromPayloadInput{
