@@ -3,10 +3,20 @@ package repository
 import (
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 )
+
+// trafficTodayCacheTTL 今日流量聚合结果的进程内缓存时长。
+// traffic_stats 是分钟级采样流水表，30s 内多次请求/页面并发无需重复跑同一条聚合查询。
+var trafficTodayCacheTTL = 30 * time.Second
 
 type TorrentRepository struct {
 	store *Store
+
+	trafficTodayMu       sync.RWMutex
+	trafficTodayCache    map[string]map[string]int64
+	trafficTodayCachedAt time.Time
 }
 
 func NewTorrentRepository(store *Store) *TorrentRepository {
@@ -80,6 +90,14 @@ func (r *TorrentRepository) TrafficTotals() (map[string]map[string]int64, error)
 }
 
 func (r *TorrentRepository) TrafficToday() (map[string]map[string]int64, error) {
+	r.trafficTodayMu.RLock()
+	if r.trafficTodayCache != nil && time.Since(r.trafficTodayCachedAt) < trafficTodayCacheTTL {
+		cached := cloneTrafficMap(r.trafficTodayCache)
+		r.trafficTodayMu.RUnlock()
+		return cached, nil
+	}
+	r.trafficTodayMu.RUnlock()
+
 	sqlDB, err := r.store.DB.DB()
 	if err != nil {
 		return nil, err
@@ -93,7 +111,8 @@ func (r *TorrentRepository) TrafficToday() (map[string]map[string]int64, error) 
 			       GREATEST(0, (MAX(cumulative_downloaded) - MIN(cumulative_downloaded))::bigint) as today_dl,
 			       GREATEST(0, (MAX(cumulative_uploaded) - MIN(cumulative_uploaded))::bigint) as today_ul
 			FROM traffic_stats
-			WHERE stat_datetime::date = CURRENT_DATE
+			WHERE stat_datetime >= CURRENT_DATE
+			  AND stat_datetime < CURRENT_DATE + INTERVAL '1 day'
 			GROUP BY downloader_id
 		`
 	case "mysql":
@@ -102,7 +121,8 @@ func (r *TorrentRepository) TrafficToday() (map[string]map[string]int64, error) 
 			       GREATEST(0, MAX(cumulative_downloaded) - MIN(cumulative_downloaded)) as today_dl,
 			       GREATEST(0, MAX(cumulative_uploaded) - MIN(cumulative_uploaded)) as today_ul
 			FROM traffic_stats
-			WHERE DATE(stat_datetime) = CURDATE()
+			WHERE stat_datetime >= CURDATE()
+			  AND stat_datetime < CURDATE() + INTERVAL 1 DAY
 			GROUP BY downloader_id
 		`
 	default:
@@ -115,7 +135,8 @@ func (r *TorrentRepository) TrafficToday() (map[string]map[string]int64, error) 
 			            THEN MAX(cumulative_uploaded) - MIN(cumulative_uploaded)
 			            ELSE 0 END as today_ul
 			FROM traffic_stats
-			WHERE DATE(stat_datetime) = DATE('now', 'localtime')
+			WHERE stat_datetime >= datetime('now', 'localtime', 'start of day')
+			  AND stat_datetime < datetime('now', 'localtime', 'start of day', '+1 day')
 			GROUP BY downloader_id
 		`
 	}
@@ -139,7 +160,26 @@ func (r *TorrentRepository) TrafficToday() (map[string]map[string]int64, error) 
 			"today_ul": normalizeToInt64(todayUL),
 		}
 	}
+
+	r.trafficTodayMu.Lock()
+	r.trafficTodayCache = result
+	r.trafficTodayCachedAt = time.Now()
+	r.trafficTodayMu.Unlock()
+
 	return result, nil
+}
+
+// cloneTrafficMap 深拷贝今日流量结果，避免调用方修改污染进程内缓存。
+func cloneTrafficMap(src map[string]map[string]int64) map[string]map[string]int64 {
+	dst := make(map[string]map[string]int64, len(src))
+	for downloaderID, inner := range src {
+		cp := make(map[string]int64, len(inner))
+		for k, v := range inner {
+			cp[k] = v
+		}
+		dst[downloaderID] = cp
+	}
+	return dst
 }
 
 func (r *TorrentRepository) DistinctDownloaderIDs() ([]string, error) {
