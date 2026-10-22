@@ -6,6 +6,7 @@ import (
 
 	"github.com/glebarez/sqlite"
 	"github.com/pt-nexus/server/internal/repository"
+	"github.com/pt-nexus/server/internal/service/reversemapping"
 	"gorm.io/gorm"
 )
 
@@ -264,5 +265,73 @@ func TestQueryDataCacheHitAndDeleteInvalidation(t *testing.T) {
 	}
 	if afterDelete["total"].(int) != 0 {
 		t.Fatalf("expected total 0 after delete, got %#v", afterDelete["total"])
+	}
+}
+
+// TestLoadCrossSeedPageDetailsFiltersByIdentity 验证详情查询按 (hash, torrent_id, site_name)
+// 精确取当前页行：同 hash 一站多种（多个站点/多个 torrent_id）时不得把兄弟行带进结果。
+// 详情 SQL 必须保持 sp.hash IN 单一谓词——此前 20 组 OR 拼接会让优化器改走
+// created_at 索引做全表扫描，详情查询退化到 2~11 秒。
+func TestLoadCrossSeedPageDetailsFiltersByIdentity(t *testing.T) {
+	store := newCrossSeedTestStore(t)
+	repo := repository.NewCrossSeedRepository(store)
+	service := NewCrossSeedService(repo)
+
+	// 同一个 hash 在两个站点各有一条 seed_parameters（一站多种场景）。
+	for _, item := range []struct {
+		torrentID string
+		site      string
+	}{{"4001", "hdsky"}, {"4002", "mteam"}} {
+		mustExecCrossSeedTest(t, store.DB, `INSERT INTO seed_parameters (
+			hash, torrent_id, site_name, nickname, title, subtitle, type, medium, video_codec,
+			audio_codec, resolution, team, source, tags, title_components,
+			screenshot_review_status, is_reviewed, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			"hash-shared", item.torrentID, item.site, item.site, "Movie", "", "category.movie", "medium.bluray", "video.h264",
+			"audio.dts", "resolution.r1080p", "team.other", "", "[]", "[]", "none", 1, "2026-04-14 10:00:00", "2026-04-14 10:00:00")
+	}
+
+	// 同一 hash 两条做种记录（不同 last_seen），ct 子查询应取最新一条。
+	mustExecCrossSeedTest(t, store.DB, `INSERT INTO torrents (hash, name, size, save_path, downloader_id, state, last_seen, sites, is_hidden)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+		"hash-shared", "Movie", 100, "/downloads-old", "qb-1", "做种中", "2026-04-14 11:00:00", "HDSky")
+	mustExecCrossSeedTest(t, store.DB, `INSERT INTO torrents (hash, name, size, save_path, downloader_id, state, last_seen, sites, is_hidden)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+		"hash-shared", "Movie", 100, "/downloads-new", "qb-2", "做种中", "2026-04-14 12:00:00", "M-Team")
+
+	reverseMappings := reversemapping.Build(nil)
+
+	pageRows := []map[string]any{
+		{"hash": "hash-shared", "torrent_id": "4001", "site_name": "hdsky"},
+	}
+	pageData, err := service.loadCrossSeedPageDetails(pageRows, reverseMappings)
+	if err != nil {
+		t.Fatalf("loadCrossSeedPageDetails returned error: %v", err)
+	}
+	if len(pageData) != 1 {
+		t.Fatalf("expected exactly 1 detail row for single identity, got %d: %#v", len(pageData), pageData)
+	}
+	if pageData[0]["torrent_id"] != "4001" || pageData[0]["site_name"] != "hdsky" {
+		t.Fatalf("expected identity (4001, hdsky), got %#v", pageData[0])
+	}
+	if pageData[0]["save_path"] != "/downloads-new" {
+		t.Fatalf("expected ct join to pick newest torrent save_path, got %#v", pageData[0]["save_path"])
+	}
+
+	// 两个身份同时取详情：应各自返回一行，不得互相串行。
+	pageRows = append(pageRows, map[string]any{"hash": "hash-shared", "torrent_id": "4002", "site_name": "mteam"})
+	pageData, err = service.loadCrossSeedPageDetails(pageRows, reverseMappings)
+	if err != nil {
+		t.Fatalf("loadCrossSeedPageDetails returned error: %v", err)
+	}
+	if len(pageData) != 2 {
+		t.Fatalf("expected 2 detail rows for two identities, got %d: %#v", len(pageData), pageData)
+	}
+	seen := map[string]bool{}
+	for _, item := range pageData {
+		seen[toString(item["torrent_id"], "")+"@"+toString(item["site_name"], "")] = true
+	}
+	if !seen["4001@hdsky"] || !seen["4002@mteam"] {
+		t.Fatalf("expected both identities present, got %#v", seen)
 	}
 }

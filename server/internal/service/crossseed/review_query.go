@@ -157,8 +157,12 @@ func reviewMissingActiveTorrentCondition(dbType string, seedAlias string) string
 func (s *CrossSeedService) loadCrossSeedPageDetails(pageRows []map[string]any, reverseMappings map[string]any) ([]map[string]any, error) {
 	hashes := make([]string, 0, len(pageRows))
 	hashSet := map[string]struct{}{}
-	identityConditions := make([]string, 0, len(pageRows))
-	identityArgs := make([]any, 0, len(pageRows)*3)
+	// 详情查询用 sp.hash IN 一次性取回当前页涉及的 seed_parameters 行，
+	// 再在 Go 侧按 (hash, torrent_id, site_name) 精确过滤。
+	// 之前这里拼 20 组 "(hash=? AND torrent_id=? AND site_name=?) OR ..."：
+	// 优化器为了省掉 ORDER BY created_at 的排序会改走 created_at 索引做全表扫描，
+	// 每行评估 20 组 OR，详情查询因此退化到 2~11 秒（SLOW SQL >= 1s，rows 仅 20）。
+	identitySet := make(map[string]struct{}, len(pageRows))
 	for _, item := range pageRows {
 		hash := strings.TrimSpace(toString(item["hash"], ""))
 		torrentID := strings.TrimSpace(toString(item["torrent_id"], ""))
@@ -166,14 +170,13 @@ func (s *CrossSeedService) loadCrossSeedPageDetails(pageRows []map[string]any, r
 		if hash == "" || torrentID == "" || siteName == "" {
 			continue
 		}
-		identityConditions = append(identityConditions, "(sp.hash = ? AND sp.torrent_id = ? AND sp.site_name = ?)")
-		identityArgs = append(identityArgs, hash, torrentID, siteName)
 		if _, exists := hashSet[hash]; !exists {
 			hashSet[hash] = struct{}{}
 			hashes = append(hashes, hash)
 		}
+		identitySet[hash+"\x00"+torrentID+"\x00"+siteName] = struct{}{}
 	}
-	if len(identityConditions) == 0 {
+	if len(hashes) == 0 {
 		return []map[string]any{}, nil
 	}
 
@@ -181,6 +184,10 @@ func (s *CrossSeedService) loadCrossSeedPageDetails(pageRows []map[string]any, r
 	isDeletedExpr := "CASE WHEN ct.hash IS NULL THEN 1 ELSE 0 END AS is_deleted"
 	if strings.EqualFold(s.repo.DBType(), "postgresql") {
 		isDeletedExpr = "CASE WHEN ct.hash IS NULL THEN true ELSE false END AS is_deleted"
+	}
+	placeholders := make([]string, len(hashes))
+	for index := range placeholders {
+		placeholders[index] = "?"
 	}
 	detailQuery := fmt.Sprintf(`
 		SELECT sp.hash, sp.torrent_id, sp.site_name, sp.nickname,
@@ -193,18 +200,28 @@ func (s *CrossSeedService) loadCrossSeedPageDetails(pageRows []map[string]any, r
 		       sp.is_reviewed, sp.updated_at
 		FROM seed_parameters sp
 		LEFT JOIN (%s) ct ON sp.hash = ct.hash
-		WHERE %s
+		WHERE sp.hash IN (%s)
 		ORDER BY sp.created_at DESC
-	`, isDeletedExpr, currentTorrentsSubquery, strings.Join(identityConditions, " OR "))
-	detailArgs := make([]any, 0, len(currentArgs)+len(identityArgs))
+	`, isDeletedExpr, currentTorrentsSubquery, strings.Join(placeholders, ", "))
+	detailArgs := make([]any, 0, len(currentArgs)+len(hashes))
 	detailArgs = append(detailArgs, currentArgs...)
-	detailArgs = append(detailArgs, identityArgs...)
-	pageData, err := s.repo.RawMaps(detailQuery, detailArgs...)
+	for _, hash := range hashes {
+		detailArgs = append(detailArgs, hash)
+	}
+	detailRows, err := s.repo.RawMaps(detailQuery, detailArgs...)
 	if err != nil {
 		return nil, err
 	}
-	for _, item := range pageData {
+	pageData := make([]map[string]any, 0, len(pageRows))
+	for _, item := range detailRows {
+		identity := strings.TrimSpace(toString(item["hash"], "")) + "\x00" +
+			strings.TrimSpace(toString(item["torrent_id"], "")) + "\x00" +
+			strings.TrimSpace(toString(item["site_name"], ""))
+		if _, ok := identitySet[identity]; !ok {
+			continue
+		}
 		normalizeQueryRow(item, reverseMappings)
+		pageData = append(pageData, item)
 	}
 	return pageData, nil
 }
