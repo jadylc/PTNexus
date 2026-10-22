@@ -440,21 +440,12 @@ func generateAndUploadScreenshotsWithPoints(input ScreenshotGenerateInput, selec
 					buf.WriteString(fmt.Sprintf(format, args...))
 					buf.WriteByte('\n')
 				}
-				showURL, err := UploadImageToPixhostNarrativeWithLogger(job.FilePath, logLine)
-				if err != nil || strings.TrimSpace(showURL) == "" {
+				finalURL, err := UploadImageToPixhostDirectWithLogger(job.FilePath, logLine)
+				if err != nil || strings.TrimSpace(finalURL) == "" {
 					results <- uploadResult{Index: job.Index, OK: false, LogBlock: buf.String()}
 					continue
 				}
-				logLine("   🚀 上传成功: %s", showURL)
-
-				finalURL := strings.TrimSpace(showURL)
-				if direct := PixhostShowToDirectURL(showURL); strings.TrimSpace(direct) != "" {
-					if normalized := NormalizePixhostDirectHost(direct); strings.TrimSpace(normalized) != "" {
-						finalURL = normalized
-					} else {
-						finalURL = direct
-					}
-				}
+				logLine("   🚀 上传成功: %s", finalURL)
 				results <- uploadResult{Index: job.Index, OK: true, URL: finalURL, LogBlock: buf.String()}
 			}
 		}()

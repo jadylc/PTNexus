@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/pt-nexus/server/internal/service/processing/repair"
 )
 
 func (h *Handler) GetUISettings(c *gin.Context) {
@@ -113,15 +115,13 @@ func (h *Handler) UploadImage(c *gin.Context) {
 	}
 	defer os.Remove(tmpFile)
 
-	showURL, err := uploadToPixhost(tmpFile)
+	showURL, responseDirectURL, err := uploadToPixhost(tmpFile)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to upload to image host: " + err.Error()})
 		return
 	}
-	directURL := strings.TrimSpace(showURL)
-	if strings.Contains(directURL, "pixhost.to/show/") {
-		directURL = strings.Replace(directURL, "https://pixhost.to/show/", "https://img2.pixhost.to/images/", 1)
-	}
+	// 直链域名是 img<N>.pixhost.to，N 会被图床轮换；写死编号会让新上传的图片指向错误域名。
+	directURL := repair.ResolvePixhostDirectURLFromUpload(responseDirectURL, showURL)
 	c.JSON(http.StatusOK, gin.H{"url": directURL})
 }
 
@@ -176,13 +176,16 @@ func saveMultipartToTemp(fileHeader *multipart.FileHeader) (string, error) {
 	return targetPath, nil
 }
 
-func uploadToPixhost(imagePath string) (string, error) {
+// uploadToPixhost 把本地图片上传到 Pixhost。
+// 参数/返回：imagePath 本地图片路径；成功返回展示页地址与响应里带回的直链（直链可能为空）。
+// 失败场景：文件不可读、网络错误、非 200 响应、响应缺少 show_url。
+func uploadToPixhost(imagePath string) (string, string, error) {
 	const maxRetries = 3
 	var lastErr error
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		file, err := os.Open(imagePath)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 
 		body := &bytes.Buffer{}
@@ -190,21 +193,21 @@ func uploadToPixhost(imagePath string) (string, error) {
 		part, err := writer.CreateFormFile("img", filepath.Base(imagePath))
 		if err != nil {
 			_ = file.Close()
-			return "", err
+			return "", "", err
 		}
 		if _, err = io.Copy(part, file); err != nil {
 			_ = file.Close()
-			return "", err
+			return "", "", err
 		}
 		_ = file.Close()
 		_ = writer.WriteField("content_type", "0")
 		if err = writer.Close(); err != nil {
-			return "", err
+			return "", "", err
 		}
 
 		req, err := http.NewRequest(http.MethodPost, "https://api.pixhost.to/images", body)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		req.Header.Set("Content-Type", writer.FormDataContentType())
 		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
@@ -250,10 +253,10 @@ func uploadToPixhost(imagePath string) (string, error) {
 			}
 			break
 		}
-		return result.ShowURL, nil
+		return result.ShowURL, repair.ExtractPixhostDirectURL(respBody), nil
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("未知上传错误")
 	}
-	return "", lastErr
+	return "", "", lastErr
 }

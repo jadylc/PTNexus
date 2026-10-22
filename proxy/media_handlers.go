@@ -166,13 +166,18 @@ func screenshotHandler(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			showURL, err := uploadToPixhost(finalPngPath)
+			reply, err := uploadToPixhost(finalPngPath)
 			if err != nil {
 				log.Printf("screenshot %d failed during upload: %v", i+1, err)
 				continue
 			}
 
-			directURL := strings.Replace(showURL, "https://pixhost.to/show/", "https://img2.pixhost.to/images/", 1)
+			// 直链域名是 img<N>.pixhost.to，N 会被图床轮换；写死编号会让新截图全部裂图。
+			directURL := resolvePixhostDirectURL(reply.DirectURL, reply.ShowURL)
+			if strings.TrimSpace(directURL) == "" {
+				log.Printf("screenshot %d produced no usable url, show_url=%s", i+1, reply.ShowURL)
+				continue
+			}
 			uploadedURLs = append(uploadedURLs, directURL)
 		}
 

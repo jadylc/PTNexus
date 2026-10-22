@@ -121,6 +121,11 @@
 
 # 更新日志
 
+### v4.0.65（2026.10.22）
+
+- 修复：Docker 镜像构建偶发失败（版本号 ARG 下移至使用处，升级版本不再击穿 apt 层缓存；apt 镜像源 deb.debian.org/阿里云/清华按序自动回退并启用 Acquire::Retries 原生重试；apt 缓存挂载加 sharing=locked 适配 amd64+arm64 双平台并发构建）
+- 修复：截图/图片上传直链写死 img2 分片域名导致裂图（Pixhost CDN 分片域名自适应，优先采用上传响应返回的真实直链，img[12] 校验放宽为 img[0-9]+，不再改写图床给出的分片编号）
+
 ### v4.0.64（2026.10.22）
 
 - 修复：跨种页加载慢定位观测（/api/cross-seed-data 增加接口耗时、general/review 查询阶段耗时与缓存命中日志；接入 GORM 慢查询日志，SQL 超 1 秒自动输出日志，阈值可用 PTNEXUS_SLOW_SQL_MS 调节）

@@ -878,7 +878,13 @@ func findTargetVideoFile(path string, contentName string) (string, error) {
 	return videoFiles[0].path, nil
 }
 
-func uploadToPixhost(imagePath string) (string, error) {
+// pixhostUploadReply 是一次成功的 Pixhost 上传响应。
+type pixhostUploadReply struct {
+	ShowURL   string // 展示页地址，形如 https://pixhost.to/show/<目录号>/<文件名>
+	DirectURL string // 图床响应带回的真实直链（含 img<N> 分片编号），可能为空
+}
+
+func uploadToPixhost(imagePath string) (pixhostUploadReply, error) {
 	apiURLs := []string{
 		"https://api.pixhost.to/images",
 		"http://pt-nexus-proxy.sqing33.dpdns.org/https://api.pixhost.to/images",
@@ -888,9 +894,9 @@ func uploadToPixhost(imagePath string) (string, error) {
 	var lastErr error
 	for attempt := 1; attempt <= 3; attempt++ {
 		for _, apiURL := range apiURLs {
-			showURL, statusCode, err := uploadToPixhostDirectStream(imagePath, apiURL)
-			if err == nil && strings.TrimSpace(showURL) != "" {
-				return strings.TrimSpace(showURL), nil
+			reply, statusCode, err := uploadToPixhostDirectStream(imagePath, apiURL)
+			if err == nil && strings.TrimSpace(reply.ShowURL) != "" {
+				return reply, nil
 			}
 			if err != nil {
 				lastErr = err
@@ -905,10 +911,10 @@ func uploadToPixhost(imagePath string) (string, error) {
 	if lastErr == nil {
 		lastErr = fmt.Errorf("pixhost upload failed")
 	}
-	return "", lastErr
+	return pixhostUploadReply{}, lastErr
 }
 
-func uploadToPixhostDirectStream(imagePath string, apiURL string) (string, int, error) {
+func uploadToPixhostDirectStream(imagePath string, apiURL string) (pixhostUploadReply, int, error) {
 	pr, pw := io.Pipe()
 	writer := multipart.NewWriter(pw)
 
@@ -950,7 +956,7 @@ func uploadToPixhostDirectStream(imagePath string, apiURL string) (string, int, 
 	req, err := http.NewRequest(http.MethodPost, apiURL, pr)
 	if err != nil {
 		_ = pr.Close()
-		return "", 0, err
+		return pixhostUploadReply{}, 0, err
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
@@ -960,23 +966,23 @@ func uploadToPixhostDirectStream(imagePath string, apiURL string) (string, int, 
 	if err != nil {
 		_ = pr.Close()
 		if writeErr != nil {
-			return "", 0, writeErr
+			return pixhostUploadReply{}, 0, writeErr
 		}
-		return "", 0, err
+		return pixhostUploadReply{}, 0, err
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", resp.StatusCode, err
+		return pixhostUploadReply{}, resp.StatusCode, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", resp.StatusCode, fmt.Errorf("pixhost HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return pixhostUploadReply{}, resp.StatusCode, fmt.Errorf("pixhost HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 
 	parsed := map[string]any{}
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
-		return "", resp.StatusCode, fmt.Errorf("failed to parse pixhost response: %w", err)
+		return pixhostUploadReply{}, resp.StatusCode, fmt.Errorf("failed to parse pixhost response: %w", err)
 	}
 	showURL := strings.TrimSpace(toStringAny(parsed["show_url"], ""))
 	if showURL == "" {
@@ -985,7 +991,8 @@ func uploadToPixhostDirectStream(imagePath string, apiURL string) (string, int, 
 		}
 	}
 	if showURL == "" {
-		return "", resp.StatusCode, fmt.Errorf("pixhost response did not include show_url")
+		return pixhostUploadReply{}, resp.StatusCode, fmt.Errorf("pixhost response did not include show_url")
 	}
-	return showURL, resp.StatusCode, nil
+	// 图床响应里通常同时带回真实直链（含本次使用的 img<N> 分片域名），优先采纳它。
+	return pixhostUploadReply{ShowURL: showURL, DirectURL: extractPixhostDirectURL(respBody)}, resp.StatusCode, nil
 }

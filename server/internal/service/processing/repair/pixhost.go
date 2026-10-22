@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -23,16 +24,28 @@ const posterTransferLogModule = "迁移-海报转存"
 const posterTransferDownloadRetry = 2
 
 var (
-	rePixhostDirect             = regexp.MustCompile(`(\d+)/([^/]+\.(?:jpg|jpeg|png|gif|webp))`)
-	rePixhostOgImage            = regexp.MustCompile(`(?is)<meta[^>]+property=["']og:image["'][^>]*content=["']([^"']+)["']`)
-	rePixhostImageTag           = regexp.MustCompile(`(?is)<img[^>]+id=["']image["'][^>]*src=["']([^"']+)["']`)
-	rePixhostThumbSuffix        = regexp.MustCompile(`_[^.]{1,3}\.(jpg|jpeg|png|gif|webp)$`)
-	rePixhostDirectURL          = regexp.MustCompile(`^https://img[12]\.pixhost\.to/images/\d+/[^/]+\.(jpg|jpeg|png|gif|webp)$`)
+	rePixhostDirect      = regexp.MustCompile(`(\d+)/([^/]+\.(?:jpg|jpeg|png|gif|webp))`)
+	rePixhostOgImage     = regexp.MustCompile(`(?is)<meta[^>]+property=["']og:image["'][^>]*content=["']([^"']+)["']`)
+	rePixhostImageTag    = regexp.MustCompile(`(?is)<img[^>]+id=["']image["'][^>]*src=["']([^"']+)["']`)
+	rePixhostThumbSuffix = regexp.MustCompile(`_[^.]{1,3}\.(jpg|jpeg|png|gif|webp)$`)
+	// 图床 CDN 分片域名是 img<N>.pixhost.to，N 会随时间轮换（img1 -> img2 -> img3 ...）。
+	// 这里只校验“任意编号 + /images/ 路径”的形态，绝不写死具体编号：写死后每次图床轮换
+	// 都会让新上传的图片全部打不开（历史上已经因此从 img1 修到 img2 一次）。
+	rePixhostDirectURL = regexp.MustCompile(`^https://img[0-9]+\.pixhost\.to/images/\d+/[^/]+\.(jpg|jpeg|png|gif|webp)$`)
+	// rePixhostShardHost 用于从 img<N>.pixhost.to 里取回图床实际使用的分片编号。
+	rePixhostShardHost = regexp.MustCompile(`^img([0-9]+)\.pixhost\.to$`)
+	// rePixhostAnyDirect 在响应体/页面里扫描任意分片编号的直链。
+	rePixhostAnyDirect = regexp.MustCompile(`https?://img[0-9]+\.pixhost\.to/images/\d+/[^"'\\<>\s]+\.(?:jpg|jpeg|png|gif|webp)`)
+
 	posterTransferProxyPrefixes = []string{
 		"http://pt-nexus-proxy.sqing33.dpdns.org/",
 		"http://pt-nexus-proxy.1395251710.workers.dev/",
 	}
 )
+
+// pixhostFallbackShard 是在完全拿不到真实分片编号时的历史兜底域名。
+// 只作为最后手段使用；正确来源永远是上传响应或 show 页里的 img<N> 直链。
+const pixhostFallbackShard = "img2"
 
 // NormalizePosterBBCode 规范化海报字段，统一输出为单个 [img]...[/img]。
 func NormalizePosterBBCode(raw string) string {
@@ -319,10 +332,16 @@ func writePosterTempFile(data []byte, contentType string) (string, error) {
 	return tmpPath, nil
 }
 
+// pixhostUploadReply 是一次成功的 Pixhost 上传响应。
+type pixhostUploadReply struct {
+	ShowURL   string // 展示页地址，形如 https://pixhost.to/show/<目录号>/<文件名>
+	DirectURL string // 图床响应带回的真实直链（含 img<N> 分片编号），可能为空
+}
+
 // UploadImageToPixhost 上传本地图片到 Pixhost，返回 show_url。
 func UploadImageToPixhost(imagePath string) (string, error) {
-	showURL, _, err := uploadToPixhostDirectStream(imagePath, "https://api.pixhost.to/images", func(string, ...any) {})
-	return showURL, err
+	reply, _, err := uploadToPixhostDirectStream(imagePath, "https://api.pixhost.to/images", func(string, ...any) {})
+	return reply.ShowURL, err
 }
 
 // UploadImageToPixhostNarrative 按 Python 版日志风格上传图片到 Pixhost，支持主备域名切换。
@@ -334,8 +353,30 @@ func UploadImageToPixhostNarrative(imagePath string) (string, error) {
 }
 
 // UploadImageToPixhostNarrativeWithLogger 按 Python 版日志风格上传图片到 Pixhost，支持主备域名切换。
-// 参数/返回：logLine 用于输出单行日志（可用于并发场景下的日志缓冲）。
+// 参数/返回：logLine 用于输出单行日志（可用于并发场景下的日志缓冲）；成功返回 show_url。
 func UploadImageToPixhostNarrativeWithLogger(imagePath string, logLine func(string, ...any)) (string, error) {
+	reply, err := uploadImageToPixhostReply(imagePath, logLine)
+	return reply.ShowURL, err
+}
+
+// UploadImageToPixhostDirectWithLogger 上传图片并直接返回可显示的 img<N> 直链。
+// 截图链路专用：历史实现是把 show_url 用字符串替换拼成写死分片编号的直链，
+// 图床把 CDN 分片从 img2 轮换到 img3 后，新截图链接全部指向错误域名而显示为裂图。
+func UploadImageToPixhostDirectWithLogger(imagePath string, logLine func(string, ...any)) (string, error) {
+	reply, err := uploadImageToPixhostReply(imagePath, logLine)
+	if err != nil {
+		return "", err
+	}
+	direct := strings.TrimSpace(ResolvePixhostDirectURLFromUpload(reply.DirectURL, reply.ShowURL))
+	if direct == "" {
+		return strings.TrimSpace(reply.ShowURL), nil
+	}
+	return direct, nil
+}
+
+// uploadImageToPixhostReply 带主备域名重试地把图片上传到 Pixhost，并返回解析后的响应。
+// 参数/返回：成功返回 show_url 与图床给出的直链；全部域名失败返回最后一次错误。
+func uploadImageToPixhostReply(imagePath string, logLine func(string, ...any)) (pixhostUploadReply, error) {
 	apiURLs := []string{
 		"https://api.pixhost.to/images",
 		"http://pt-nexus-proxy.sqing33.dpdns.org/https://api.pixhost.to/images",
@@ -345,7 +386,7 @@ func UploadImageToPixhostNarrativeWithLogger(imagePath string, logLine func(stri
 	logLine("准备上传图片: %s", imagePath)
 	if _, err := os.Stat(imagePath); err != nil {
 		logLine("错误：文件不存在 %s", imagePath)
-		return "", err
+		return pixhostUploadReply{}, err
 	}
 
 	maxRetries := 3
@@ -357,10 +398,10 @@ func UploadImageToPixhostNarrativeWithLogger(imagePath string, logLine func(stri
 				domainName = "备用域名"
 			}
 			logLine("尝试使用%s: %s", domainName, apiURL)
-			showURL, statusCode, err := uploadToPixhostDirectStream(imagePath, apiURL, logLine)
-			if err == nil && strings.TrimSpace(showURL) != "" {
+			reply, statusCode, err := uploadToPixhostDirectStream(imagePath, apiURL, logLine)
+			if err == nil && strings.TrimSpace(reply.ShowURL) != "" {
 				logLine("%s上传成功", domainName)
-				return showURL, nil
+				return reply, nil
 			}
 			lastErr = err
 			if statusCode > 0 {
@@ -379,12 +420,12 @@ func UploadImageToPixhostNarrativeWithLogger(imagePath string, logLine func(stri
 
 	logLine("所有API域名都上传失败")
 	if lastErr != nil {
-		return "", lastErr
+		return pixhostUploadReply{}, lastErr
 	}
-	return "", fmt.Errorf("Pixhost 上传失败")
+	return pixhostUploadReply{}, fmt.Errorf("Pixhost 上传失败")
 }
 
-func uploadToPixhostDirectStream(imagePath string, apiURL string, logLine func(string, ...any)) (string, int, error) {
+func uploadToPixhostDirectStream(imagePath string, apiURL string, logLine func(string, ...any)) (pixhostUploadReply, int, error) {
 	pr, pw := io.Pipe()
 	writer := multipart.NewWriter(pw)
 
@@ -433,7 +474,7 @@ func uploadToPixhostDirectStream(imagePath string, apiURL string, logLine func(s
 	req, err := http.NewRequest(http.MethodPost, apiURL, pr)
 	if err != nil {
 		_ = pr.Close()
-		return "", 0, err
+		return pixhostUploadReply{}, 0, err
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36")
@@ -443,23 +484,23 @@ func uploadToPixhostDirectStream(imagePath string, apiURL string, logLine func(s
 	if err != nil {
 		_ = pr.Close()
 		if writeErr != nil {
-			return "", 0, writeErr
+			return pixhostUploadReply{}, 0, writeErr
 		}
-		return "", 0, err
+		return pixhostUploadReply{}, 0, err
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", resp.StatusCode, err
+		return pixhostUploadReply{}, resp.StatusCode, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", resp.StatusCode, fmt.Errorf("Pixhost HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return pixhostUploadReply{}, resp.StatusCode, fmt.Errorf("Pixhost HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 
 	parsed := map[string]any{}
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
-		return "", resp.StatusCode, fmt.Errorf("Pixhost 响应解析失败: %w", err)
+		return pixhostUploadReply{}, resp.StatusCode, fmt.Errorf("Pixhost 响应解析失败: %w", err)
 	}
 	showURL := strings.TrimSpace(toStringAny(parsed["show_url"], ""))
 	if showURL == "" {
@@ -468,11 +509,15 @@ func uploadToPixhostDirectStream(imagePath string, apiURL string, logLine func(s
 		}
 	}
 	if showURL == "" {
-		return "", resp.StatusCode, fmt.Errorf("Pixhost 未返回 show_url")
+		return pixhostUploadReply{}, resp.StatusCode, fmt.Errorf("Pixhost 未返回 show_url")
 	}
 
+	// 优先采用图床响应里自带的直链：它带的是本次上传真正使用的 img<N> 分片域名，
+	// 而 show_url 里没有分片信息，只能靠猜——猜错就是新图全部裂开。
+	directURL := ExtractPixhostDirectURL(respBody)
+
 	logLine("直接上传成功！图片链接: %s", showURL)
-	return showURL, resp.StatusCode, nil
+	return pixhostUploadReply{ShowURL: showURL, DirectURL: directURL}, resp.StatusCode, nil
 }
 
 func classifyPixhostUploadError(err error) string {
@@ -532,29 +577,36 @@ func ResolvePixhostImageURL(showURL string) (string, error) {
 }
 
 // PixhostShowToDirectURL 尝试将 pixhost show/th 页面地址转换为图片直链。
+// 输入里若已带 img<N> 分片编号则原样沿用；只有在完全没有线索时才退回历史兜底编号。
 func PixhostShowToDirectURL(showURL string) string {
 	trimmed := strings.TrimSpace(showURL)
 	if trimmed == "" {
 		return ""
 	}
 
-	direct := strings.Replace(trimmed, "https://pixhost.to/show/", "https://img2.pixhost.to/images/", 1)
-	direct = strings.Replace(direct, "https://pixhost.to/th/", "https://img2.pixhost.to/images/", 1)
-	direct = strings.Replace(direct, "http://pixhost.to/show/", "https://img2.pixhost.to/images/", 1)
-	direct = strings.Replace(direct, "http://pixhost.to/th/", "https://img2.pixhost.to/images/", 1)
+	// 已经是合法直链时直接返回，避免任何不必要的域名改写。
+	if rePixhostDirectURL.MatchString(trimmed) {
+		return trimmed
+	}
+
+	base := "https://" + pixhostShardOf(trimmed) + ".pixhost.to/images/"
+	direct := strings.Replace(trimmed, "https://pixhost.to/show/", base, 1)
+	direct = strings.Replace(direct, "https://pixhost.to/th/", base, 1)
+	direct = strings.Replace(direct, "http://pixhost.to/show/", base, 1)
+	direct = strings.Replace(direct, "http://pixhost.to/th/", base, 1)
 	direct = rePixhostThumbSuffix.ReplaceAllString(direct, `.$1`)
 
 	if rePixhostDirectURL.MatchString(direct) {
 		return direct
 	}
 	if match := rePixhostDirect.FindStringSubmatch(direct); len(match) >= 3 {
-		candidate := fmt.Sprintf("https://img2.pixhost.to/images/%s/%s", match[1], match[2])
+		candidate := base + match[1] + "/" + match[2]
 		if rePixhostDirectURL.MatchString(candidate) {
 			return candidate
 		}
 	}
 	if match := rePixhostDirect.FindStringSubmatch(trimmed); len(match) >= 3 {
-		candidate := fmt.Sprintf("https://img2.pixhost.to/images/%s/%s", match[1], match[2])
+		candidate := base + match[1] + "/" + match[2]
 		if rePixhostDirectURL.MatchString(candidate) {
 			return candidate
 		}
@@ -562,7 +614,9 @@ func PixhostShowToDirectURL(showURL string) string {
 	return ""
 }
 
-// NormalizePixhostDirectHost 规范化 Pixhost 直链域名到 img*.pixhost.to。
+// NormalizePixhostDirectHost 规范化 Pixhost 直链域名到 img<N>.pixhost.to。
+// 关键约束：输入里已经带分片编号（img1/img2/img3...）时一律保留，不再强行改写成固定编号，
+// 否则图床轮换分片后产出的直链会全部指向错误域名而显示为裂图。
 func NormalizePixhostDirectHost(value string) string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
@@ -576,18 +630,108 @@ func NormalizePixhostDirectHost(value string) string {
 		parsed.Scheme = "https"
 	}
 	host := strings.ToLower(strings.TrimSpace(parsed.Host))
-	if strings.HasPrefix(host, "img1.pixhost.to") || strings.HasPrefix(host, "img2.pixhost.to") {
+	if rePixhostShardHost.MatchString(host) {
+		parsed.Scheme = "https"
 		return parsed.String()
 	}
 	if strings.Contains(host, "pixhost.to") && strings.Contains(parsed.Path, "/images/") {
-		parsed.Host = "img2.pixhost.to"
+		parsed.Host = pixhostShardOf(trimmed) + ".pixhost.to"
 		parsed.Scheme = "https"
 		return parsed.String()
 	}
 	if match := rePixhostDirect.FindStringSubmatch(trimmed); len(match) >= 3 {
-		return fmt.Sprintf("https://img2.pixhost.to/images/%s/%s", match[1], match[2])
+		return fmt.Sprintf("https://%s.pixhost.to/images/%s/%s", pixhostShardOf(trimmed), match[1], match[2])
 	}
 	return ""
+}
+
+// pixhostShardOf 取出 URL 中的 img<N> 分片编号；取不到时返回历史兜底编号。
+func pixhostShardOf(value string) string {
+	parsed, err := neturl.Parse(strings.TrimSpace(value))
+	if err != nil || parsed == nil {
+		return pixhostFallbackShard
+	}
+	if match := rePixhostShardHost.FindStringSubmatch(strings.ToLower(strings.TrimSpace(parsed.Host))); len(match) == 2 {
+		return "img" + match[1]
+	}
+	return pixhostFallbackShard
+}
+
+// ExtractPixhostDirectURL 从图床响应体（JSON 或 HTML）里扫出真实直链。
+// 刻意不绑定 image_url / display_url 这类具体字段名：Pixhost 换字段或换分片域名时，
+// 只读某一个字段的做法会静默退化成“猜域名”，这正是截图裂图的根因。
+func ExtractPixhostDirectURL(raw []byte) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	decoded := any(nil)
+	if err := json.Unmarshal(raw, &decoded); err == nil {
+		if found := findPixhostDirectURLInValue(decoded); found != "" {
+			return found
+		}
+	}
+	match := rePixhostAnyDirect.FindString(string(raw))
+	if match == "" {
+		return ""
+	}
+	return NormalizePixhostDirectHost(match)
+}
+
+// findPixhostDirectURLInValue 递归遍历已解析的 JSON 值，按 key 字典序保证结果稳定。
+func findPixhostDirectURLInValue(value any) string {
+	switch typed := value.(type) {
+	case string:
+		match := rePixhostAnyDirect.FindString(typed)
+		if match == "" {
+			return ""
+		}
+		return NormalizePixhostDirectHost(match)
+	case map[string]any:
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			if found := findPixhostDirectURLInValue(typed[key]); found != "" {
+				return found
+			}
+		}
+	case []any:
+		for _, item := range typed {
+			if found := findPixhostDirectURLInValue(item); found != "" {
+				return found
+			}
+		}
+	}
+	return ""
+}
+
+// ResolvePixhostDirectURLFromUpload 按「上传响应直链 > show 页解析 > 字符串推导」的优先级
+// 挑出真正可显示的 Pixhost 图片直链。
+// 参数：responseDirectURL 为上传响应里带回的直链（可为空）；showURL 为上传响应里的展示页地址。
+// 返回：可用的 img<N> 直链；全部失败时回退 showURL（调用方自行决定是否接受）。
+func ResolvePixhostDirectURLFromUpload(responseDirectURL string, showURL string) string {
+	showURL = strings.TrimSpace(showURL)
+	normalizedResponse := NormalizePixhostDirectHost(responseDirectURL)
+
+	if normalizedResponse != "" && IsImageURLReachable(normalizedResponse) {
+		return normalizedResponse
+	}
+
+	if resolved, err := ResolvePixhostImageURL(showURL); err == nil && rePixhostDirectURL.MatchString(resolved) {
+		return resolved
+	}
+
+	// 探测不通通常是我这台机器到图床的网络问题，而不是图床给错了链接。
+	// 所以响应直链的优先级仍然要高于“靠历史编号猜出来”的推导结果，否则会把正确链接丢掉。
+	if normalizedResponse != "" {
+		return normalizedResponse
+	}
+	if candidate := PixhostShowToDirectURL(showURL); candidate != "" {
+		return candidate
+	}
+	return showURL
 }
 
 // IsImageURLReachable 通过 HEAD/GET 探测 URL 是否可访问且内容类型为图片。

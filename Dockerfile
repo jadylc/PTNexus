@@ -38,8 +38,8 @@ FROM golang:1.23-bookworm AS server-builder
 
 WORKDIR /src/server
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends gcc g++ libc6-dev && \
+RUN apt-get -o Acquire::Retries=10 update && \
+    apt-get -o Acquire::Retries=10 install -y --no-install-recommends gcc g++ libc6-dev && \
     rm -rf /var/lib/apt/lists/*
 
 COPY ./server/go.mod ./server/go.sum ./
@@ -59,7 +59,10 @@ FROM debian:bookworm-slim
 
 WORKDIR /app
 
-ARG PTNEXUS_VERSION=""
+# 注意：PTNEXUS_VERSION 这个与版本相关的 ARG 已下移到真正使用它的地方。
+# ARG 声明在本层之上会让后续所有层（含 apt 安装层）的 BuildKit 缓存 key 随版本号变化，
+# 导致每次发版都要重新联网跑一遍 apt-get install；镜像源抖动时会直接表现为
+# “buildx failed ... exit code: 100”。
 
 # 确保容器内对 localhost 和 127.0.0.1 的请求直接连接，不通过代理
 ENV no_proxy="localhost,127.0.0.1,::1"
@@ -73,22 +76,58 @@ ENV PTNEXUS_BASE_DIR="/app/server"
 ENV PTNEXUS_DATA_DIR="/app/data"
 ENV PTNEXUS_BDINFO_DIR="/app/bdinfo/linux"
 
-# 使用阿里云 Debian 镜像（解决网络不稳定问题）；deb 包走 BuildKit 缓存，避免重复下载
-RUN --mount=type=cache,target=/var/cache/apt \
-    sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources && \
-    sed -i 's/security.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources && \
-    apt-get update --allow-insecure-repositories && \
-    apt-get install -y --allow-unauthenticated --no-install-recommends \
-    bash \
-    ca-certificates \
-    ffmpeg \
-    mpv \
-    mediainfo \
-    util-linux \
-    fonts-noto-cjk \
-    libicu-dev \
-    supervisor \
-    && rm -rf /var/lib/apt/lists/*
+# Debian 镜像源候选列表，按顺序尝试，全部失败才让构建失败。
+# 流水线跑在 GitHub 海外 runner，官方源最稳；国内自建镜像可把国内源放前面：
+#   docker build --build-arg APT_MIRROR_HOSTS="mirrors.aliyun.com deb.debian.org" ...
+ARG APT_MIRROR_HOSTS="deb.debian.org mirrors.aliyun.com mirrors.tuna.tsinghua.edu.cn"
+
+# 安装运行期依赖。
+#   1) 单个镜像源抖动时自动切换下一个候选源，而不是整条流水线红掉；
+#   2) 打开 apt 原生重试与超时（Acquire::Retries），吸收偶发的连接重置/半开下载；
+#   3) deb 包与索引都走 BuildKit 缓存挂载，sharing=locked 避免 amd64/arm64 两个平台
+#      并发构建时争抢同一份缓存导致 dpkg 状态错乱；
+#   4) 去掉 --allow-insecure-repositories / --allow-unauthenticated：Debian 官方仓库签名可用，
+#      这两个开关只会把真实的仓库故障伪装成安装失败；
+#   5) 索引目录是缓存挂载，不会进入镜像，因此不再需要 rm -rf /var/lib/apt/lists/*。
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    set -eu; \
+    cp /etc/apt/sources.list.d/debian.sources /tmp/debian.sources.orig; \
+    printf 'Acquire::Retries "10";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\nAcquire::ForceIPv4 "true";\n' > /etc/apt/apt.conf.d/99-ptnexus-build; \
+    use_mirror() { \
+        cp /tmp/debian.sources.orig /etc/apt/sources.list.d/debian.sources; \
+        sed -i -E \
+            -e "s|https?://[A-Za-z0-9._-]+\.debian\.org/debian-security|http://$1/debian-security|g" \
+            -e "s|https?://[A-Za-z0-9._-]+\.debian\.org/debian|http://$1/debian|g" \
+            /etc/apt/sources.list.d/debian.sources; \
+        grep -E '^URIs:' /etc/apt/sources.list.d/debian.sources || true; \
+    }; \
+    installed=0; \
+    for mirror in $APT_MIRROR_HOSTS; do \
+        echo ">>> 尝试 Debian 镜像源: ${mirror}"; \
+        use_mirror "${mirror}"; \
+        if apt-get update \
+            && apt-get install -y --no-install-recommends \
+                bash \
+                ca-certificates \
+                ffmpeg \
+                mpv \
+                mediainfo \
+                util-linux \
+                fonts-noto-cjk \
+                libicu-dev \
+                supervisor; then \
+            installed=1; \
+            echo ">>> Debian 依赖安装完成 (mirror=${mirror})"; \
+            break; \
+        fi; \
+        echo ">>> 镜像源 ${mirror} 安装失败，切换到下一个候选源" >&2; \
+        sleep 5; \
+    done; \
+    if [ "${installed}" != "1" ]; then \
+        echo "!! 所有候选 Debian 镜像源均安装失败: ${APT_MIRROR_HOSTS}" >&2; \
+        exit 1; \
+    fi
 
 # --- Go 版后端文件 ---
 RUN mkdir -p /app/server
@@ -113,6 +152,10 @@ RUN chmod +x /app/updater
 
 # 复制版本文件（updater 默认读取 /app/CHANGELOG.json）
 COPY ./CHANGELOG.json /app/CHANGELOG.json
+
+# PTNEXUS_VERSION 只影响下面这一层：声明紧贴使用处、且放在依赖安装层之后，
+# 这样发版号变化不会再把 apt 安装层踢出缓存。
+ARG PTNEXUS_VERSION=""
 RUN if [ -n "$PTNEXUS_VERSION" ]; then printf '%s\n' "$PTNEXUS_VERSION" > /app/VERSION; fi
 
 # Supervisor + 启动脚本（Go 版）
