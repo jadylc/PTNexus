@@ -256,6 +256,10 @@ wget -O - https://github.com/jadylc/PTNexus/releases/latest/download/install-pt-
 
 # 更新日志
 
+### v4.0.66（2026.10.22）
+
+- 修复：海报转存仍返回旧分片域名（海报上传改为优先采用 Pixhost 响应返回的真实直链；图片可达性探测识别 removed.png 占位跳转，不再把失效分片误判为可用，历史豆瓣海报直链也能正确解析出真实分片）
+
 ### v4.0.65（2026.10.22）
 
 - 修复：Docker 镜像构建偶发失败（版本号 ARG 下移至使用处，升级版本不再击穿 apt 层缓存；apt 镜像源 deb.debian.org/阿里云/清华按序自动回退并启用 Acquire::Retries 原生重试；apt 缓存挂载加 sharing=locked 适配 amd64+arm64 双平台并发构建）

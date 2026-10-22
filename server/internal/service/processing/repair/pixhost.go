@@ -149,7 +149,11 @@ func TransferRemoteImageToPixhost(imageURL string) (string, error) {
 				continue
 			}
 
-			showURL, uploadErr := UploadImageToPixhost(tmpPath)
+			// 优先采用上传响应里图床自带的真实直链（含 img<N> 分片域名）。
+			// show_url 不含分片信息，靠“探测推导”补全在国内网络下不可靠；
+			// 且 Pixhost 对失效图片会 302 到 removed.png 占位图，历史上把探测骗了过去，
+			// 导致这里永远选中错误的分片域名。
+			reply, uploadErr := uploadImageToPixhostReply(tmpPath, func(string, ...any) {})
 			_ = os.Remove(tmpPath)
 			if uploadErr != nil {
 				errMsgs = append(errMsgs, fmt.Sprintf("上传失败 candidate=%s attempt=%d err=%v", CompactLogText(candidate, 120), attempt, uploadErr))
@@ -160,28 +164,18 @@ func TransferRemoteImageToPixhost(imageURL string) (string, error) {
 				continue
 			}
 
-			if resolved, resolveErr := ResolvePixhostImageURL(showURL); resolveErr == nil && strings.TrimSpace(resolved) != "" {
-				logx.Infof(posterTransferLogModule, "Pixhost直链解析成功 show_url=%s resolved=%s", CompactLogText(showURL, 160), CompactLogText(resolved, 160))
-				return strings.TrimSpace(resolved), nil
-			} else if resolveErr != nil {
-				logx.Warnf(posterTransferLogModule, "Pixhost直链解析失败 show_url=%s err=%v", CompactLogText(showURL, 160), resolveErr)
-			}
-
-			if direct := NormalizePixhostDirectHost(showURL); direct != "" {
-				logx.Infof(posterTransferLogModule, "Pixhost直链解析回退成功 show_url=%s direct=%s", CompactLogText(showURL, 160), CompactLogText(direct, 160))
+			showURL := strings.TrimSpace(reply.ShowURL)
+			direct := strings.TrimSpace(ResolvePixhostDirectURLFromUpload(reply.DirectURL, showURL))
+			if direct != "" {
+				logx.Infof(posterTransferLogModule, "Pixhost直链解析成功 show_url=%s direct=%s", CompactLogText(showURL, 160), CompactLogText(direct, 160))
 				return direct, nil
 			}
-			base := strings.TrimSpace(showURL)
-			if base == "" {
-				errMsgs = append(errMsgs, fmt.Sprintf("Pixhost返回空URL candidate=%s", CompactLogText(candidate, 120)))
-				logx.Warnf(posterTransferLogModule, "Pixhost上传返回空URL candidate=%s", CompactLogText(candidate, 160))
-				if attempt < posterTransferDownloadRetry {
-					time.Sleep(time.Duration(attempt) * 300 * time.Millisecond)
-				}
-				continue
+			errMsgs = append(errMsgs, fmt.Sprintf("Pixhost返回空URL candidate=%s", CompactLogText(candidate, 120)))
+			logx.Warnf(posterTransferLogModule, "Pixhost上传返回空URL candidate=%s", CompactLogText(candidate, 160))
+			if attempt < posterTransferDownloadRetry {
+				time.Sleep(time.Duration(attempt) * 300 * time.Millisecond)
 			}
-			logx.Warnf(posterTransferLogModule, "Pixhost返回show_url但未解析为直链，回退show_url show_url=%s", CompactLogText(base, 160))
-			return base, nil
+			continue
 		}
 	}
 
@@ -336,12 +330,6 @@ func writePosterTempFile(data []byte, contentType string) (string, error) {
 type pixhostUploadReply struct {
 	ShowURL   string // 展示页地址，形如 https://pixhost.to/show/<目录号>/<文件名>
 	DirectURL string // 图床响应带回的真实直链（含 img<N> 分片编号），可能为空
-}
-
-// UploadImageToPixhost 上传本地图片到 Pixhost，返回 show_url。
-func UploadImageToPixhost(imagePath string) (string, error) {
-	reply, _, err := uploadToPixhostDirectStream(imagePath, "https://api.pixhost.to/images", func(string, ...any) {})
-	return reply.ShowURL, err
 }
 
 // UploadImageToPixhostNarrative 按 Python 版日志风格上传图片到 Pixhost，支持主备域名切换。
@@ -747,8 +735,9 @@ func IsImageURLReachable(target string) bool {
 		headReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 		if resp, headErr := client.Do(headReq); headErr == nil {
 			ct := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Type")))
+			reachable := resp.StatusCode >= 200 && resp.StatusCode < 400 && strings.HasPrefix(ct, "image/")
 			_ = resp.Body.Close()
-			if resp.StatusCode >= 200 && resp.StatusCode < 400 && strings.HasPrefix(ct, "image/") {
+			if reachable && !isPixhostRemovedPlaceholder(resp) {
 				return true
 			}
 		}
@@ -766,5 +755,19 @@ func IsImageURLReachable(target string) bool {
 	}
 	defer resp.Body.Close()
 	ct := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Type")))
-	return resp.StatusCode >= 200 && resp.StatusCode < 400 && strings.HasPrefix(ct, "image/")
+	reachable := resp.StatusCode >= 200 && resp.StatusCode < 400 && strings.HasPrefix(ct, "image/")
+	return reachable && !isPixhostRemovedPlaceholder(resp)
+}
+
+// isPixhostRemovedPlaceholder 识别 Pixhost 的“图片不存在”占位响应。
+// Pixhost 对不存在的图片（分片域名写错、图片被删）不做 404，而是 302 跳到
+// https://pixhost.to/image/removed.png，Content-Type 还是 image/png。
+// http.Client 默认跟随重定向，如果照单全收，会把失效图片误判成“可访问”，
+// 导致探测排序永远选中错误的分片域名。这里以最终落地的 URL 为准识别占位图。
+func isPixhostRemovedPlaceholder(resp *http.Response) bool {
+	if resp == nil || resp.Request == nil || resp.Request.URL == nil {
+		return false
+	}
+	finalURL := *resp.Request.URL
+	return strings.HasSuffix(strings.ToLower(finalURL.Path), "/removed.png")
 }

@@ -1,6 +1,40 @@
 package repair
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
+
+// TestIsImageURLReachableRejectsRemovedPlaceholder 验证 Pixhost 的“图片不存在”占位跳转
+// 不会被误判为可访问：Pixhost 对失效图片返回 302 -> removed.png（Content-Type 仍是 image/png），
+// 旧探测逻辑跟随重定向后把占位图当成有效图片，导致永远选中错误的分片域名。
+func TestIsImageURLReachableRejectsRemovedPlaceholder(t *testing.T) {
+	placeholder := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write([]byte("removed"))
+	}))
+	defer placeholder.Close()
+
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, placeholder.URL+"/image/removed.png", http.StatusFound)
+	}))
+	defer redirector.Close()
+
+	if IsImageURLReachable(redirector.URL) {
+		t.Fatalf("removed.png 占位图不应被判为可访问")
+	}
+
+	healthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/jpeg")
+		_, _ = w.Write([]byte("jpeg"))
+	}))
+	defer healthy.Close()
+
+	if !IsImageURLReachable(healthy.URL) {
+		t.Fatalf("正常图片应被判为可访问")
+	}
+}
 
 // TestPixhostShowToDirectURLPreservesShard 保证图床轮换 CDN 分片域名（img1/img2/img3...）时
 // 直链推导不会再写死成某个固定编号，这是截图显示为裂图的根因。
