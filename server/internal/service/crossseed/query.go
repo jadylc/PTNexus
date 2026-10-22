@@ -3,7 +3,9 @@ package crossseed
 import (
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/pt-nexus/server/internal/platform/logx"
 	"github.com/pt-nexus/server/internal/repository"
 	"github.com/pt-nexus/server/internal/service/reversemapping"
 )
@@ -104,6 +106,8 @@ func (s *CrossSeedService) QueryData(params CrossSeedQueryParams) (map[string]an
 	// 全 torrents 聚合派生表，短时间重复进入时会显著拖慢页面。
 	key := queryCacheKey(params)
 	if cached := s.getCachedQuery(key); cached != nil {
+		logx.Infof("跨种查询", "查询缓存命中 page=%d page_size=%d review_status=%s",
+			params.Page, params.PageSize, params.ReviewStatus)
 		return cached, nil
 	}
 
@@ -116,6 +120,7 @@ func (s *CrossSeedService) QueryData(params CrossSeedQueryParams) (map[string]an
 }
 
 func (s *CrossSeedService) queryDataUncached(params CrossSeedQueryParams) (map[string]any, error) {
+	start := time.Now()
 	offset := (params.Page - 1) * params.PageSize
 	dbType := s.repo.DBType()
 	normalizedReviewStatus := normalizeReviewStatus(params.ReviewStatus)
@@ -213,13 +218,16 @@ func (s *CrossSeedService) queryDataUncached(params CrossSeedQueryParams) (map[s
 		Total int64 `gorm:"column:total"`
 	}
 	var count countRow
+	countElapsed := time.Duration(0)
 	// reviewed/unreviewed 需要按标准映射在 Go 中判定可发布性，最终总数会由过滤结果给出；
 	// 此时提前执行同一套重型 JOIN 的 COUNT 没有意义，只会让列表首屏重复扫描数据库。
 	if normalizedReviewStatus == "" {
+		countStart := time.Now()
 		countQuery := fmt.Sprintf("SELECT COUNT(*) AS total %s %s", fromClause, whereClause)
 		if err := s.repo.DB().Raw(countQuery, queryArgs...).Scan(&count).Error; err != nil {
 			return nil, err
 		}
+		countElapsed = time.Since(countStart)
 	}
 
 	isDeletedExpr := "CASE WHEN ct.hash IS NULL THEN 1 ELSE 0 END AS is_deleted"
@@ -249,10 +257,12 @@ func (s *CrossSeedService) queryDataUncached(params CrossSeedQueryParams) (map[s
 		dataArgs = append(dataArgs, params.PageSize, offset)
 	}
 
+	dataStart := time.Now()
 	pageData, err := s.repo.RawMaps(dataQuery, dataArgs...)
 	if err != nil {
 		return nil, err
 	}
+	dataElapsed := time.Since(dataStart)
 
 	reverseMappings := reversemapping.Build(nil)
 	for _, item := range pageData {
@@ -270,7 +280,13 @@ func (s *CrossSeedService) queryDataUncached(params CrossSeedQueryParams) (map[s
 		pageData = paginateMaps(filteredData, offset, params.PageSize)
 	}
 
-	return s.buildCrossSeedQueryResult(params, pageData, int(count.Total), reverseMappings)
+	finalResult, buildErr := s.buildCrossSeedQueryResult(params, pageData, int(count.Total), reverseMappings)
+	if buildErr != nil {
+		return nil, buildErr
+	}
+	logx.Infof("跨种查询", "general 查询完成 count=%s data=%s 总计=%s total=%d rows=%d",
+		countElapsed, dataElapsed, time.Since(start), int(count.Total), len(pageData))
+	return finalResult, nil
 }
 
 func (s *CrossSeedService) DeleteCrossSeedData(payload map[string]any) (map[string]any, int) {

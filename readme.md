@@ -256,6 +256,10 @@ wget -O - https://github.com/jadylc/PTNexus/releases/latest/download/install-pt-
 
 # 更新日志
 
+### v4.0.64（2026.10.22）
+
+- 修复：跨种页加载慢定位观测（/api/cross-seed-data 增加接口耗时、general/review 查询阶段耗时与缓存命中日志；接入 GORM 慢查询日志，SQL 超 1 秒自动输出日志，阈值可用 PTNEXUS_SLOW_SQL_MS 调节）
+
 ### v4.0.63（2026.10.22）
 
 - 修复：维护种子/跨种页面加载慢（/api/cross-seed-data 分类查询增加 30 秒进程内缓存；排除目标站已存在种子由全 torrents 物化派生表改为相关 NOT EXISTS；seed_parameters 新增 (type,is_reviewed,created_at) 复合索引）

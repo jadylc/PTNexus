@@ -3,7 +3,9 @@ package crossseed
 import (
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/pt-nexus/server/internal/platform/logx"
 	"github.com/pt-nexus/server/internal/service/reversemapping"
 )
 
@@ -16,6 +18,7 @@ func canUseReviewQueryFastPath(params CrossSeedQueryParams, reviewStatus string)
 // queryReviewFilteredData 先读取发布状态判定所需的轻量字段，分页后再补当前页展示字段。
 // 这样 reviewed/unreviewed 首屏不再为每一行构造完整的当前下载器种子视图。
 func (s *CrossSeedService) queryReviewFilteredData(params CrossSeedQueryParams, reviewStatus string) (map[string]any, error) {
+	start := time.Now()
 	dbType := s.repo.DBType()
 	fromClause := "FROM seed_parameters sp"
 	fromArgs := make([]any, 0)
@@ -82,6 +85,7 @@ func (s *CrossSeedService) queryReviewFilteredData(params CrossSeedQueryParams, 
 	if err != nil {
 		return nil, err
 	}
+	classElapsed := time.Since(start)
 
 	reverseMappings := reversemapping.Build(nil)
 	filteredRows := make([]map[string]any, 0, len(classificationRows))
@@ -91,6 +95,7 @@ func (s *CrossSeedService) queryReviewFilteredData(params CrossSeedQueryParams, 
 			filteredRows = append(filteredRows, item)
 		}
 	}
+	filterElapsed := time.Since(start)
 
 	total := len(filteredRows)
 	offset := (params.Page - 1) * params.PageSize
@@ -102,8 +107,15 @@ func (s *CrossSeedService) queryReviewFilteredData(params CrossSeedQueryParams, 
 			return nil, err
 		}
 	}
+	detailElapsed := time.Since(start)
 
-	return s.buildCrossSeedQueryResult(params, pageData, total, reverseMappings)
+	finalResult, buildErr := s.buildCrossSeedQueryResult(params, pageData, total, reverseMappings)
+	if buildErr != nil {
+		return nil, buildErr
+	}
+	logx.Infof("跨种查询", "review 查询完成 分类=%s 过滤=%s 详情=%s 总计=%s 分类行=%d total=%d rows=%d",
+		classElapsed, filterElapsed, detailElapsed, time.Since(start), len(classificationRows), total, len(pageData))
+	return finalResult, nil
 }
 
 func reviewIsDeletedExpr(dbType string, seedAlias string) string {

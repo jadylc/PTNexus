@@ -19,6 +19,13 @@
   ],
   "history": [
     {
+      "version": "v4.0.64",
+      "date": "2026.10.22",
+      "changes": [
+        "修复：跨种页加载慢定位观测（/api/cross-seed-data 增加接口耗时、general/review 查询阶段耗时与缓存命中日志；接入 GORM 慢查询日志，SQL 超 1 秒自动输出日志，阈值可用 PTNEXUS_SLOW_SQL_MS 调节）"
+      ]
+    },
+    {
       "version": "v4.0.63",
       "date": "2026.10.22",
       "changes": [

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/pt-nexus/server/internal/platform/logx"
 	"github.com/pt-nexus/server/internal/service"
 )
 
@@ -28,6 +29,7 @@ func (h *CrossSeedHandler) UniquePaths(c *gin.Context) {
 }
 
 func (h *CrossSeedHandler) Data(c *gin.Context) {
+	startTime := time.Now()
 	includeUniquePaths := true
 	if raw := strings.TrimSpace(c.Query("include_unique_paths")); raw != "" {
 		includeUniquePaths = boolQuery(c, "include_unique_paths")
@@ -45,9 +47,12 @@ func (h *CrossSeedHandler) Data(c *gin.Context) {
 	}
 	result, err := h.service.QueryData(params)
 	if err != nil {
+		logx.Warnf("跨种查询", "GET /api/cross-seed-data 失败 耗时=%s err=%v", time.Since(startTime), err)
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
 		return
 	}
+	logx.Infof("跨种查询", "GET /api/cross-seed-data 完成 耗时=%s total=%v count=%v",
+		time.Since(startTime), result["total"], result["count"])
 	c.JSON(http.StatusOK, result)
 }
 

@@ -4,16 +4,45 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/glebarez/sqlite"
 	"github.com/pt-nexus/server/internal/config"
+	"github.com/pt-nexus/server/internal/platform/logx"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
+
+// gormLogWriter 将 GORM 日志转发到 logx 统一输出（控制台 + 滚动文件）。
+type gormLogWriter struct{}
+
+func (gormLogWriter) Printf(format string, args ...any) {
+	logx.PlainInfof(format, args...)
+}
+
+// newGormLogger 构建 GORM logger：默认只输出错误与超过阈值的慢查询，
+// 避免生产环境刷屏；阈值可通过 PTNEXUS_SLOW_SQL_MS 调节（默认 1000ms）。
+func newGormLogger() logger.Interface {
+	threshold := time.Second
+	if raw := strings.TrimSpace(os.Getenv("PTNEXUS_SLOW_SQL_MS")); raw != "" {
+		if ms, err := strconv.Atoi(raw); err == nil && ms > 0 {
+			threshold = time.Duration(ms) * time.Millisecond
+		}
+	}
+	return logger.New(
+		gormLogWriter{},
+		logger.Config{
+			SlowThreshold:             threshold,
+			LogLevel:                  logger.Warn,
+			IgnoreRecordNotFoundError: true,
+			Colorful:                  false,
+		},
+	)
+}
 
 type Store struct {
 	DB     *gorm.DB
@@ -52,7 +81,7 @@ func NewStore(paths config.RuntimePaths) (*Store, error) {
 		database := firstNonEmpty(os.Getenv("MYSQL_DATABASE"), desktopCfg.MySQL.Database)
 		port := firstNonEmpty(os.Getenv("MYSQL_PORT"), intToString(desktopCfg.MySQL.Port), "3306")
 		dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local", user, password, host, port, database)
-		db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+		db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{Logger: newGormLogger()})
 	case "postgresql":
 		host := firstNonEmpty(os.Getenv("POSTGRES_HOST"), desktopCfg.PostgreSQL.Host)
 		user := firstNonEmpty(os.Getenv("POSTGRES_USER"), desktopCfg.PostgreSQL.User)
@@ -61,7 +90,7 @@ func NewStore(paths config.RuntimePaths) (*Store, error) {
 		port := firstNonEmpty(os.Getenv("POSTGRES_PORT"), intToString(desktopCfg.PostgreSQL.Port), "5432")
 		sslMode := firstNonEmpty(os.Getenv("POSTGRES_SSLMODE"), desktopCfg.PostgreSQL.SSLMode, "disable")
 		dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=%s TimeZone=Asia/Shanghai", host, user, password, database, port, sslMode)
-		db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+		db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: newGormLogger()})
 	case "sqlite":
 		fallthrough
 	default:
@@ -78,7 +107,7 @@ func NewStore(paths config.RuntimePaths) (*Store, error) {
 		if !strings.Contains(dsn, "?") {
 			dsn += "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(10000)&_pragma=synchronous(NORMAL)"
 		}
-		db, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+		db, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: newGormLogger()})
 	}
 
 	if err != nil {
