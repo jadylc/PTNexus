@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 # 阶段 1: 构建 Vue 前端（Go 版本）
 FROM node:20-alpine AS webui-builder
 
@@ -5,11 +6,15 @@ WORKDIR /app/webui
 
 RUN corepack enable
 
-COPY ./webui/package.json ./
-RUN pnpm install --no-frozen-lockfile
+COPY ./webui/package.json ./webui/pnpm-lock.yaml ./
+RUN --mount=type=cache,target=/pnpm/store \
+    pnpm config set store-dir /pnpm/store && \
+    pnpm install --frozen-lockfile
 
 COPY ./webui ./
-RUN pnpm run build
+RUN --mount=type=cache,target=/pnpm/store \
+    --mount=type=cache,target=/app/webui/node_modules/.vite \
+    pnpm run build
 
 
 # 阶段 2: 构建 Go 更新服务
@@ -18,10 +23,13 @@ FROM golang:1.23-bookworm AS updater-builder
 WORKDIR /src/updater
 
 COPY ./updater/go.mod ./updater/go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 
 COPY ./updater/*.go ./
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/updater .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/updater .
 
 
 # 阶段 3: 构建 Go 后端（server）
@@ -35,12 +43,15 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 COPY ./server/go.mod ./server/go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 
 COPY ./server/cmd ./cmd
 COPY ./server/internal ./internal
 
-RUN CGO_ENABLED=1 GOOS=linux go build -ldflags="-s -w" -o /out/server ./cmd/server
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=1 GOOS=linux go build -ldflags="-s -w" -o /out/server ./cmd/server
 
 
 # 阶段 4: 最终运行环境（纯 Go 运行时：updater 作为入口，反代到 server）
@@ -62,8 +73,9 @@ ENV PTNEXUS_BASE_DIR="/app/server"
 ENV PTNEXUS_DATA_DIR="/app/data"
 ENV PTNEXUS_BDINFO_DIR="/app/bdinfo/linux"
 
-# 使用阿里云 Debian 镜像（解决网络不稳定问题）
-RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources && \
+# 使用阿里云 Debian 镜像（解决网络不稳定问题）；deb 包走 BuildKit 缓存，避免重复下载
+RUN --mount=type=cache,target=/var/cache/apt \
+    sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources && \
     sed -i 's/security.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources && \
     apt-get update --allow-insecure-repositories && \
     apt-get install -y --allow-unauthenticated --no-install-recommends \
@@ -76,7 +88,6 @@ RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debia
     fonts-noto-cjk \
     libicu-dev \
     supervisor \
-    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 # --- Go 版后端文件 ---

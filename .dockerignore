@@ -22,8 +22,6 @@ venv/
 # Node modules
 webui/node_modules
 webui/dist
-webui/node_modules
-webui/dist
 
 # Backend specific
 server/.env
@@ -32,3 +30,16 @@ server/pt_stats.db-journal
 
 # Logs
 *.log
+
+# 以下目录不进入 Docker 镜像（减小构建上下文，避免每次推送几百 MB 无用文件）
+proxy
+desktop
+extension
+wiki
+updater/dist
+server/bdinfo/windows
+dist
+scripts
+sync_changelog.py
+readme.md
+UPDATE_MANIFEST.json
