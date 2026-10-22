@@ -72,10 +72,12 @@ func (r *TorrentRepository) TrafficTotals() (map[string]map[string]int64, error)
 	}
 	r.trafficTotalsMu.RUnlock()
 
-	// 累计值为单调不减的采样快照，取每个下载器最近一条累计记录即可，
-	// 不需要对整张 traffic_stats 流水表做 MAX 聚合。子查询按主键
-	// (stat_datetime, downloader_id) 有序扫描，外层按主键等值回表，
-	// 避免原有 WHERE ... OR ... 条件下无法利用主键的全表扫描。
+	// 累计值为单调不减的采样快照，取每个下载器最近一条累计记录即可。
+	// 子查询 GROUP BY downloader_id + MAX(stat_datetime) 依赖辅助索引
+	// idx_traffic_stats_downloader_datetime (downloader_id, stat_datetime)，
+	// 走 loose index scan：成本与采样行数无关、只与下载器数量相关，
+	// 避免在流水表上全表扫描 + 临时表分组（主键前导列是 stat_datetime，
+	// 无法支撑按 downloader_id 分组）。
 	sqlDB, err := r.store.DB.DB()
 	if err != nil {
 		return nil, err
@@ -88,7 +90,6 @@ func (r *TorrentRepository) TrafficTotals() (map[string]map[string]int64, error)
 		JOIN (
 			SELECT downloader_id, MAX(stat_datetime) AS max_dt
 			FROM traffic_stats
-			WHERE cumulative_uploaded > 0 OR cumulative_downloaded > 0
 			GROUP BY downloader_id
 		) last ON t.downloader_id = last.downloader_id AND t.stat_datetime = last.max_dt
 	`)

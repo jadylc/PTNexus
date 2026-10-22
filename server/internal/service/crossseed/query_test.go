@@ -168,3 +168,101 @@ func TestQueryDataReviewStatusUsesPublishableClassification(t *testing.T) {
 		t.Fatalf("expected unreviewed total 3, got %#v", unreviewed["total"])
 	}
 }
+
+// TestQueryDataReviewFastPathExcludeTargetByHash 验证 fast-path（reviewed + exclude_target_sites）
+// 下 target_hashes 改写的相关 NOT EXISTS 语义：种子在当前站存在、目标站已有同一 hash 时，
+// 该行必须被排除（等价于原全量物化派生表的 target_hashes.hash IS NULL 判定）。
+func TestQueryDataReviewFastPathExcludeTargetByHash(t *testing.T) {
+	store := newCrossSeedTestStore(t)
+	repo := repository.NewCrossSeedRepository(store)
+	service := NewCrossSeedService(repo)
+
+	mustExecCrossSeedTest(t, store.DB, `INSERT INTO sites (site, nickname, migration) VALUES (?, ?, ?)`, "mteam", "M-Team", 2)
+	mustExecCrossSeedTest(t, store.DB, `INSERT INTO sites (site, nickname, migration) VALUES (?, ?, ?)`, "hdsky", "HDSky", 1)
+
+	// 可发布的 reviewed 候选（当前站 HDSky 做种）。
+	insertCrossSeedReviewRow(t, store.DB, "2001", "Candidate", "team.other", `[]`, `[]`, 1)
+	// 同一 hash 在目标站 M-Team 已有种子：应被 target_hashes 排除。
+	mustExecCrossSeedTest(t, store.DB, `INSERT INTO torrents (hash, name, size, save_path, downloader_id, state, last_seen, sites, is_hidden)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+		"hash-2001", "Candidate", 100, "/downloads/target", "qb-2", "做种中", "2026-04-14 10:00:00", "M-Team")
+
+	params := CrossSeedQueryParams{Page: 1, PageSize: 20, ReviewStatus: "reviewed", ExcludeTargetSites: "mteam"}
+	result, err := service.QueryData(params)
+	if err != nil {
+		t.Fatalf("QueryData returned error: %v", err)
+	}
+	if result["total"].(int) != 0 {
+		t.Fatalf("expected total 0 when target hash already exists, got %#v", result["total"])
+	}
+
+	// 新增一个未在目标站的 reviewed 候选，清缓存后应保留（防误杀）。
+	insertCrossSeedReviewRow(t, store.DB, "2002", "OtherCandidate", "team.other", `[]`, `[]`, 1)
+	service.invalidateCache()
+	result, err = service.QueryData(params)
+	if err != nil {
+		t.Fatalf("QueryData returned error: %v", err)
+	}
+	if result["total"].(int) != 1 {
+		t.Fatalf("expected total 1 after adding non-target candidate, got %#v", result["total"])
+	}
+}
+
+// TestQueryDataCacheHitAndDeleteInvalidation 验证 30s 进程内缓存：
+// 相同参数第二次查询命中缓存；删除后缓存立即失效，再次查询反映最新数据。
+func TestQueryDataCacheHitAndDeleteInvalidation(t *testing.T) {
+	store := newCrossSeedTestStore(t)
+	repo := repository.NewCrossSeedRepository(store)
+	service := NewCrossSeedService(repo)
+
+	insertCrossSeedReviewRow(t, store.DB, "3001", "Valid", "team.other", `[]`, `[]`, 1)
+
+	params := CrossSeedQueryParams{Page: 1, PageSize: 20, ReviewStatus: "reviewed"}
+	first, err := service.QueryData(params)
+	if err != nil {
+		t.Fatalf("QueryData returned error: %v", err)
+	}
+	if first["total"].(int) != 1 {
+		t.Fatalf("expected initial total 1, got %#v", first["total"])
+	}
+	key := queryCacheKey(params)
+	if service.getCachedQuery(key) == nil {
+		t.Fatalf("expected cached entry after first query")
+	}
+
+	// 直接从 DB 删除（不走 service 的失效路径），缓存仍命中旧结果，验证缓存确实生效。
+	mustExecCrossSeedTest(t, store.DB, `DELETE FROM seed_parameters WHERE torrent_id = ?`, "3001")
+	stale, err := service.QueryData(params)
+	if err != nil {
+		t.Fatalf("QueryData returned error: %v", err)
+	}
+	if stale["total"].(int) != 1 {
+		t.Fatalf("expected cached total 1 (stale) while cache alive, got %#v", stale["total"])
+	}
+
+	// 通过 service 删除应使缓存失效：先恢复数据再走 DeleteCrossSeedData。
+	mustExecCrossSeedTest(t, store.DB, `INSERT INTO seed_parameters (
+		hash, torrent_id, site_name, nickname, title, subtitle, type, medium, video_codec,
+		audio_codec, resolution, team, source, tags, title_components,
+		screenshot_review_status, is_reviewed, created_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"hash-3001", "3001", "hdsky", "HDSky", "Valid", "", "category.movie", "medium.bluray", "video.h264",
+		"audio.dts", "resolution.r1080p", "team.other", "", "[]", "[]", "none", 1, "2026-04-14 10:00:00", "2026-04-14 10:00:00")
+	mustExecCrossSeedTest(t, store.DB, `INSERT INTO torrents (hash, name, size, save_path, downloader_id, state, last_seen, sites, is_hidden)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+		"hash-3001", "Valid", 100, "/downloads", "qb-1", "做种中", "2026-04-14 10:00:00", "HDSky")
+
+	if _, status := service.DeleteCrossSeedData(map[string]any{"torrent_id": "3001", "site_name": "hdsky"}); status != 200 {
+		t.Fatalf("expected delete status 200, got %d", status)
+	}
+	if service.getCachedQuery(key) != nil {
+		t.Fatalf("expected cache invalidated after delete")
+	}
+	afterDelete, err := service.QueryData(params)
+	if err != nil {
+		t.Fatalf("QueryData returned error: %v", err)
+	}
+	if afterDelete["total"].(int) != 0 {
+		t.Fatalf("expected total 0 after delete, got %#v", afterDelete["total"])
+	}
+}

@@ -173,6 +173,8 @@ func (r *StatsRepository) EnsureTrafficStatsTables() error {
 // 参数/返回：返回 downloader_id -> 累计值 的映射。
 // 失败场景：查询失败时返回错误；表不存在时返回空映射且不报错。
 // 副作用：无副作用，仅读取数据库。
+// 性能说明：子查询 GROUP BY downloader_id 依赖 idx_traffic_stats_downloader_datetime
+// (downloader_id, stat_datetime) 走 loose index scan，成本与采样行数无关。
 func (r *StatsRepository) QueryLatestCumulativeByDownloader() (map[string]CumulativeSnapshot, error) {
 	rows := make([]struct {
 		DownloaderID         string `gorm:"column:downloader_id"`
@@ -186,7 +188,6 @@ func (r *StatsRepository) QueryLatestCumulativeByDownloader() (map[string]Cumula
 		JOIN (
 			SELECT downloader_id, MAX(stat_datetime) AS max_dt
 			FROM traffic_stats
-			WHERE cumulative_uploaded > 0 OR cumulative_downloaded > 0
 			GROUP BY downloader_id
 		) last ON t.downloader_id = last.downloader_id AND t.stat_datetime = last.max_dt
 	`

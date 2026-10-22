@@ -210,3 +210,27 @@ func TestTrafficTotalsCachesWithinTTL(t *testing.T) {
 		t.Fatalf("unexpected refreshed totals: %#v", fresh["qb-1"])
 	}
 }
+
+func TestTrafficTotalsIncludesZeroCumulativeDownloader(t *testing.T) {
+	store := newTorrentRepositoryTestStore(t)
+	repo := NewTorrentRepository(store)
+
+	now := time.Now()
+	insertTrafficStat(t, store.DB, now.Add(-1*time.Minute), "qb-1", 100, 100)
+	insertTrafficStat(t, store.DB, now.Add(-1*time.Minute), "qb-2", 0, 0)
+
+	result, err := repo.TrafficTotals()
+	if err != nil {
+		t.Fatalf("TrafficTotals failed: %v", err)
+	}
+
+	// 从未产生流量的下载器也应返回（累计值为 0），而不是从结果中消失。
+	qb1 := result["qb-1"]
+	if qb1 == nil || qb1["total_dl"] != 100 || qb1["total_ul"] != 100 {
+		t.Fatalf("qb-1 unexpected totals: %#v", qb1)
+	}
+	qb2 := result["qb-2"]
+	if qb2 == nil || qb2["total_dl"] != 0 || qb2["total_ul"] != 0 {
+		t.Fatalf("qb-2 unexpected totals: %#v", qb2)
+	}
+}

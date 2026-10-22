@@ -256,6 +256,11 @@ wget -O - https://github.com/jadylc/PTNexus/releases/latest/download/install-pt-
 
 # 更新日志
 
+### v4.0.63（2026.10.22）
+
+- 修复：维护种子/跨种页面加载慢（/api/cross-seed-data 分类查询增加 30 秒进程内缓存；排除目标站已存在种子由全 torrents 物化派生表改为相关 NOT EXISTS；seed_parameters 新增 (type,is_reviewed,created_at) 复合索引）
+- 优化：首页下载器状态接口进一步提速（traffic_stats 新增 (downloader_id,stat_datetime) 索引，累计流量子查询走 loose index scan）
+
 ### v4.0.62（2026.10.21）
 
 - 修复：首页下载器状态接口仍慢（traffic_stats 累计流量查询改为取每个下载器最近一条累计记录以走主键索引，结果增加 30 秒进程内缓存，避免多请求并发全表扫描）

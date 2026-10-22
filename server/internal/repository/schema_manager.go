@@ -758,11 +758,15 @@ func (m *SchemaManager) indexSpecs() []schemaIndexSpec {
 		{table: "torrents", name: "idx_torrents_hidden_downloader_size", columns: []string{"is_hidden", "downloader_id", "size"}},
 		{table: "torrents", name: "idx_torrents_hidden_size_progress", columns: []string{"is_hidden", "size", "progress"}},
 		{table: "torrents", name: "idx_torrents_name_size", columns: []string{"name", "size"}, mysqlPrefixes: map[string]int{"name": 255}},
+		{table: "traffic_stats", name: "idx_traffic_stats_downloader_datetime", columns: []string{"downloader_id", "stat_datetime"}},
 		{table: "torrent_upload_stats", name: "idx_torrent_upload_stats_hidden_hash", columns: []string{"is_hidden", "hash"}},
 		{table: "seed_parameters", name: "idx_seed_parameters_hash", columns: []string{"hash"}},
 		{table: "seed_parameters", name: "idx_seed_parameters_created_at", columns: []string{"created_at"}},
 		{table: "seed_parameters", name: "idx_seed_parameters_torrent_site", columns: []string{"torrent_id", "site_name"}},
 		{table: "seed_parameters", name: "idx_seed_parameters_reviewed_created", columns: []string{"is_reviewed", "created_at"}},
+		// 跨种 data 分类查询按 sp.type IN (...) + is_reviewed 过滤，并按 created_at 排序，
+		// 复合索引(type, is_reviewed, created_at) 可让 reviewed 首屏查询避免全表扫描。
+		{table: "seed_parameters", name: "idx_seed_parameters_type_reviewed_created", columns: []string{"type", "is_reviewed", "created_at"}},
 
 		{table: "publish_queue_tasks", name: "idx_publish_queue_status_next", columns: []string{"status", "next_run_at"}},
 		{table: "publish_queue_tasks", name: "idx_publish_queue_group_id", columns: []string{"group_id"}},

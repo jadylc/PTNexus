@@ -100,6 +100,22 @@ func (s *CrossSeedService) QueryData(params CrossSeedQueryParams) (map[string]an
 		params.PageSize = 100
 	}
 
+	// 30s 进程内缓存：跨种页每次请求都会执行无 LIMIT 全量分类查询与
+	// 全 torrents 聚合派生表，短时间重复进入时会显著拖慢页面。
+	key := queryCacheKey(params)
+	if cached := s.getCachedQuery(key); cached != nil {
+		return cached, nil
+	}
+
+	result, err := s.queryDataUncached(params)
+	if err != nil {
+		return nil, err
+	}
+	s.setCachedQuery(key, result)
+	return result, nil
+}
+
+func (s *CrossSeedService) queryDataUncached(params CrossSeedQueryParams) (map[string]any, error) {
 	offset := (params.Page - 1) * params.PageSize
 	dbType := s.repo.DBType()
 	normalizedReviewStatus := normalizeReviewStatus(params.ReviewStatus)
@@ -281,6 +297,7 @@ func (s *CrossSeedService) DeleteCrossSeedData(payload map[string]any) (map[stri
 			_, _ = s.repo.Exec("DELETE FROM seed_parameters WHERE torrent_id = ? AND site_name = ?", torrentID, siteName)
 			deletedCount++
 		}
+		s.invalidateCache()
 		return map[string]any{"success": true, "message": fmt.Sprintf("成功删除 %d 条数据", deletedCount), "deleted_count": deletedCount}, 200
 	}
 
@@ -293,6 +310,7 @@ func (s *CrossSeedService) DeleteCrossSeedData(payload map[string]any) (map[stri
 	if err != nil {
 		return map[string]any{"success": false, "error": err.Error()}, 500
 	}
+	s.invalidateCache()
 	return map[string]any{"success": true, "message": fmt.Sprintf("种子数据 %s from %s 已删除", torrentID, siteName)}, 200
 }
 
@@ -336,31 +354,39 @@ func (s *CrossSeedService) buildExcludeTargetCondition(dbType string, excludedTa
 
 	spNicknameCondition := buildAliasMatchCondition(dbType, "sp.nickname", targetAliases)
 	spSiteCondition := buildAliasMatchCondition(dbType, "sp.site_name", targetAliases)
-	targetHashSiteCondition := buildAliasMatchCondition(dbType, "target_hash_source.sites", targetAliases)
 	targetGroupSiteCondition := buildAliasMatchCondition(dbType, "target_group_source.sites", targetAliases)
 	aliasArgs := aliasMatchArgs(dbType, targetAliases)
+
+	// target_groups 依赖 ct 的 name/size（seed_parameters 无 size 列），无法脱离 ct，
+	// 只能保留物化派生表；但这里改为只对目标站匹配条件做派生，不再把 target_hashes
+	// 一并物化，减少每次请求全 torrents 上的聚合开销。
 	joins := fmt.Sprintf(`
-		LEFT JOIN (
-			SELECT DISTINCT target_hash_source.hash
-			FROM torrents target_hash_source
-			WHERE (target_hash_source.is_hidden = 0 OR target_hash_source.is_hidden IS NULL)
-			  AND EXISTS (SELECT 1 FROM seed_parameters sp WHERE sp.hash = target_hash_source.hash)
-			  AND %s
-		) target_hashes ON target_hashes.hash = ct.hash
 		LEFT JOIN (
 			SELECT DISTINCT target_group_source.name, target_group_source.size
 			FROM torrents target_group_source
 			WHERE (target_group_source.is_hidden = 0 OR target_group_source.is_hidden IS NULL)
 			  AND %s
 		) target_groups ON target_groups.name = ct.name AND target_groups.size = ct.size
-	`, targetHashSiteCondition, targetGroupSiteCondition)
-	joinArgs := make([]any, 0, len(aliasArgs)*2)
+	`, targetGroupSiteCondition)
+	joinArgs := make([]any, 0, len(aliasArgs))
 	joinArgs = append(joinArgs, aliasArgs...)
-	joinArgs = append(joinArgs, aliasArgs...)
-	args := make([]any, 0)
+	// NOT EXISTS(target_hash_source) 位于条件最前，其 sites 占位符参数必须先入 args。
+	args := make([]any, 0, len(aliasArgs))
+	args = append(args, aliasArgs...)
 	conditionParts := []string{
 		"ct.hash IS NOT NULL",
-		"target_hashes.hash IS NULL",
+		// target_hashes 语义：排除"目标站已有同名种子（torrents 中该 hash 的
+		// sites 命中目标站）"。原实现会物化全量 DISTINCT hash 派生表，这里改为
+		// 对 ct.hash 的相关 NOT EXISTS，直接利用 torrents(hash) 索引逐行判断，
+		// 不再每次请求都物化全表。语义等价：原内层 EXISTS(seed_parameters) 在
+		// ct.hash 关联下恒成立（ct 本身仅包含存在于 seed_parameters 的 hash）。
+		fmt.Sprintf(`NOT EXISTS (
+			SELECT 1
+			FROM torrents target_hash_source
+			WHERE target_hash_source.hash = ct.hash
+			  AND (target_hash_source.is_hidden = 0 OR target_hash_source.is_hidden IS NULL)
+			  AND %s
+		)`, buildAliasMatchCondition(dbType, "target_hash_source.sites", targetAliases)),
 		"target_groups.name IS NULL",
 	}
 
