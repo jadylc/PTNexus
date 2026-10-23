@@ -31,17 +31,28 @@
             <el-option v-for="s in siteStatsData" :key="s.site_name" :label="s.site_name" :value="s.site_name" />
           </el-select>
         </h2>
-        <!-- [修改] 添加 table-wrapper 用于在极端情况下提供水平滚动 -->
+        <!-- [修改] 官组统计改为"按站点聚合 + 展开看该站点各官组"，避免上百行官组平铺 -->
         <div class="table-wrapper">
-          <el-table v-loading="groupStatsLoading" :data="groupStatsData" class="stats-table glass-table" border height="100%"
-            :default-sort="{ prop: 'total_size', order: 'descending' }">
+          <el-table v-loading="groupStatsLoading" :data="groupStatsBySite" class="stats-table glass-table" border height="100%"
+            row-key="site_name" :default-sort="{ prop: 'total_size', order: 'descending' }">
             <template #empty>
               <el-empty description="无官组数据" />
             </template>
-            <el-table-column prop="site_name" label="所属站点" align="center" sortable width="110" />
-            <el-table-column :label="selectedSite ? '官组' : '官组'" prop="group_suffix" sortable align="center" />
-            <el-table-column prop="torrent_count" label="数量" sortable align="center" width="80" />
-            <el-table-column prop="total_size" label="体积" sortable align="center" width="90">
+            <el-table-column type="expand">
+              <template #default="scope">
+                <el-table :data="scope.row.groups" class="glass-table group-sub-table" border size="small">
+                  <el-table-column prop="group_suffix" label="官组" align="center" show-overflow-tooltip />
+                  <el-table-column prop="torrent_count" label="数量" align="center" width="90" sortable />
+                  <el-table-column prop="total_size" label="体积" align="center" width="120" sortable>
+                    <template #default="inner">{{ formatBytes(inner.row.total_size) }}</template>
+                  </el-table-column>
+                </el-table>
+              </template>
+            </el-table-column>
+            <el-table-column prop="site_name" label="站点" align="center" sortable width="140" show-overflow-tooltip />
+            <el-table-column prop="group_count" label="官组数" align="center" width="90" sortable />
+            <el-table-column prop="torrent_count" label="数量" align="center" width="90" sortable />
+            <el-table-column prop="total_size" label="体积" align="center" sortable>
               <template #default="scope">
                 <span>{{ formatBytes(scope.row.total_size) }}</span>
               </template>
@@ -58,15 +69,17 @@
             <p class="scan-description">扫描数据库中所有种子的保存路径，找出本地已删除的文件或未被任务引用的孤立文件。为防止误删除种子，所以不提供一键删除功能。</p>
           </div>
           <div class="scan-controls">
+            <!-- [修改] 路径下拉改为跨下载器聚合去重：同一目录往往被多个下载器共用，
+                 而扫描/统计本身也是跨下载器按 save_path 进行的，按下载器分组会重复列出同一路径 -->
             <el-select v-model="selectedPath" clearable placeholder="选择路径(可选)" filterable size="default"
               class="scan-path-select">
-              <el-option-group v-for="downloader in downloadersWithPaths" :key="downloader.id" :label="downloader.name">
-                <el-option v-for="pathItem in downloader.paths" :key="pathItem.path" :label="pathItem.path"
-                  :value="pathItem.path">
-                  <span>{{ pathItem.path }}</span>
-                  <span style="float: right; color: #8492a6; font-size: 13px">({{ pathItem.count }})</span>
-                </el-option>
-              </el-option-group>
+              <el-option v-for="pathItem in aggregatedPaths" :key="pathItem.path" :label="pathItem.path"
+                :value="pathItem.path">
+                <span>{{ pathItem.path }}</span>
+                <span style="float: right; color: #8492a6; font-size: 13px">
+                  ({{ pathItem.count }}{{ pathItem.downloaderCount > 1 ? ` · ${pathItem.downloaderCount} 个下载器` : '' }})
+                </span>
+              </el-option>
             </el-select>
             <el-button type="primary" @click="startScan" :loading="scanning" :icon="Search">
               {{ selectedPath ? '扫描选定路径' : '扫描全部路径' }}
@@ -310,6 +323,68 @@ const scanResult = ref<ScanResult | null>(null)
 const selectedPath = ref<string>('')
 const downloadersWithPaths = ref<Downloader[]>([])
 
+// 官组统计按站点聚合：一行一个站点，展开后是该站点下的各官组明细。
+const groupStatsBySite = computed(() => {
+  const buckets = new Map<string, {
+    site_name: string
+    groups: GroupStat[]
+    group_count: number
+    torrent_count: number
+    total_size: number
+  }>()
+
+  for (const row of groupStatsData.value) {
+    const siteName = (row.site_name || '').trim() || '未知站点'
+    let bucket = buckets.get(siteName)
+    if (!bucket) {
+      bucket = { site_name: siteName, groups: [], group_count: 0, torrent_count: 0, total_size: 0 }
+      buckets.set(siteName, bucket)
+    }
+    bucket.groups.push(row)
+    bucket.torrent_count += row.torrent_count || 0
+    bucket.total_size += row.total_size || 0
+  }
+
+  const list = Array.from(buckets.values())
+  for (const item of list) {
+    item.group_count = item.groups.length
+    // 展开后的官组按体积从大到小，和主表默认排序口径一致
+    item.groups.sort((a, b) => (b.total_size || 0) - (a.total_size || 0))
+  }
+  return list
+})
+
+// 路径下拉：跨下载器合并同名路径（同一目录常被多个下载器共用，且扫描/统计本身就是按路径跨下载器做的）
+const aggregatedPaths = computed(() => {
+  const merged = new Map<string, { path: string; count: number; downloaderNames: string[] }>()
+
+  for (const downloader of downloadersWithPaths.value) {
+    const downloaderName = (downloader.name || String(downloader.id ?? '')).trim()
+    for (const item of downloader.paths || []) {
+      const path = (item.path || '').trim()
+      if (!path) continue
+
+      let entry = merged.get(path)
+      if (!entry) {
+        entry = { path, count: 0, downloaderNames: [] }
+        merged.set(path, entry)
+      }
+      entry.count += item.count || 0
+      if (downloaderName && !entry.downloaderNames.includes(downloaderName)) {
+        entry.downloaderNames.push(downloaderName)
+      }
+    }
+  }
+
+  return Array.from(merged.values())
+    .map(entry => ({
+      path: entry.path,
+      count: entry.count,
+      downloaderCount: entry.downloaderNames.length,
+    }))
+    .sort((a, b) => a.path.localeCompare(b.path))
+})
+
 // 路径筛选（共用一个）
 const pathFilter = ref<string>('')
 
@@ -531,6 +606,16 @@ onMounted(() => {
 .table-wrapper {
   overflow-x: auto;
   position: relative;
+}
+
+/* 站点展开后的官组明细表 */
+.group-sub-table {
+  width: calc(100% - 24px);
+  margin: 8px 12px;
+}
+
+:deep(.el-table__expand-column .el-table__expand-icon) {
+  margin: 0 auto;
 }
 
 /* 本地扫描区块特殊样式 */
