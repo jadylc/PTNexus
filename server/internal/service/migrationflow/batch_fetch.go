@@ -1,6 +1,9 @@
 package migrationflow
 
 import (
+	"strings"
+
+	"github.com/pt-nexus/server/internal/repository"
 	acquirefetch "github.com/pt-nexus/server/internal/service/acquire/fetch"
 	processingshared "github.com/pt-nexus/server/internal/service/processing/shared"
 )
@@ -18,6 +21,8 @@ func (s *MigrateService) StartBatchFetch(torrentNames []string, sourcePriority [
 	}
 	taskID := s.newID("fetch")
 	s.batchFetchState.Start(taskID, len(torrentNames))
+	// 逐条落库，使重启后可以只重跑未完成的部分（抓取本身可重复执行，覆盖即可）。
+	s.taskRunStart(taskID, repository.TaskRunKindBatchFetch, taskRunJSON(map[string]any{"source_priority": sourcePriority}), 1, torrentNames)
 	go s.runBatchFetch(taskID, torrentNames, sourcePriority)
 	return map[string]any{"success": true, "task_id": taskID, "message": "批量获取任务已启动"}, 200
 }
@@ -26,13 +31,16 @@ func (s *MigrateService) runBatchFetch(taskID string, torrentNames []string, sou
 	rows, err := s.repo.ListTorrentsByNames(torrentNames)
 	if err != nil {
 		for _, name := range torrentNames {
+			reason := "读取 torrents 失败: " + err.Error()
 			s.batchFetchState.MarkResult(taskID, false, map[string]any{
 				"name":   name,
 				"status": "failed",
-				"reason": "读取 torrents 失败: " + err.Error(),
+				"reason": reason,
 			})
+			s.taskRunItemDone(taskID, name, repository.TaskItemStatusFailed, reason)
 		}
 		s.batchFetchState.Finish(taskID)
+		s.finishTaskRun(taskID, repository.TaskRunKindBatchFetch)
 		return
 	}
 
@@ -40,6 +48,13 @@ func (s *MigrateService) runBatchFetch(taskID string, torrentNames []string, sou
 		FetchAndStore: s.FetchAndStore,
 		OnResult: func(success bool, result map[string]any) {
 			s.batchFetchState.MarkResult(taskID, success, result)
+			name := strings.TrimSpace(processingshared.ToString(result["name"], ""))
+			message := taskRunResultMessage(result)
+			if success {
+				s.taskRunItemDone(taskID, name, repository.TaskItemStatusSucceeded, message)
+				return
+			}
+			s.taskRunItemDone(taskID, name, repository.TaskItemStatusFailed, message)
 		},
 		// 协作式取消：任务监控里的"终止"置标志位，这里在下一个种子前退出，
 		// 不中断正在抓的当前项，避免留下半写状态。
@@ -48,6 +63,7 @@ func (s *MigrateService) runBatchFetch(taskID string, torrentNames []string, sou
 		},
 	})
 	s.batchFetchState.Finish(taskID)
+	s.finishTaskRun(taskID, repository.TaskRunKindBatchFetch)
 }
 
 func (s *MigrateService) BatchFetchProgress(taskID string) (map[string]any, int) {

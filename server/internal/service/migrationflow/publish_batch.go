@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pt-nexus/server/internal/platform/logx"
+	"github.com/pt-nexus/server/internal/repository"
 	acquirefetch "github.com/pt-nexus/server/internal/service/acquire/fetch"
 	processingshared "github.com/pt-nexus/server/internal/service/processing/shared"
 	publishworkflow "github.com/pt-nexus/server/internal/service/publish/workflow"
@@ -140,12 +142,15 @@ func (s *MigrateService) StartPublishBatch(payload map[string]any) (map[string]a
 
 	batchID := s.newID("batch")
 	s.publishState.Start(batchID, len(targets), concurrency, time.Now())
+	// 批次与逐站点结果落库：进程重启后未成功的站点会被自动续跑，已成功的不会重复发种。
+	s.taskRunStart(batchID, repository.TaskRunKindPublishBatch, taskRunJSON(payload), concurrency, targets)
 
 	go s.runPublishBatch(batchID, payload, targets, concurrency)
 	return map[string]any{"success": true, "batch_id": batchID, "concurrency": concurrency, "message": "批量发布任务已启动"}, 200
 }
 
 func (s *MigrateService) runPublishBatch(batchID string, payload map[string]any, targets []string, concurrency int) {
+	var mu sync.Mutex
 	publishworkflow.RunManagedBatchPublishFromPayload(
 		publishworkflow.ManagedBatchFromPayloadInput{
 			BatchID:     batchID,
@@ -156,8 +161,19 @@ func (s *MigrateService) runPublishBatch(batchID string, payload map[string]any,
 		publishworkflow.ManagedBatchFromPayloadDeps{
 			State:          s.publishState,
 			PublishPayload: s.Publish,
+			OnSiteFinished: func(siteName string, result map[string]any) {
+				mu.Lock()
+				defer mu.Unlock()
+				message := taskRunResultMessage(result)
+				if taskRunResultSuccess(result) {
+					s.taskRunItemDone(batchID, siteName, repository.TaskItemStatusSucceeded, message)
+					return
+				}
+				s.taskRunItemDone(batchID, siteName, repository.TaskItemStatusFailed, message)
+			},
 		},
 	)
+	s.finishTaskRun(batchID, repository.TaskRunKindPublishBatch)
 }
 
 func (s *MigrateService) PublishBatchStatus(batchID string) (map[string]any, int) {

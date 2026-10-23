@@ -365,6 +365,43 @@ func (r *PublishLogRepository) ListRecentAttentionLogs(limit int) ([]PublishLogE
 	return rows, nil
 }
 
+// ExistsSucceededPublish 判断"同一种子发布到同一站点"是否已存在成功记录。
+// 用途：队列任务被重新领取时（进程重启后回收 running、或失败重试）先查这里，
+// 命中就跳过，避免向站点重复发种。
+// 参数：sourceSite/torrentID/targetSite 共同定位一次发布；
+// excludeQueueTaskID > 0 时排除本任务自己写入的记录（避免刚成功又被判"已发布"）。
+// 残余风险：若上次崩溃恰好发生在"站点已受理、日志尚未落库"的窗口，这里查不到，
+// 仍会重发一次——这是以 publish_logs 为准的固有限制。
+// 失败场景：仓储未初始化返回 error；定位字段为空返回 false（宁可漏判也不误判为已发布）。
+// 副作用：只读 publish_logs。
+func (r *PublishLogRepository) ExistsSucceededPublish(sourceSite, torrentID, targetSite string, excludeQueueTaskID int64) (bool, error) {
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return false, errors.New("publish log repo is nil")
+	}
+
+	sourceSite = strings.TrimSpace(sourceSite)
+	torrentID = strings.TrimSpace(torrentID)
+	targetSite = strings.TrimSpace(targetSite)
+	if sourceSite == "" || torrentID == "" || targetSite == "" {
+		return false, nil
+	}
+
+	query := r.store.DB.Model(&PublishLogEntry{}).
+		Where("status = ?", "success").
+		Where("torrent_id = ?", torrentID).
+		Where("target_site = ?", targetSite).
+		Where("source_site = ?", sourceSite)
+	if excludeQueueTaskID > 0 {
+		query = query.Where("queue_task_id IS NULL OR queue_task_id <> ?", excludeQueueTaskID)
+	}
+
+	var count int64
+	if err := query.Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 // MaxNumericTriggerSuffix 计算 publish_trigger 以指定前缀开头的最大数字后缀。
 // 参数/返回：prefix 为触发前缀（例如：批量转种-）；返回最大数字（不存在则为 0）与 error。
 // 失败场景：DB 未初始化或查询失败返回 error；解析失败的触发会被忽略。

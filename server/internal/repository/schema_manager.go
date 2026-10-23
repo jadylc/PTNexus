@@ -56,6 +56,13 @@ func (m *SchemaManager) EnsureSchema() error {
 		}
 	}
 
+	// 批次任务表（task_runs / task_run_items）：让批量发布、批量获取可跨重启续跑。
+	for _, sqlText := range m.taskRunTableSQLs() {
+		if err := m.store.DB.Exec(sqlText).Error; err != nil {
+			return fmt.Errorf("创建批次任务表失败: %w", err)
+		}
+	}
+
 	for tableName, columns := range m.columnSpecs() {
 		if err := m.ensureTableColumns(tableName, columns); err != nil {
 			return err
@@ -748,6 +755,98 @@ func (m *SchemaManager) columnSpecs() map[string][]schemaColumnSpec {
 	}
 }
 
+// taskRunTableSQLs 返回批次任务两张表的建表语句（三种引擎各一套）。
+// 说明：只建表，索引统一交给 indexSpecs 处理（它按引擎做了存在性判断，
+// 避免 MySQL 不支持 CREATE INDEX IF NOT EXISTS 的差异问题）。
+func (m *SchemaManager) taskRunTableSQLs() []string {
+	switch m.store.DBType {
+	case "mysql":
+		return []string{
+			`CREATE TABLE IF NOT EXISTS task_runs (
+				id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+				run_id VARCHAR(64) NOT NULL,
+				kind VARCHAR(32) NOT NULL,
+				status VARCHAR(32) NOT NULL,
+				payload_json LONGTEXT,
+				concurrency INT NOT NULL DEFAULT 1,
+				message LONGTEXT,
+				started_at DATETIME NULL,
+				finished_at DATETIME NULL,
+				created_at DATETIME NOT NULL,
+				updated_at DATETIME NOT NULL
+			) ENGINE=InnoDB ROW_FORMAT=Dynamic`,
+			`CREATE TABLE IF NOT EXISTS task_run_items (
+				id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+				run_id VARCHAR(64) NOT NULL,
+				seq INT NOT NULL DEFAULT 0,
+				target VARCHAR(255) NOT NULL,
+				status VARCHAR(32) NOT NULL,
+				message LONGTEXT,
+				started_at DATETIME NULL,
+				finished_at DATETIME NULL,
+				created_at DATETIME NOT NULL,
+				updated_at DATETIME NOT NULL
+			) ENGINE=InnoDB ROW_FORMAT=Dynamic`,
+		}
+	case "postgresql":
+		return []string{
+			`CREATE TABLE IF NOT EXISTS task_runs (
+				id BIGSERIAL PRIMARY KEY,
+				run_id VARCHAR(64) NOT NULL,
+				kind VARCHAR(32) NOT NULL,
+				status VARCHAR(32) NOT NULL,
+				payload_json TEXT,
+				concurrency INT NOT NULL DEFAULT 1,
+				message TEXT,
+				started_at TIMESTAMP NULL,
+				finished_at TIMESTAMP NULL,
+				created_at TIMESTAMP NOT NULL,
+				updated_at TIMESTAMP NOT NULL
+			)`,
+			`CREATE TABLE IF NOT EXISTS task_run_items (
+				id BIGSERIAL PRIMARY KEY,
+				run_id VARCHAR(64) NOT NULL,
+				seq INT NOT NULL DEFAULT 0,
+				target VARCHAR(255) NOT NULL,
+				status VARCHAR(32) NOT NULL,
+				message TEXT,
+				started_at TIMESTAMP NULL,
+				finished_at TIMESTAMP NULL,
+				created_at TIMESTAMP NOT NULL,
+				updated_at TIMESTAMP NOT NULL
+			)`,
+		}
+	default:
+		return []string{
+			`CREATE TABLE IF NOT EXISTS task_runs (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				run_id TEXT NOT NULL,
+				kind TEXT NOT NULL,
+				status TEXT NOT NULL,
+				payload_json TEXT,
+				concurrency INTEGER NOT NULL DEFAULT 1,
+				message TEXT,
+				started_at TEXT NULL,
+				finished_at TEXT NULL,
+				created_at TEXT NOT NULL,
+				updated_at TEXT NOT NULL
+			)`,
+			`CREATE TABLE IF NOT EXISTS task_run_items (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				run_id TEXT NOT NULL,
+				seq INTEGER NOT NULL DEFAULT 0,
+				target TEXT NOT NULL,
+				status TEXT NOT NULL,
+				message TEXT,
+				started_at TEXT NULL,
+				finished_at TEXT NULL,
+				created_at TEXT NOT NULL,
+				updated_at TEXT NOT NULL
+			)`,
+		}
+	}
+}
+
 func (m *SchemaManager) indexSpecs() []schemaIndexSpec {
 	return []schemaIndexSpec{
 		{table: "torrents", name: "idx_torrents_hash", columns: []string{"hash"}},
@@ -767,6 +866,11 @@ func (m *SchemaManager) indexSpecs() []schemaIndexSpec {
 		// 跨种 data 分类查询按 sp.type IN (...) + is_reviewed 过滤，并按 created_at 排序，
 		// 复合索引(type, is_reviewed, created_at) 可让 reviewed 首屏查询避免全表扫描。
 		{table: "seed_parameters", name: "idx_seed_parameters_type_reviewed_created", columns: []string{"type", "is_reviewed", "created_at"}},
+		// 批次任务：按 run_id 取头/条目，按 status 找可续跑与需清理的批次。
+		{table: "task_runs", name: "idx_task_runs_run_id", columns: []string{"run_id"}},
+		{table: "task_runs", name: "idx_task_runs_status_kind", columns: []string{"status", "kind"}},
+		{table: "task_run_items", name: "idx_task_run_items_run_seq", columns: []string{"run_id", "seq"}},
+		{table: "task_run_items", name: "idx_task_run_items_run_status", columns: []string{"run_id", "status"}},
 
 		{table: "publish_queue_tasks", name: "idx_publish_queue_status_next", columns: []string{"status", "next_run_at"}},
 		{table: "publish_queue_tasks", name: "idx_publish_queue_group_id", columns: []string{"group_id"}},

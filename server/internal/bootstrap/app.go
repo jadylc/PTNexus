@@ -95,11 +95,15 @@ func NewApp() (*App, error) {
 	migrateRepo := repository.NewMigrateRepository(store)
 	queueRepo := repository.NewPublishQueueRepository(store)
 	publishLogRepo := repository.NewPublishLogRepository(store)
+	taskRunRepo := repository.NewTaskRunRepository(store)
 
 	migrateService := migrationflow.NewMigrateService(migrateRepo, cfgManager)
 	migrateService.InitPublishQueue(queueRepo, statsRepo)
 	migrateService.InitPublishLogs(publishLogRepo)
+	migrateService.InitTaskRuns(taskRunRepo)
 	migrateService.StartPublishQueueWorker()
+	// 续跑上一次进程被中断的批次任务（批量发布/批量获取），必须在队列线程之后启动。
+	migrateService.StartTaskRunResume()
 	torrentTransferService := service.NewTorrentTransferService(migrateRepo, cfgManager)
 
 	settingsService.SetIYUUTrigger(func() map[string]any {

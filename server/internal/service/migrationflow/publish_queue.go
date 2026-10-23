@@ -19,6 +19,10 @@ import (
 const (
 	publishQueueLogModule  = "发布-队列"
 	queueAutoAddNotRunJSON = `{"success": false, "message": "未执行"}`
+
+	// orphanRunningRecoverTimeout 是运行期回收僵尸 running 任务的超时阈值，
+	// 必须明显大于单个发布任务的正常耗时，避免误伤仍在正常执行的任务。
+	orphanRunningRecoverTimeout = 30 * time.Minute
 )
 
 type publishQueueConfig struct {
@@ -66,8 +70,29 @@ func (s *MigrateService) StartPublishQueueWorker() {
 		}
 		s.queueStopCh = make(chan struct{})
 		s.queueDoneCh = make(chan struct{})
+		// 进程刚起来时不可能有自己的任务真的在跑，先把上次残留的 running 全部回收，
+		// 否则这些任务会永久卡在"发布中"（ClaimNextRunnableTask 只领 queued）。
+		s.recoverOrphanQueueTasks(time.Now(), 0, "启动回收")
 		go s.runPublishQueueWorker()
 	})
+}
+
+// recoverOrphanQueueTasks 回收无主/超时的 running 任务并重新入队。
+// 参数/返回：olderThan<=0 表示不看时间全量回收；reason 用于日志与 last_error 说明。
+// 失败场景：仓储未初始化或更新失败时只记警告，不影响队列继续工作。
+// 副作用：更新 publish_queue_tasks 状态。
+func (s *MigrateService) recoverOrphanQueueTasks(now time.Time, olderThan time.Duration, reason string) {
+	if s == nil || s.queueRepo == nil {
+		return
+	}
+	recovered, err := s.queueRepo.RecoverOrphanRunningTasks(now, olderThan)
+	if err != nil {
+		logx.Warnf(publishQueueLogModule, "%s running 任务失败 err=%v", reason, err)
+		return
+	}
+	if recovered > 0 {
+		logx.Infof(publishQueueLogModule, "%s：已重新入队 %d 个卡在 running 的队列任务", reason, recovered)
+	}
 }
 
 func (s *MigrateService) runPublishQueueWorker() {
@@ -99,7 +124,12 @@ func (s *MigrateService) runPublishQueueWorker() {
 				continue
 			}
 
+			// 运行期兜底：worker 卡死或副本异常退出留下的 running，超过阈值后回收。
+			// 阈值远大于单个任务的正常耗时，避免误伤正在执行的任务。
+			s.recoverOrphanQueueTasks(time.Now(), orphanRunningRecoverTimeout, "超时回收")
+
 			s.drainPublishQueueOnce(cfg)
+			s.pruneMemoryTaskStates()
 
 			if cfg.TaskCleanupHours > 0 && time.Since(lastCleanup) >= 30*time.Minute {
 				lastCleanup = time.Now()
@@ -791,6 +821,24 @@ func (s *MigrateService) executePublishQueueTask(cfg publishQueueConfig, taskRec
 	execTaskID := strings.TrimSpace(taskRecord.TaskID)
 	if execTaskID == "" {
 		execTaskID = fmt.Sprintf("queue-%d", taskID)
+	}
+
+	// 幂等闸门：任务被重新领取时（启动回收僵尸 running、失败重试）先查是否已成功发布过，
+	// 命中就直接标记成功跳过，避免向站点重复发种。
+	// 定位字段缺失时 ExistsSucceededPublish 返回 false（宁可漏判也不误跳过）。
+	if s.publishLogRepo != nil {
+		existed, existErr := s.publishLogRepo.ExistsSucceededPublish(strings.TrimSpace(taskRecord.SourceSite), torrentID, targetSite, taskID)
+		if existErr != nil {
+			logx.Warnf(publishQueueLogModule, "重复发布检查失败，继续执行 id=%d err=%v", taskID, existErr)
+		} else if existed {
+			reason := fmt.Sprintf("已跳过重复发布：torrent_id=%s 发布到 %s 此前已存在成功记录", torrentID, targetSite)
+			logx.Infof(publishQueueLogModule, "队列任务跳过（重复发布） id=%d torrent_id=%s target_site=%s", taskID, torrentID, targetSite)
+			if updateErr := s.queueRepo.UpdateTaskAfterSuccess(taskID, reason); updateErr != nil {
+				logx.Warnf(publishQueueLogModule, "写入跳过结果失败 id=%d err=%v", taskID, updateErr)
+			}
+			_ = s.publishLogRepo.UpdateStatusAndLogsByQueueTaskID(taskID, "skipped", reason)
+			return
+		}
 	}
 
 	logx.Infof(publishQueueLogModule, "开始执行队列任务 id=%d torrent_id=%s target_site=%s attempt=%d", taskID, torrentID, targetSite, taskRecord.AttemptCount)

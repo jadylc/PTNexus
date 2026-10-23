@@ -12,6 +12,9 @@ type ManagedBatchFromPayloadInput struct {
 type ManagedBatchFromPayloadDeps struct {
 	State          *BatchState
 	PublishPayload func(payload map[string]any) (map[string]any, int)
+	// OnSiteFinished 在每个目标站点发布返回后回调，供上层把逐站结果落库（批次重启续跑需要）。
+	// 为 nil 时行为与改动前完全一致。
+	OnSiteFinished func(siteName string, result map[string]any)
 }
 
 // RunManagedBatchPublishFromPayload 执行“按站点改写 targetSite + 发布 + 状态管理”的批量流程。
@@ -36,7 +39,11 @@ func RunManagedBatchPublishFromPayload(input ManagedBatchFromPayloadInput, deps 
 					targetPayload[key] = value
 				}
 				targetPayload["targetSite"] = siteName
-				return deps.PublishPayload(targetPayload)
+				result, status := deps.PublishPayload(targetPayload)
+				if deps.OnSiteFinished != nil {
+					deps.OnSiteFinished(siteName, result)
+				}
+				return result, status
 			},
 		},
 	)

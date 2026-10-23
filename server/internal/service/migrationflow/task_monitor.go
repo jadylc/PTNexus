@@ -13,18 +13,71 @@ import (
 
 const taskMonitorActionHint = "此操作会请求取消或标记监控状态，不保证强制终止底层进程"
 
+// taskMonitorRunLimit 是面板一次拉取的批次数量上限（含历史批次）。
+const taskMonitorRunLimit = 50
+
+// buildTaskRunEntry 把落库的批次（内存中已不存在，通常是重启前或已结束的）转成面板条目。
+// 说明：这类批次不再提供 actions——不在本进程里，手动终止无从下手；续跑由启动恢复自动完成。
+func buildTaskRunEntry(summary repository.TaskRunSummary) map[string]any {
+	status := "success"
+	switch strings.TrimSpace(summary.Status) {
+	case repository.TaskRunStatusRunning:
+		status = "running"
+	case repository.TaskRunStatusFailed, repository.TaskRunStatusInterrupted:
+		status = "failed"
+	case repository.TaskRunStatusCancelled:
+		status = "success"
+	}
+
+	title := "批量任务"
+	if strings.TrimSpace(summary.Kind) == repository.TaskRunKindBatchFetch {
+		title = "批量获取种子数据"
+	} else if strings.TrimSpace(summary.Kind) == repository.TaskRunKindPublishBatch {
+		title = "批量发布种子"
+	}
+
+	message := strings.TrimSpace(summary.Message)
+	if message == "" {
+		message = fmt.Sprintf("%d/%d", summary.Processed, summary.Total)
+	}
+
+	entry := map[string]any{
+		"key":           summary.Kind + ":" + summary.RunID,
+		"kind":          strings.TrimSpace(summary.Kind),
+		"raw_id":        strings.TrimSpace(summary.RunID),
+		"title":         title,
+		"status":        status,
+		"message":       message,
+		"progress_text": fmt.Sprintf("%d/%d", summary.Processed, summary.Total),
+		"started_at":    strings.TrimSpace(summary.StartedAt),
+		"updated_at":    firstNonEmptyString(strings.TrimSpace(summary.UpdatedAt), strings.TrimSpace(summary.StartedAt)),
+	}
+	if strings.TrimSpace(summary.Status) == repository.TaskRunStatusInterrupted {
+		entry["error"] = "进程重启后未能自动续跑，可在页面重新发起"
+	}
+	return entry
+}
+
 // TaskMonitorSnapshot 汇总当前可观测的后台任务状态。
 // 参数/返回：无参数；返回适合前端任务面板消费的任务列表与状态码。
-// 失败场景：数据库查询失败时返回 500。
-// 副作用：读取内存态任务状态与数据库中的发布队列/日志。
+// 失败场景：单个数据源读取失败不再整体返回 500，而是降级返回并在 message/degraded 中说明。
+// 副作用：读取内存态任务状态，以及数据库中的批次任务、发布队列与发种日志。
 func (s *MigrateService) TaskMonitorSnapshot() (map[string]any, int) {
 	tasks := make([]map[string]any, 0)
+	// 内存态优先（它带实时进度与可执行动作）；记录已出现的批次，避免与库中记录重复列出。
+	seenRunIDs := map[string]struct{}{}
 
 	for _, task := range s.publishState.Snapshot() {
+		if batchID := strings.TrimSpace(task.BatchID); batchID != "" {
+			seenRunIDs[batchID] = struct{}{}
+		}
 		tasks = append(tasks, buildBatchPublishTaskEntry(task))
 	}
 
 	for taskID, task := range s.batchFetchState.SnapshotAll() {
+		if id := strings.TrimSpace(taskID); id != "" {
+			seenRunIDs[id] = struct{}{}
+		}
 		tasks = append(tasks, buildBatchFetchTaskEntry(taskID, task))
 	}
 
@@ -35,7 +88,23 @@ func (s *MigrateService) TaskMonitorSnapshot() (map[string]any, int) {
 
 	// 单个数据源读失败不再让整块面板 500：其余任务照常展示，同时明确告知哪一部分没取到，
 	// 避免"面板空白"被误读成"没有任务"。
-	degraded := make([]string, 0, 2)
+	degraded := make([]string, 0, 3)
+
+	// 批次任务落库后，进程重启前的批次、以及已结束的批次都能从库里读到，
+	// 任务监控不再因为重启而失忆。
+	if s.taskRunRepo != nil {
+		summaries, err := s.taskRunRepo.ListRecentRunSummaries(taskMonitorRunLimit)
+		if err != nil {
+			degraded = append(degraded, "批次任务: "+err.Error())
+		} else {
+			for _, summary := range summaries {
+				if _, ok := seenRunIDs[summary.RunID]; ok {
+					continue
+				}
+				tasks = append(tasks, buildTaskRunEntry(summary))
+			}
+		}
+	}
 
 	if s.queueRepo != nil {
 		activeQueueTasks, err := s.queueRepo.ListActiveTasks(50)
@@ -115,6 +184,8 @@ func (s *MigrateService) applyPublishBatchTaskAction(batchID string, action stri
 	case "terminate":
 		s.publishState.Cancel(batchID)
 		s.publishState.Finish(batchID, now)
+		// 落库同步：未发布的站点标 skipped，重启后不会被续跑（用户已明确终止）。
+		s.taskRunDone(batchID, repository.TaskRunStatusCancelled, "用户手动终止")
 		return map[string]any{"success": true, "message": "批量发布任务已请求取消并结束监控"}, 200
 	default:
 		return map[string]any{"success": false, "message": "不支持的任务操作"}, 400
@@ -138,6 +209,7 @@ func (s *MigrateService) applyBatchFetchTaskAction(taskID string, action string)
 			return map[string]any{"success": false, "message": "任务不存在"}, 404
 		}
 		s.batchFetchState.Finish(taskID)
+		s.taskRunDone(taskID, repository.TaskRunStatusCancelled, "用户手动终止")
 		return map[string]any{"success": true, "message": "批量获取任务已请求取消并结束监控（当前正在抓的这一项不会被打断）"}, 200
 	default:
 		return map[string]any{"success": false, "message": "不支持的任务操作"}, 400

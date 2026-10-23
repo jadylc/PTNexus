@@ -233,6 +233,40 @@ func (r *PublishQueueRepository) ClaimNextRunnableTask(now time.Time) (*PublishQ
 	return claimed, true, nil
 }
 
+// RecoverOrphanRunningTasks 回收卡在 running 的队列任务，重置为 queued 并可立即被重新领取。
+// 背景：ClaimNextRunnableTask 只领取 queued，进程重启时正在执行的任务会永久停在 running，
+// 既不失败也不重跑（僵尸任务）。启动时用 olderThan<=0 全量回收；运行期用超时阈值兜底
+// （worker 卡死或副本异常退出），避免误伤仍在正常执行的任务。
+// 单实例假设：多副本共用同一个库时会互相回收对方的 running 任务；
+// 由此带来的重复发布风险由 PublishLogRepository.ExistsSucceededPublish 幂等判定挡住。
+// 参数/返回：now 为当前时间；olderThan<=0 表示不加时间条件；返回回收条数与 error。
+// 副作用：更新 publish_queue_tasks 的 status/next_run_at/started_at/finished_at/last_error/updated_at。
+func (r *PublishQueueRepository) RecoverOrphanRunningTasks(now time.Time, olderThan time.Duration) (int64, error) {
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return 0, errors.New("publish queue repo is nil")
+	}
+
+	nowText := now.Format(PublishQueueTimeLayout)
+	query := r.store.DB.Table("publish_queue_tasks").Where("status = ?", PublishQueueStatusRunning)
+	if olderThan > 0 {
+		threshold := now.Add(-olderThan).Format(PublishQueueTimeLayout)
+		query = query.Where("(started_at IS NULL OR started_at <= ?)", threshold)
+	}
+
+	result := query.Updates(map[string]any{
+		"status":      PublishQueueStatusQueued,
+		"next_run_at": nowText,
+		"started_at":  nil,
+		"finished_at": nil,
+		"last_error":  "回收未完成的 running 任务（进程重启或执行超时），已重新入队",
+		"updated_at":  nowText,
+	})
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	return result.RowsAffected, nil
+}
+
 // UpdateTaskAfterRequeue 将 running 任务重置为 queued，并写入下次运行时间与原因（不增加 attempt_count）。
 // 参数/返回：id 为任务主键；nextRunAt 为下次可运行时间；reason/result 为调试信息；返回 error。
 // 失败场景：更新失败返回 error。

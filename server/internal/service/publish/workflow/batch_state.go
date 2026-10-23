@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"strings"
 	"sync"
 	"time"
 )
@@ -147,6 +148,34 @@ func (s *BatchState) Snapshot() []BatchTask {
 		result = append(result, copied)
 	}
 	return result
+}
+
+// PruneFinished 清理结束时间早于 before 的批次，避免内存态批次只增不减。
+// 说明：历史批次仍可从 task_runs 表读到，面板不会因此丢记录；运行中的批次永不清理。
+// 参数/返回：before 为截止时间；返回被清理的批次数。
+func (s *BatchState) PruneFinished(before time.Time) int {
+	if s == nil {
+		return 0
+	}
+
+	cutoff := before.Format("2006-01-02 15:04:05")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	removed := 0
+	for batchID, task := range s.tasks {
+		if task == nil || task.IsRunning {
+			continue
+		}
+		finishedAt := strings.TrimSpace(task.FinishedAt)
+		if finishedAt == "" || finishedAt >= cutoff {
+			continue
+		}
+		delete(s.tasks, batchID)
+		delete(s.subs, batchID)
+		removed++
+	}
+	return removed
 }
 
 // Cancel 标记任务取消。

@@ -1,6 +1,7 @@
 package fetch
 
 import (
+	"strings"
 	"sync"
 	"time"
 )
@@ -150,6 +151,32 @@ func (s *BatchFetchState) SnapshotAll() map[string]BatchFetchTask {
 		result[taskID] = copyBatchFetchTask(task)
 	}
 	return result
+}
+
+// PruneFinished 清理结束时间早于 before 的批次，避免内存态任务只增不减。
+// 历史批次改由 task_runs / task_run_items 提供，面板不会因此丢记录；运行中的任务永不清理。
+func (s *BatchFetchState) PruneFinished(before time.Time) int {
+	if s == nil {
+		return 0
+	}
+
+	cutoff := before.Format(batchFetchTimeLayout)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	removed := 0
+	for taskID, task := range s.tasks {
+		if task == nil || task.IsRunning {
+			continue
+		}
+		updatedAt := strings.TrimSpace(task.UpdatedAt)
+		if updatedAt == "" || updatedAt >= cutoff {
+			continue
+		}
+		delete(s.tasks, taskID)
+		removed++
+	}
+	return removed
 }
 
 // copyBatchFetchTask 深拷贝任务快照，避免调用方读到执行中不断增长的 Results 切片。
