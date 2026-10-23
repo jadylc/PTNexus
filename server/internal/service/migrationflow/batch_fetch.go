@@ -41,6 +41,11 @@ func (s *MigrateService) runBatchFetch(taskID string, torrentNames []string, sou
 		OnResult: func(success bool, result map[string]any) {
 			s.batchFetchState.MarkResult(taskID, success, result)
 		},
+		// 协作式取消：任务监控里的"终止"置标志位，这里在下一个种子前退出，
+		// 不中断正在抓的当前项，避免留下半写状态。
+		ShouldCancel: func() bool {
+			return s.batchFetchState.IsCancelled(taskID)
+		},
 	})
 	s.batchFetchState.Finish(taskID)
 }
@@ -48,7 +53,7 @@ func (s *MigrateService) runBatchFetch(taskID string, torrentNames []string, sou
 func (s *MigrateService) BatchFetchProgress(taskID string) (map[string]any, int) {
 	task, ok := s.batchFetchState.Snapshot(taskID)
 	if !ok {
-		return map[string]any{"success": false, "message": "任务不存在或已过期"}, 404
+		return map[string]any{"success": false, "message": "任务不存在（批量抓取状态仅存内存，进程重启后不会保留）"}, 404
 	}
 	return map[string]any{"success": true, "progress": task}, 200
 }

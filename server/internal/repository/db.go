@@ -118,10 +118,20 @@ func NewStore(paths config.RuntimePaths) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get sql.DB failed: %w", err)
 	}
-	// SQLite 并发写无益且会放大锁冲突，连接池不宜过大；连接设置生命周期上限，
-	// 避免长时间占用/僵尸连接累积导致后续请求无限等待连接。
-	sqlDB.SetMaxOpenConns(10)
-	sqlDB.SetMaxIdleConns(5)
+	// 连接池上限按引擎区分：
+	//   - SQLite 并发写无益且会放大锁冲突，保持小池；连接设置生命周期上限，
+	//     避免长时间占用/僵尸连接累积导致后续请求无限等待连接。
+	//   - MySQL/MariaDB/PostgreSQL 走网络、支持并发，池子开太小会让请求在 Go 侧排队等连接，
+	//     而 GORM 的慢查询计时把这段等待一并算进 SQL 耗时，日志上就表现成
+	//     "十几次索引点查的语句要 6 秒"（实测 Threads_connected=9 已贴着 10 的上限）。
+	//     放宽到 50 的依据：服务端 max_connections 默认 151，该库重启以来峰值仅 16，
+	//     且 Connection_errors_max_connections=0，余量充足（该库还有其他服务共用）。
+	maxOpenConns, maxIdleConns := 10, 5
+	if dbType != "sqlite" {
+		maxOpenConns, maxIdleConns = 50, 10
+	}
+	sqlDB.SetMaxOpenConns(maxOpenConns)
+	sqlDB.SetMaxIdleConns(maxIdleConns)
 	sqlDB.SetConnMaxLifetime(30 * time.Minute)
 	sqlDB.SetConnMaxIdleTime(5 * time.Minute)
 

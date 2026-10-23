@@ -12,11 +12,14 @@ type BatchFetchRunnerDeps struct {
 	FetchAndStore func(payload map[string]any) (map[string]any, int)
 	OnResult      func(success bool, result map[string]any)
 	Sleep         func(duration time.Duration)
+	// ShouldCancel 在每处理完一个种子后检查是否已请求取消；返回 true 时立即停止剩余条目。
+	// 取消是协作式的：正在执行的当前这一项不会被打断（避免留下半写状态）。
+	ShouldCancel func() bool
 }
 
 // RunBatchFetch 按种子名称列表执行批量抓取流程。
 // 参数/返回：torrentNames 为待抓取名称，sourcePriority 为站点优先级，rows 为 torrents 查询结果，deps 为流程回调依赖。
-// 失败场景：单项抓取失败会记录失败结果并继续下一项，不中断整体任务。
+// 失败场景：单项抓取失败会记录失败结果并继续下一项，不中断整体任务；deps.ShouldCancel 返回 true 时停止处理剩余种子。
 // 副作用：会通过 FetchAndStore 触发抓取写库，并通过 OnResult 回调持续上报每项结果。
 func RunBatchFetch(torrentNames []string, sourcePriority []string, rows []map[string]any, deps BatchFetchRunnerDeps) {
 	byName := map[string][]map[string]any{}
@@ -39,6 +42,9 @@ func RunBatchFetch(torrentNames []string, sourcePriority []string, rows []map[st
 	}
 
 	for _, name := range torrentNames {
+		if deps.ShouldCancel != nil && deps.ShouldCancel() {
+			return
+		}
 		result := map[string]any{"name": name}
 		entries := byName[name]
 		if len(entries) == 0 {

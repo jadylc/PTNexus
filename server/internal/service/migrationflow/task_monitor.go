@@ -33,30 +33,41 @@ func (s *MigrateService) TaskMonitorSnapshot() (map[string]any, int) {
 		tasks = append(tasks, buildBDInfoTaskEntry(task))
 	}
 
+	// 单个数据源读失败不再让整块面板 500：其余任务照常展示，同时明确告知哪一部分没取到，
+	// 避免"面板空白"被误读成"没有任务"。
+	degraded := make([]string, 0, 2)
+
 	if s.queueRepo != nil {
-		activeQueueTasks, err := s.queueRepo.ListActiveTasks(20)
+		activeQueueTasks, err := s.queueRepo.ListActiveTasks(50)
 		if err != nil {
-			return map[string]any{"success": false, "message": "读取发布队列失败: " + err.Error()}, 500
-		}
-		for _, task := range activeQueueTasks {
-			tasks = append(tasks, buildQueueTaskEntry(task))
+			degraded = append(degraded, "发布队列: "+err.Error())
+		} else {
+			for _, task := range activeQueueTasks {
+				tasks = append(tasks, buildQueueTaskEntry(task))
+			}
 		}
 	}
 
 	if s.publishLogRepo != nil {
 		attentionLogs, err := s.publishLogRepo.ListRecentAttentionLogs(20)
 		if err != nil {
-			return map[string]any{"success": false, "message": "读取发种日志失败: " + err.Error()}, 500
-		}
-		for _, log := range attentionLogs {
-			tasks = append(tasks, buildPublishLogTaskEntry(log))
+			degraded = append(degraded, "发种日志: "+err.Error())
+		} else {
+			for _, log := range attentionLogs {
+				tasks = append(tasks, buildPublishLogTaskEntry(log))
+			}
 		}
 	}
 
-	return map[string]any{
+	result := map[string]any{
 		"success": true,
 		"tasks":   tasks,
-	}, 200
+	}
+	if len(degraded) > 0 {
+		result["degraded"] = degraded
+		result["message"] = "部分任务来源读取失败：" + strings.Join(degraded, "；")
+	}
+	return result, 200
 }
 
 // TaskMonitorAction 对任务监控中的可控后台任务执行手动结束或终止。
@@ -86,13 +97,19 @@ func (s *MigrateService) TaskMonitorAction(kind string, rawID string, action str
 }
 
 func (s *MigrateService) applyPublishBatchTaskAction(batchID string, action string) (map[string]any, int) {
-	if _, ok := s.publishState.Status(batchID); !ok {
+	task, ok := s.publishState.Status(batchID)
+	if !ok {
 		return map[string]any{"success": false, "message": "任务不存在"}, 404
 	}
 
 	now := time.Now()
 	switch action {
 	case "finish":
+		// 发布 worker 的停止判据是 Cancelled；只 Finish 会让它继续发、进度继续涨，
+		// 面板却显示"已完成"，用户据此再发起一次就可能重复发种。运行中一律要求走终止。
+		if task.IsRunning {
+			return map[string]any{"success": false, "message": "批量发布仍在进行中，请使用「终止」（先请求取消再结束监控）"}, 409
+		}
 		s.publishState.Finish(batchID, now)
 		return map[string]any{"success": true, "message": "批量发布任务已标记完成"}, 200
 	case "terminate":
@@ -105,13 +122,26 @@ func (s *MigrateService) applyPublishBatchTaskAction(batchID string, action stri
 }
 
 func (s *MigrateService) applyBatchFetchTaskAction(taskID string, action string) (map[string]any, int) {
-	if action != "finish" && action != "terminate" {
+	switch action {
+	case "finish":
+		task, ok := s.batchFetchState.Snapshot(taskID)
+		if !ok {
+			return map[string]any{"success": false, "message": "任务不存在"}, 404
+		}
+		if task.IsRunning {
+			return map[string]any{"success": false, "message": "批量获取仍在进行中，请使用「终止」（先请求取消再结束监控）"}, 409
+		}
+		s.batchFetchState.Finish(taskID)
+		return map[string]any{"success": true, "message": "批量获取任务已标记结束"}, 200
+	case "terminate":
+		if !s.batchFetchState.Cancel(taskID) {
+			return map[string]any{"success": false, "message": "任务不存在"}, 404
+		}
+		s.batchFetchState.Finish(taskID)
+		return map[string]any{"success": true, "message": "批量获取任务已请求取消并结束监控（当前正在抓的这一项不会被打断）"}, 200
+	default:
 		return map[string]any{"success": false, "message": "不支持的任务操作"}, 400
 	}
-	if !s.batchFetchState.Finish(taskID) {
-		return map[string]any{"success": false, "message": "任务不存在"}, 404
-	}
-	return map[string]any{"success": true, "message": "批量获取任务已标记结束"}, 200
 }
 
 func (s *MigrateService) applyBDInfoTaskAction(taskID string, action string) (map[string]any, int) {
@@ -168,14 +198,18 @@ func buildBatchPublishTaskEntry(task publishworkflow.BatchTask) map[string]any {
 		"started_at":    strings.TrimSpace(task.CreatedAt),
 		"updated_at":    firstNonEmptyString(strings.TrimSpace(task.FinishedAt), strings.TrimSpace(task.CreatedAt)),
 	}
+	// 运行中的批次只提供"终止"（会先请求取消）；不再暴露"标记完成"，
+	// 避免把仍在发布的任务显示成已完成。
 	if task.IsRunning {
-		entry["actions"] = []string{"finish", "terminate"}
+		entry["actions"] = []string{"terminate"}
 		entry["action_hint"] = taskMonitorActionHint
 	}
 	return entry
 }
 
 func buildBatchFetchTaskEntry(taskID string, task acquirefetch.BatchFetchTask) map[string]any {
+	// 注意：前端任务面板只消费 running/success/failed 三种状态（webui/src/stores/taskMonitor.ts），
+	// 自造状态会被整条过滤掉，所以取消不用独立 status，而是写进 message。
 	status := "success"
 	if task.IsRunning {
 		status = "running"
@@ -191,11 +225,11 @@ func buildBatchFetchTaskEntry(taskID string, task acquirefetch.BatchFetchTask) m
 		"status":        status,
 		"message":       buildBatchFetchMessage(task),
 		"progress_text": fmt.Sprintf("%d/%d", task.Processed, task.Total),
-		"started_at":    "",
-		"updated_at":    "",
+		"started_at":    strings.TrimSpace(task.StartedAt),
+		"updated_at":    firstNonEmptyString(strings.TrimSpace(task.UpdatedAt), strings.TrimSpace(task.StartedAt)),
 	}
 	if task.IsRunning {
-		entry["actions"] = []string{"finish", "terminate"}
+		entry["actions"] = []string{"terminate"}
 		entry["action_hint"] = taskMonitorActionHint
 	}
 	return entry
@@ -289,6 +323,9 @@ func buildBatchPublishMessage(task publishworkflow.BatchTask) string {
 	if task.IsRunning {
 		return "批量发布进行中"
 	}
+	if task.Cancelled {
+		return "批量发布已请求取消并结束监控"
+	}
 	if task.Failed > 0 {
 		return "批量发布已结束，存在失败站点"
 	}
@@ -297,12 +334,15 @@ func buildBatchPublishMessage(task publishworkflow.BatchTask) string {
 
 func buildBatchFetchMessage(task acquirefetch.BatchFetchTask) string {
 	if task.IsRunning {
-		return "批量抓取进行中"
+		return "批量获取进行中"
+	}
+	if task.Cancelled {
+		return "批量获取已请求取消（剩余条目不再抓取）"
 	}
 	if task.Failed > 0 {
-		return "批量抓取已结束，存在失败条目"
+		return "批量获取已结束，存在失败条目"
 	}
-	return "批量抓取已完成"
+	return "批量获取已完成"
 }
 
 func buildBDInfoProgressText(task map[string]any) string {
