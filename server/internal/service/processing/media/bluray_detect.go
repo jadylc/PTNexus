@@ -51,6 +51,14 @@ func DetectBlurayDiscByRoots(savePaths []string, torrentName, contentName string
 		if closeErr != nil {
 			logx.Warnf(blurayDetectLogModule, "关闭候选路径访问会话失败：candidate=%s err=%v", candidate.Path, closeErr)
 		}
+		if root != "" && !blurayRootOwnedByCandidate(candidate, access, root) {
+			logx.Warnf(
+				blurayDetectLogModule,
+				"原盘根不属于该候选，判为不命中：source=%s candidate=%s root=%s",
+				normalizeMediaCandidateSource(candidate.Source), candidate.Path, root,
+			)
+			root = ""
+		}
 		if root != "" {
 			logx.Warnf(blurayDetectLogModule, "命中原盘目录：candidate=%s source=%s root=%s", candidate.Path, access.SourcePath, root)
 			if strings.TrimSpace(access.SourcePath) != "" {
@@ -61,6 +69,29 @@ func DetectBlurayDiscByRoots(savePaths []string, torrentName, contentName string
 	}
 	logx.Infof(blurayDetectLogModule, "未命中原盘目录：fallback_path=%s", fallbackPath)
 	return false, fallbackPath
+}
+
+// blurayRootOwnedByCandidate 判断回溯到的蓝光原盘根能否归属于当前候选。
+// 归属未经确认的目录（Recursive=false，即 save_path 很可能是挂载根/分类根）只承认"该目录本身就是原盘根"，
+// 不允许通过递归在同根下发现别的发布目录再当成本种子的原盘：邻居的 4K 原盘体积通常远大于本种子的文件，
+// 一旦被递归命中就会把别人的 BDInfo 写进本种子（历史故障：《舌尖》拿到了《The Italian Job》的信息）。
+// 参数/返回：允许归属时返回 true；候选是文件、或来自 ISO 挂载时同样放行。
+func blurayRootOwnedByCandidate(candidate mediaPathCandidate, access *LocalMediaAccess, root string) bool {
+	if candidate.Recursive {
+		return true
+	}
+	if access != nil && access.Session != nil && access.Session.Mounted {
+		return true
+	}
+	cleanCandidate := filepath.Clean(strings.TrimSpace(candidate.Path))
+	cleanRoot := filepath.Clean(strings.TrimSpace(root))
+	if cleanCandidate == "" || cleanRoot == "" {
+		return false
+	}
+	if info, err := os.Stat(cleanCandidate); err == nil && !info.IsDir() {
+		return true
+	}
+	return cleanRoot == cleanCandidate
 }
 
 // FindBlurayRootPath 从给定路径向上回溯蓝光根目录。

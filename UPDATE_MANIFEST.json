@@ -2,38 +2,47 @@
   "schema": 2,
   "note": "repo-root metadata only; production updater must use release UPDATE_MANIFEST.json",
   "latest": {
-    "version": "v4.0.67",
+    "version": "v4.0.68",
     "artifacts": [
       {
         "os": "linux",
         "arch": "amd64",
-        "url": "https://github.com/jadylc/PTNexus/releases/download/v4.0.67/ptnexus-runtime-linux-amd64.tar.gz",
+        "url": "https://github.com/jadylc/PTNexus/releases/download/v4.0.68/ptnexus-runtime-linux-amd64.tar.gz",
         "sha256": "",
         "size": 11163781,
         "format": "tar.gz",
         "mirror_urls": [
-          "https://gitee.com/jadylc/PTNexus/releases/download/v4.0.67/ptnexus-runtime-linux-amd64.tar.gz",
-          "https://gh.ddlc.top/https://github.com/jadylc/PTNexus/releases/download/v4.0.67/ptnexus-runtime-linux-amd64.tar.gz",
-          "https://ghproxy.net/https://github.com/jadylc/PTNexus/releases/download/v4.0.67/ptnexus-runtime-linux-amd64.tar.gz"
+          "https://gitee.com/jadylc/PTNexus/releases/download/v4.0.68/ptnexus-runtime-linux-amd64.tar.gz",
+          "https://gh.ddlc.top/https://github.com/jadylc/PTNexus/releases/download/v4.0.68/ptnexus-runtime-linux-amd64.tar.gz",
+          "https://ghproxy.net/https://github.com/jadylc/PTNexus/releases/download/v4.0.68/ptnexus-runtime-linux-amd64.tar.gz"
         ]
       },
       {
         "os": "linux",
         "arch": "arm64",
-        "url": "https://github.com/jadylc/PTNexus/releases/download/v4.0.67/ptnexus-runtime-linux-arm64.tar.gz",
+        "url": "https://github.com/jadylc/PTNexus/releases/download/v4.0.68/ptnexus-runtime-linux-arm64.tar.gz",
         "sha256": "",
         "size": 10104449,
         "format": "tar.gz",
         "mirror_urls": [
-          "https://gitee.com/jadylc/PTNexus/releases/download/v4.0.67/ptnexus-runtime-linux-arm64.tar.gz",
-          "https://gh.ddlc.top/https://github.com/jadylc/PTNexus/releases/download/v4.0.67/ptnexus-runtime-linux-arm64.tar.gz",
-          "https://ghproxy.net/https://github.com/jadylc/PTNexus/releases/download/v4.0.67/ptnexus-runtime-linux-arm64.tar.gz"
+          "https://gitee.com/jadylc/PTNexus/releases/download/v4.0.68/ptnexus-runtime-linux-arm64.tar.gz",
+          "https://gh.ddlc.top/https://github.com/jadylc/PTNexus/releases/download/v4.0.68/ptnexus-runtime-linux-arm64.tar.gz",
+          "https://ghproxy.net/https://github.com/jadylc/PTNexus/releases/download/v4.0.68/ptnexus-runtime-linux-arm64.tar.gz"
         ]
       }
     ],
-    "date": "2026.10.22"
+    "date": "2026.10.23"
   },
   "history": [
+    {
+      "version": "v4.0.68",
+      "date": "2026.10.23",
+      "changes": [
+        "修复：获取媒体信息拿到同一挂载根下其他影片的信息（下载器返回的 save_path 往往是挂载根/分类根，裸 save_path 候选此前允许递归扫描并取体积最大的媒体文件，于是邻居蓝光原盘的分段被当成本种子的媒体文件，非原盘种子因此写入邻居的 BDInfo；现在裸 save_path 仅在该目录本身就是本种子发布目录时才允许递归，且回溯到的原盘根必须属于该候选才判命中，只允许在顶层挑文件）",
+        "修复：同名媒体文件回退长期失效（findMediaSiblingByBaseName 以“路径含点”判定已带扩展名，而 PT 发布名本身是点分隔的，如 Movie.2021.1080p.x264-GRP，导致回退分支对真实片名一律直接拒绝；现改为仅当扩展名属于支持的媒体类型时才拒绝）",
+        "测试：补齐媒体路径候选递归授权、邻居原盘不劫持、发布目录归属判定等回归用例；修复包内一处早已失败的测试"
+      ]
+    },
     {
       "version": "v4.0.67",
       "date": "2026.10.22",

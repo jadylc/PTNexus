@@ -50,6 +50,13 @@ type mediaPathCandidate struct {
 	Path         string
 	Source       string
 	AllowDirScan bool
+	// Recursive 表示候选是目录时，是否允许递归进入子目录定位媒体文件。
+	// 仅当能确认该目录本身就是本种子的发布目录时才允许递归；否则只允许在目录顶层挑文件。
+	// 这里曾经是"任何非空 save_path 都可以递归扫描并取体积最大的媒体文件"，
+	// 而 qBittorrent 等下载器给出的 save_path 往往是挂载根/分类根
+	// （例如整盘挂载的 /m），于是扫描会钻进同一根下别的发布目录，
+	// 把邻居的片子当成本种子的媒体文件——非原盘种子因此拿到邻居 4K 原盘的 BDInfo。
+	Recursive bool
 }
 
 // Close 结束本地媒体访问会话。
@@ -149,10 +156,12 @@ func ResolveMediaAccessByRoots(savePaths []string, torrentName, contentName, sce
 // 失败场景：候选路径不存在、目录内未找到可访问媒体、ISO 挂载失败时返回错误。
 // 副作用：可能调用系统挂载命令并创建临时挂载点。
 func ResolveMediaAccessForPath(candidate string, scene string) (*LocalMediaAccess, error) {
+	// manual 来源是调用方给定的明确路径，保持可递归定位（不做"是否属于本种子"的归属收窄）。
 	return resolveMediaAccessForCandidate(mediaPathCandidate{
 		Path:         candidate,
 		Source:       "manual",
 		AllowDirScan: true,
+		Recursive:    true,
 	}, scene)
 }
 
@@ -178,10 +187,12 @@ func ResolveMediaTargetByRoots(savePaths []string, torrentName, contentName, sce
 // 失败场景：路径不存在、媒体文件定位失败、ISO 挂载失败时返回错误。
 // 副作用：可能调用系统挂载命令并创建临时挂载点。
 func ResolveMediaTargetForPath(path string, scene string) (*ResolvedMediaTarget, error) {
+	// 同 ResolveMediaAccessForPath：manual 来源保持可递归定位。
 	return resolveMediaTargetForCandidate(mediaPathCandidate{
 		Path:         path,
 		Source:       "manual",
 		AllowDirScan: true,
+		Recursive:    true,
 	}, scene)
 }
 
@@ -274,7 +285,7 @@ func resolveMediaAccessForCandidate(candidate mediaPathCandidate, scene string) 
 		return nil, fmt.Errorf("候选目录存在，但当前场景禁止在目录内回退扫描媒体文件: %s", trimmed)
 	}
 
-	leafPath, pickErr := pickMediaEntry(trimmed, true)
+	leafPath, pickErr := pickMediaEntry(trimmed, true, candidate.Recursive)
 	if pickErr != nil {
 		return nil, pickErr
 	}
@@ -328,11 +339,15 @@ func buildMediaPathCandidates(savePaths []string, torrentName, contentName strin
 			continue
 		}
 		allowSavePathDirScan := shouldAllowSavePathDirScan(trimmedSavePath, trimmedTorrentName, trimmedContentName)
+		// save_path 自身只有在确实就是发布目录时才允许递归；
+		// save_path/<种子名>、save_path/<内容名> 这两个候选本来就是本种子的目录，允许递归。
+		allowSavePathRecursive := savePathLooksLikeReleaseDir(trimmedSavePath, trimmedTorrentName, trimmedContentName)
 		if trimmedTorrentName != "" {
 			appendMediaPathCandidate(&candidates, indexByPath, mediaPathCandidate{
 				Path:         filepath.Join(trimmedSavePath, trimmedTorrentName),
 				Source:       "torrent_name",
 				AllowDirScan: true,
+				Recursive:    true,
 			})
 		}
 		if trimmedContentName != "" && !strings.EqualFold(trimmedContentName, trimmedTorrentName) {
@@ -340,19 +355,71 @@ func buildMediaPathCandidates(savePaths []string, torrentName, contentName strin
 				Path:         filepath.Join(trimmedSavePath, trimmedContentName),
 				Source:       "content_name",
 				AllowDirScan: true,
+				Recursive:    true,
 			})
 		}
 		appendMediaPathCandidate(&candidates, indexByPath, mediaPathCandidate{
 			Path:         trimmedSavePath,
 			Source:       "save_path",
 			AllowDirScan: allowSavePathDirScan,
+			Recursive:    allowSavePathRecursive,
 		})
 	}
 	return candidates
 }
 
+// shouldAllowSavePathDirScan 判断能否在裸 save_path 目录内挑选媒体文件（仅顶层，递归由 Recursive 单独控制）。
+// 参数/返回：savePath 为下载器给出的保存路径；返回是否允许在该目录内做回退挑选。
+// 说明：下载器的 save_path 语义是"下载目录"，末级目录名常常与发布名无关但片子确实在里面，
+// 因此这里不能按名字一刀切禁止；越界风险由 mediaPathCandidate.Recursive 收住。
 func shouldAllowSavePathDirScan(savePath, torrentName, contentName string) bool {
 	return strings.TrimSpace(savePath) != ""
+}
+
+// minReleaseDirNameLength 是按名字判定"save_path 就是发布目录"时,较短一侧归一化后的最小长度。
+// 没有这个门槛会误判：挂载根 /m 的 basename 归一化后是 "m",而任何发布名里几乎都含字母 m,
+// 包含匹配会把它当成发布目录,递归授权照样漏进来。分类根（tv/bluray/movies 等短名）同理被排除。
+const minReleaseDirNameLength = 12
+
+// savePathLooksLikeReleaseDir 判断 save_path 自身是否就是该种子的发布目录（而不是挂载根/分类根等共享目录）。
+// 参数/返回：任一名字归一化后互相包含即认为匹配；匹配则允许在该目录内递归定位媒体文件。
+// 说明：典型发布目录形如 /m/Movie.2024.2160p.WEB-DL-HHWEB，其 basename 与种子名一致；
+// 而 /m 这类挂载根的 basename 与种子名毫无关系，递归扫描会命中同根下的其他发布。
+func savePathLooksLikeReleaseDir(savePath, torrentName, contentName string) bool {
+	base := normalizeReleaseNameForPathMatch(filepath.Base(strings.TrimSpace(savePath)))
+	if len(base) < minReleaseDirNameLength {
+		return false
+	}
+	for _, raw := range []string{torrentName, contentName} {
+		normalized := normalizeReleaseNameForPathMatch(raw)
+		if len(normalized) < minReleaseDirNameLength {
+			continue
+		}
+		if strings.Contains(normalized, base) || strings.Contains(base, normalized) {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeReleaseNameForPathMatch 归一化发布名用于路径比较：截掉 @站点 后缀、统一小写、去掉点/下划线/连字符/空格等分隔符。
+func normalizeReleaseNameForPathMatch(text string) string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return ""
+	}
+	if index := strings.IndexByte(trimmed, '@'); index >= 0 {
+		trimmed = trimmed[:index]
+	}
+	builder := strings.Builder{}
+	for _, symbol := range strings.ToLower(trimmed) {
+		switch symbol {
+		case '.', '_', '-', ' ', '/', '\\', '\t':
+			continue
+		}
+		builder.WriteRune(symbol)
+	}
+	return builder.String()
 }
 
 func appendMediaPathCandidate(candidates *[]mediaPathCandidate, indexByPath map[string]int, candidate mediaPathCandidate) {
@@ -435,7 +502,12 @@ func resolveMediaTargetFromPath(path string) (string, error) {
 	return PickMediaTarget(trimmed)
 }
 
-func pickMediaEntry(savePath string, allowISO bool) (string, error) {
+// pickMediaEntry 在目录内挑选一个用于分析的媒体文件。
+// 参数/返回：savePath 为目录路径；allowISO 是否接受 ISO；recursive 为 false 时只看目录顶层、不进入子目录。
+// 失败场景：目录内（按递归范围）没有可识别的媒体文件时返回错误。
+// 说明：recursive=false 用于 save_path 不是本种子发布目录的场景，避免递归进同一挂载根下别的发布目录，
+// 把邻居体积最大的文件误当成本种子的媒体文件。
+func pickMediaEntry(savePath string, allowISO bool, recursive bool) (string, error) {
 	trimmed := strings.TrimSpace(savePath)
 	if trimmed == "" {
 		return "", errors.New("保存路径为空")
@@ -455,22 +527,43 @@ func pickMediaEntry(savePath string, allowISO bool) (string, error) {
 	allowedExt := supportedMediaExtensions(allowISO)
 	largest := ""
 	largestSize := int64(0)
+	consider := func(fullPath string, entryName string) {
+		ext := strings.ToLower(filepath.Ext(entryName))
+		if _, ok := allowedExt[ext]; !ok {
+			return
+		}
+		stat, statErr := os.Stat(fullPath)
+		if statErr != nil || stat.IsDir() {
+			return
+		}
+		if stat.Size() > largestSize {
+			largestSize = stat.Size()
+			largest = fullPath
+		}
+	}
+
+	if !recursive {
+		entries, readErr := os.ReadDir(trimmed)
+		if readErr != nil {
+			return "", fmt.Errorf("读取保存路径失败: %w", readErr)
+		}
+		for _, entry := range entries {
+			if entry == nil || entry.IsDir() {
+				continue
+			}
+			consider(filepath.Join(trimmed, entry.Name()), entry.Name())
+		}
+		if largest == "" {
+			return "", fmt.Errorf("目录顶层未找到属于本种子的媒体文件（为避免命中同挂载根下的其他发布，未递归子目录）: %s", trimmed)
+		}
+		return largest, nil
+	}
+
 	walkErr := filepath.WalkDir(trimmed, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil || d == nil || d.IsDir() {
 			return nil
 		}
-		ext := strings.ToLower(filepath.Ext(d.Name()))
-		if _, ok := allowedExt[ext]; !ok {
-			return nil
-		}
-		stat, statErr := d.Info()
-		if statErr != nil {
-			return nil
-		}
-		if stat.Size() > largestSize {
-			largestSize = stat.Size()
-			largest = path
-		}
+		consider(path, d.Name())
 		return nil
 	})
 	if walkErr != nil {
@@ -487,8 +580,13 @@ func findMediaSiblingByBaseName(path string, allowISO bool) (string, error) {
 	if trimmed == "" {
 		return "", errors.New("候选路径为空")
 	}
-	if ext := strings.TrimSpace(filepath.Ext(trimmed)); ext != "" {
-		return "", fmt.Errorf("候选路径已包含扩展名: %s", trimmed)
+	// 只有以"媒体扩展名"结尾才算已经指向具体文件。
+	// 不能用"含点即拒绝"判断：PT 发布名本身是点分隔的（Movie.2021.1080p.x264-GRP），
+	// filepath.Ext 会把 "-GRP" 前的最后一段当成扩展名，导致同名媒体文件回退对所有真实片名永久失效。
+	if ext := strings.ToLower(strings.TrimSpace(filepath.Ext(trimmed))); ext != "" {
+		if _, ok := supportedMediaExtensions(true)[ext]; ok {
+			return "", fmt.Errorf("候选路径已包含媒体扩展名: %s", trimmed)
+		}
 	}
 
 	dir := filepath.Dir(trimmed)

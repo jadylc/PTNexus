@@ -13,7 +13,9 @@ import (
 // 失败场景：路径不存在、目录里没有可识别视频文件时返回错误。
 // 副作用：会遍历目录文件系统。
 func PickMediaTarget(savePath string) (string, error) {
-	target, err := pickMediaEntry(savePath, false)
+	// 该入口的调用方给出的是明确的目标保存路径，保持原有递归语义；
+	// 针对"save_path 可能是挂载根"的收窄只发生在 buildMediaPathCandidates 生成的候选上。
+	target, err := pickMediaEntry(savePath, false, true)
 	if err != nil {
 		return "", err
 	}
