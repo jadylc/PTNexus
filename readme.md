@@ -256,6 +256,11 @@ wget -O - https://github.com/jadylc/PTNexus/releases/latest/download/install-pt-
 
 # 更新日志
 
+### v4.0.71（2026.10.27）
+
+- 新增：FlareSolverr 支持——设置页可配置 FlareSolverr API 地址/Key/求解超时/自定义 UA，详情页命中 Cloudflare 挑战时自动调用求解，并复用返回的 Cookie 继续抓取与下载
+- 修复：彩虹岛（CHDBits）作为源站批量抓取失败——批量抓取改用站点真实 torrent_id（来自 seed_parameters，按 hash/名称解析），禁止把 infohash 当作站点 ID；同时修复多站点逗号分隔时 details 长期不回填、最终回退到 infohash 拼出无效详情页 URL 的问题
+
 ### v4.0.70（2026.10.23）
 
 - 新增：批量任务落库与重启续跑（批量发布/批量获取逐条目落库，进程重启后只重放未完成部分；同时修复发布队列里 running 状态任务重启后永久卡死的问题，并在重新领取时按 publish_logs 成功记录跳过，避免重复发种；任务监控面板改读库内批次，重启不再失忆）
