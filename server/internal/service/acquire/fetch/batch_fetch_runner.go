@@ -111,15 +111,19 @@ func RunBatchFetch(torrentNames []string, sourcePriority []string, rows []map[st
 func selectSourceByPriority(entries []map[string]any, sourcePriority []string) (string, string, bool) {
 	sourceBySite := map[string]string{}
 	for _, row := range entries {
-		site := strings.TrimSpace(toStringAny(row["sites"], ""))
-		if site == "" {
+		sites := splitSiteList(toStringAny(row["sites"], ""))
+		if len(sites) == 0 {
 			continue
 		}
-		torrentID := extractTorrentIDFromDetails(toStringAny(row["details"], ""), toStringAny(row["hash"], ""))
-		if torrentID == "" {
-			continue
+		siteIDs := siteTorrentIDs(row)
+		details := toStringAny(row["details"], "")
+		for _, site := range sites {
+			torrentID := resolveSiteTorrentID(siteIDs, site, details)
+			if torrentID == "" {
+				continue
+			}
+			sourceBySite[site] = torrentID
 		}
-		sourceBySite[site] = torrentID
 	}
 	if len(sourceBySite) == 0 {
 		return "", "", false
@@ -136,6 +140,78 @@ func selectSourceByPriority(entries []map[string]any, sourcePriority []string) (
 		return site, torrentID, true
 	}
 	return "", "", false
+}
+
+// splitSiteList 将 torrents.sites 列（逗号分隔）拆分为站点标识列表。
+// 参数/返回：raw 为 sites 列原始文本；返回去除空白后的站点标识列表。
+// 失败场景：不适用。
+// 副作用：无。
+func splitSiteList(raw string) []string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil
+	}
+	parts := strings.Split(trimmed, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		site := strings.TrimSpace(part)
+		if site != "" {
+			result = append(result, site)
+		}
+	}
+	return result
+}
+
+// siteTorrentIDs 读取行上的 site_torrent_ids 映射（站点标识 -> 站点内部 torrent_id）。
+// 参数/返回：row 为批量抓取行；返回站点标识到内部 ID 的映射，缺失或结构异常时返回空映射。
+// 失败场景：不适用。
+// 副作用：无。
+func siteTorrentIDs(row map[string]any) map[string]string {
+	if row == nil {
+		return map[string]string{}
+	}
+	result := map[string]string{}
+	raw, ok := row["site_torrent_ids"]
+	if !ok {
+		return result
+	}
+	switch typed := raw.(type) {
+	case map[string]string:
+		for site, id := range typed {
+			if strings.TrimSpace(site) != "" && strings.TrimSpace(id) != "" {
+				result[strings.TrimSpace(site)] = strings.TrimSpace(id)
+			}
+		}
+	case map[string]any:
+		for site, value := range typed {
+			id := strings.TrimSpace(toStringAny(value, ""))
+			if strings.TrimSpace(site) != "" && id != "" {
+				result[strings.TrimSpace(site)] = id
+			}
+		}
+	}
+	return result
+}
+
+// resolveSiteTorrentID 解析指定站点的 torrent_id。
+// 参数/返回：siteIDs 为 seed_parameters 权威站点 ID 映射，site 为站点标识，details 为详情页链接。
+// 失败场景：不适用。
+// 副作用：无。
+// 说明：infohash（40 位十六进制）不是站点内部 ID，一律拒绝，避免再次拼出无效详情页 URL。
+func resolveSiteTorrentID(siteIDs map[string]string, site, details string) string {
+	trimmedSite := strings.TrimSpace(site)
+	if len(siteIDs) > 0 {
+		if id := strings.TrimSpace(siteIDs[trimmedSite]); id != "" && !isInfohash(id) {
+			return id
+		}
+		if id := strings.TrimSpace(siteIDs[strings.ToLower(trimmedSite)]); id != "" && !isInfohash(id) {
+			return id
+		}
+	}
+	if id := extractTorrentIDFromDetails(details); id != "" && !isInfohash(id) {
+		return id
+	}
+	return ""
 }
 
 func isSuccessResult(result map[string]any) bool {

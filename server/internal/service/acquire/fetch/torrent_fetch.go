@@ -110,7 +110,8 @@ func DownloadTorrentForSource(sourceInfo map[string]any, torrentID string) (stri
 		downloadCandidates = append(downloadCandidates, direct)
 	}
 
-	html, htmlErr := fetchPageWithCookie(detailURL, cookie, 45*time.Second)
+	htmlBytes, cookie, htmlErr := fetchBinarySmart(detailURL, "", cookie, 45*time.Second)
+	html := string(htmlBytes)
 	if htmlErr != nil && errors.Is(htmlErr, ErrSourceCookieExpired) && strings.TrimSpace(passkey) == "" {
 		logx.Warnf(sourceDownloadLogModule, "详情页鉴权失败 source_site=%s torrent_id=%s detail_url=%s err=%v", siteName, trimmedID, detailURL, htmlErr)
 		return "", detailURL, nil, htmlErr
@@ -139,7 +140,7 @@ func DownloadTorrentForSource(sourceInfo map[string]any, torrentID string) (stri
 	var cookieExpiredErr error
 	for _, candidate := range downloadCandidates {
 		logx.Infof(sourceDownloadLogModule, "尝试下载候选 source_site=%s torrent_id=%s candidate=%s", siteName, trimmedID, candidate)
-		body, err := fetchBinaryWithCookie(candidate, detailURL, cookie, 90*time.Second)
+		body, solvedCookie, err := fetchBinarySmart(candidate, detailURL, cookie, 90*time.Second)
 		if err != nil {
 			logx.Warnf(sourceDownloadLogModule, "候选下载失败 source_site=%s torrent_id=%s candidate=%s err=%v", siteName, trimmedID, candidate, err)
 			if errors.Is(err, ErrSourceCookieExpired) {
@@ -152,6 +153,7 @@ func DownloadTorrentForSource(sourceInfo map[string]any, torrentID string) (stri
 			lastErr = err
 			continue
 		}
+		cookie = solvedCookie
 		if !isLikelyTorrent(body) {
 			logx.Warnf(sourceDownloadLogModule, "候选内容无效 source_site=%s torrent_id=%s candidate=%s bytes=%d", siteName, trimmedID, candidate, len(body))
 			lastErr = fmt.Errorf("下载内容不是 torrent 文件: %s", candidate)
@@ -636,7 +638,7 @@ func deduplicateURLs(urls []string) []string {
 }
 
 func fetchPageWithCookie(targetURL, cookie string, timeout time.Duration) (string, error) {
-	body, err := fetchBinaryWithCookie(targetURL, "", cookie, timeout)
+	body, _, err := fetchBinarySmart(targetURL, "", cookie, timeout)
 	if err != nil {
 		return "", err
 	}
@@ -693,7 +695,7 @@ func fetchBinaryWithCookie(targetURL, referer, cookie string, timeout time.Durat
 		return nil, ErrSourceCookieExpired
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, fmt.Errorf("HTTP %d: %s", response.StatusCode, strings.TrimSpace(string(body)))
+		return nil, &httpStatusError{status: response.StatusCode, body: body}
 	}
 	return body, nil
 }

@@ -68,6 +68,12 @@ func (s *SettingsService) GetSettingsMasked() map[string]any {
 		current["cookiecloud"] = cookieCloud
 	}
 	current["network_proxy"] = config.ParseNetworkProxyConfig(current["network_proxy"]).ToMap()
+	current["flare_solver"] = config.ParseFlareSolverrConfig(current["flare_solver"]).ToMap()
+	if flareSolver, ok := current["flare_solver"].(map[string]any); ok {
+		// API Key 属于敏感凭据，读取设置时掩码，保存时留空则保留原值。
+		flareSolver["api_key"] = ""
+		current["flare_solver"] = flareSolver
+	}
 
 	// Align with Python behavior: do not leak Go-side default merges into UI settings output.
 	if ui, ok := current["ui_settings"].(map[string]any); ok {
@@ -89,6 +95,18 @@ func (s *SettingsService) UpdateSettings(newConfig map[string]any) error {
 			return err
 		}
 		newConfig["network_proxy"] = normalizedProxy.ToMap()
+	}
+
+	if rawFlareSolver, exists := newConfig["flare_solver"]; exists {
+		normalizedFlareSolver, err := normalizeFlareSolverrValue(rawFlareSolver)
+		if err != nil {
+			return err
+		}
+		// 前端读取时 API Key 被掩码，留空表示不修改，保留已保存的凭据。
+		if normalizedFlareSolver.APIKey == "" {
+			normalizedFlareSolver.APIKey = config.ParseFlareSolverrConfig(current["flare_solver"]).APIKey
+		}
+		newConfig["flare_solver"] = normalizedFlareSolver.ToMap()
 	}
 
 	if rawDownloaders, exists := newConfig["downloaders"]; exists {
@@ -133,6 +151,9 @@ func (s *SettingsService) UpdateSettings(newConfig map[string]any) error {
 	}
 
 	if err := applyNetworkProxyRuntime(config.ParseNetworkProxyConfig(current["network_proxy"])); err != nil {
+		return err
+	}
+	if err := applyFlareSolverrRuntime(config.ParseFlareSolverrConfig(current["flare_solver"])); err != nil {
 		return err
 	}
 	return nil

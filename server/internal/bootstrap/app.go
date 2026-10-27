@@ -16,6 +16,7 @@ import (
 	"github.com/pt-nexus/server/internal/http/handler"
 	migratehandler "github.com/pt-nexus/server/internal/http/handler/migrate"
 	"github.com/pt-nexus/server/internal/http/middleware"
+	"github.com/pt-nexus/server/internal/platform/flaresolverr"
 	"github.com/pt-nexus/server/internal/platform/logx"
 	"github.com/pt-nexus/server/internal/platform/netproxy"
 	"github.com/pt-nexus/server/internal/repository"
@@ -62,6 +63,9 @@ func NewApp() (*App, error) {
 	}
 	if err := netproxy.Install(cfgManager.NetworkProxyConfig()); err != nil {
 		return nil, fmt.Errorf("初始化网络代理失败: %w", err)
+	}
+	if err := flaresolverr.Install(cfgManager.FlareSolverrConfig()); err != nil {
+		logx.Warnf("启动", "初始化 FlareSolverr 失败，详情页 Cloudflare 挑战将回退直连 err=%v", err)
 	}
 
 	store, err := repository.NewStore(paths)

@@ -54,6 +54,7 @@
 | `internal/config/runtime_paths.go` | 运行目录解析（base/data/static/logs 等） |
 | `internal/config/database_config.go` | 数据库配置结构与读取辅助 |
 | `internal/config/network_proxy.go` | 应用级网络代理配置结构、解析与校验 |
+| `internal/config/flare_solver.go` | FlareSolverr 配置结构、解析与校验（Cloudflare 挑战求解） |
 
 ### 3.3 `internal/platform/logx`
 
@@ -61,6 +62,7 @@
 |---|---|
 | `internal/platform/logx/logx.go` | 统一中文日志输出、级别控制、滚动日志 |
 | `internal/platform/netproxy/netproxy.go` | 应用级 HTTP 代理管理器，支持运行时热更新与 transport 接管 |
+| `internal/platform/flaresolverr/flaresolverr.go` | FlareSolverr HTTP 客户端与全局运行时配置（求解 Cloudflare 挑战） |
 
 ### 3.4 `internal/repository`
 
@@ -221,6 +223,7 @@
 |---|---|
 | `internal/service/acquire/fetch/source_site.go` | 源站点解析与校验 |
 | `internal/service/acquire/fetch/torrent_fetch.go` | 详情页下载、候选下载链接解析、torrent 元数据解析 |
+| `internal/service/acquire/fetch/cloudflare_fallback.go` | Cloudflare 挑战检测与 FlareSolverr 求解回退、Cookie 合并 |
 | `internal/service/acquire/fetch/torrent_video_size.go` | torrent 视频体积统计（批量转种增强强制过滤） |
 | `internal/service/acquire/fetch/fetch_acquire_flow.go` | 抓取阶段总流程（Prepare + Download + Parse） |
 | `internal/service/acquire/fetch/fetched_context.go` | 抓取结果上下文补全（关联当前种子信息） |

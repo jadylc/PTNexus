@@ -334,12 +334,21 @@ func (r *TorrentDataRepository) UpdateIYUUCheckAndFillDetails(name string, size 
 		if site == "" || strings.TrimSpace(detailsURL) == "" {
 			continue
 		}
+		// sites 列可能是逗号分隔的多站点（如 "ssd,彩虹岛"），需按逗号边界匹配，
+		// 否则单站点精确匹配会漏掉这些记录，导致 details 长期为空。
 		result := r.store.DB.Exec(
-			"UPDATE torrents SET details = ? WHERE name = ? AND size = ? AND sites = ? AND (COALESCE(details, '') = '') AND (is_hidden = 0 OR is_hidden IS NULL)",
+			`UPDATE torrents SET details = ?
+			 WHERE name = ? AND size = ?
+			   AND (sites = ? OR sites LIKE ? OR sites LIKE ? OR sites LIKE ?)
+			   AND (COALESCE(details, '') = '')
+			   AND (is_hidden = 0 OR is_hidden IS NULL)`,
 			strings.TrimSpace(detailsURL),
 			name,
 			size,
 			site,
+			"%,"+site+",",
+			"%,"+site,
+			site+",%",
 		)
 		if result.Error != nil {
 			return filled, result.Error

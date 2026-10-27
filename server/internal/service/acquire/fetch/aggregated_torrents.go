@@ -116,7 +116,7 @@ func QueryAggregatedTorrents(db *gorm.DB, input AggregatedQueryInput) (Aggregate
 		if siteName != "" {
 			sitesMap := agg["sites"].(map[string]any)
 			sitesMap[siteName] = map[string]any{
-				"torrentId": extractTorrentIDFromDetails(toStringAny(row["details"], ""), toStringAny(row["hash"], "")),
+				"torrentId": extractTorrentIDFromDetails(toStringAny(row["details"], "")),
 				"comment":   toStringAny(row["details"], ""),
 			}
 		}
@@ -176,20 +176,39 @@ func appendUniqueString(items []string, value string) []string {
 	return append(items, value)
 }
 
-func extractTorrentIDFromDetails(details string, fallback string) string {
+// extractTorrentIDFromDetails 从详情页链接中提取站点内部 torrent_id。
+// 参数/返回：details 为 torrents.details 列内容；返回站点内部 ID（数字、UUID 或字母数字），无有效 ID 时返回空串。
+// 失败场景：不适用。
+// 副作用：无。
+func extractTorrentIDFromDetails(details string) string {
 	trimmed := strings.TrimSpace(details)
 	if trimmed == "" {
-		return fallback
+		return ""
 	}
 	patterns := []*regexp.Regexp{
 		regexp.MustCompile(`id=(\d+)`),
 		regexp.MustCompile(`torrent_id\s*[:=]\s*(\d+)`),
 		regexp.MustCompile(`/details\.php\?id=(\d+)`),
+		regexp.MustCompile(`id=([A-Za-z0-9_-]+)`),
 	}
 	for _, pattern := range patterns {
 		if matches := pattern.FindStringSubmatch(trimmed); len(matches) > 1 {
 			return matches[1]
 		}
 	}
-	return fallback
+	if matches := reUUIDInURL.FindStringSubmatch(trimmed); len(matches) > 1 {
+		return matches[1]
+	}
+	return ""
+}
+
+// reInfohash 匹配 40 位十六进制 infohash。
+var reInfohash = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
+
+// isInfohash 判断给定值是否为 infohash（40 位十六进制）。
+// 参数/返回：value 为待判断文本；返回是否命中 infohash 模式。
+// 失败场景：不适用。
+// 副作用：无。
+func isInfohash(value string) bool {
+	return reInfohash.MatchString(strings.TrimSpace(value))
 }

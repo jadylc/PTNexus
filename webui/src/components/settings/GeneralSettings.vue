@@ -195,6 +195,90 @@
         </div>
       </div>
 
+      <!-- FlareSolverr 设置卡片 -->
+      <div
+        class="settings-card glass-card glass-rounded glass-transparent-header glass-transparent-body"
+      >
+        <div class="card-header">
+          <div class="header-content">
+            <el-icon class="header-icon">
+              <Lock />
+            </el-icon>
+            <h3>FlareSolverr</h3>
+          </div>
+          <el-button
+            type="primary"
+            :loading="savingFlareSolver"
+            @click="saveFlareSolverSettings"
+            size="small"
+          >
+            保存
+          </el-button>
+        </div>
+
+        <div class="card-content">
+          <el-form :model="flareSolverForm" label-position="top" class="settings-form">
+            <el-form-item class="form-item">
+              <div style="display: flex; align-items: center; gap: 12px">
+                <el-switch v-model="flareSolverForm.enabled" />
+                <span style="font-weight: 500; font-size: 13px">启用 FlareSolverr</span>
+              </div>
+              <el-text type="info" size="small" style="display: block; margin-top: 4px">
+                <el-icon size="12" style="vertical-align: middle; margin-right: 4px">
+                  <InfoFilled />
+                </el-icon>
+                开启后，当详情页返回 Cloudflare 挑战页时自动调用 FlareSolverr 求解
+              </el-text>
+            </el-form-item>
+
+            <el-form-item label="API 地址" class="form-item">
+              <el-input
+                v-model="flareSolverForm.api_url"
+                placeholder="例如 http://127.0.0.1:8112"
+                clearable
+              />
+            </el-form-item>
+
+            <el-form-item label="API Key" class="form-item">
+              <el-input
+                v-model="flareSolverForm.api_key"
+                type="password"
+                show-password
+                placeholder="可选，FlareSolverr 开启鉴权时填写"
+                clearable
+              />
+            </el-form-item>
+
+            <el-form-item label="求解超时（秒）" class="form-item">
+              <el-input-number
+                v-model="flareSolverForm.timeout_seconds"
+                :min="1"
+                :max="600"
+                :step="10"
+                style="width: 100%"
+              />
+            </el-form-item>
+
+            <el-form-item label="自定义 User-Agent" class="form-item">
+              <el-input
+                v-model="flareSolverForm.custom_user_agent"
+                placeholder="可选，留空使用 FlareSolverr 默认"
+                clearable
+              />
+            </el-form-item>
+
+            <div class="form-spacer"></div>
+
+            <el-text type="info" size="small" class="proxy-hint">
+              <el-icon size="12">
+                <InfoFilled />
+              </el-icon>
+              仅在抓取详情页返回 Cloudflare 挑战页时自动生效；API 地址可填根地址，服务端会自动尝试 /v1。
+            </el-text>
+          </el-form>
+        </div>
+      </div>
+
       <!-- IYUU设置卡片 -->
       <div
         class="settings-card glass-card glass-rounded glass-transparent-header glass-transparent-body"
@@ -1069,6 +1153,20 @@ const networkProxyForm = reactive<{
   proxy_url: '',
   no_proxy: '',
 })
+const savingFlareSolver = ref(false)
+const flareSolverForm = reactive<{
+  enabled: boolean
+  api_url: string
+  api_key: string
+  timeout_seconds: number
+  custom_user_agent: string
+}>({
+  enabled: false,
+  api_url: 'http://127.0.0.1:8112',
+  api_key: '',
+  timeout_seconds: 60,
+  custom_user_agent: '',
+})
 const isDesktopRuntime = ref(false)
 const databaseConfigFilePath = ref('')
 
@@ -1315,6 +1413,18 @@ const fetchSettings = async () => {
         config.network_proxy.https_proxy ||
         ''
       networkProxyForm.no_proxy = config.network_proxy.no_proxy || ''
+    }
+
+    // 获取 FlareSolverr 设置
+    if (config.flare_solver) {
+      flareSolverForm.enabled = !!config.flare_solver.enabled
+      flareSolverForm.api_url =
+        config.flare_solver.api_url || 'http://127.0.0.1:8112'
+      flareSolverForm.api_key = config.flare_solver.api_key || ''
+      flareSolverForm.timeout_seconds =
+        Number(config.flare_solver.timeout_seconds) || 60
+      flareSolverForm.custom_user_agent =
+        config.flare_solver.custom_user_agent || ''
     }
 
     // 获取上传设置
@@ -1586,6 +1696,34 @@ const saveNetworkProxySettings = async () => {
     ElMessage.error(errorMessage)
   } finally {
     savingNetworkProxy.value = false
+  }
+}
+
+const saveFlareSolverSettings = async () => {
+  if (savingFlareSolver.value) return
+
+  savingFlareSolver.value = true
+  try {
+    const timeoutSeconds = Math.max(
+      1,
+      Math.floor(Number(flareSolverForm.timeout_seconds) || 60),
+    )
+    await axios.post('/api/settings', {
+      flare_solver: {
+        enabled: flareSolverForm.enabled,
+        api_url: flareSolverForm.api_url.trim(),
+        api_key: flareSolverForm.api_key.trim(),
+        timeout_seconds: timeoutSeconds,
+        custom_user_agent: flareSolverForm.custom_user_agent.trim(),
+      },
+    })
+    flareSolverForm.timeout_seconds = timeoutSeconds
+    ElMessage.success('FlareSolverr 设置已保存，抓取详情页命中挑战时将自动调用。')
+  } catch (error: unknown) {
+    const errorMessage = getErrorMessage(error, '保存失败。')
+    ElMessage.error(errorMessage)
+  } finally {
+    savingFlareSolver.value = false
   }
 }
 

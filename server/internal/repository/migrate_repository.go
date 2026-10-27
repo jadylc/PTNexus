@@ -363,7 +363,99 @@ func (r *MigrateRepository) ListTorrentsByNames(names []string) ([]map[string]an
 	if err != nil {
 		return nil, err
 	}
+	if err := r.attachSiteTorrentIDs(rows); err != nil {
+		return nil, err
+	}
 	return rows, nil
+}
+
+// attachSiteTorrentIDs 为批量抓取行补充站点内部 torrent_id（来自 seed_parameters）。
+// 参数/返回：rows 为 torrents 查询结果；返回 error 表示查询 seed_parameters 失败。
+// 失败场景：seed_parameters 查询失败。
+// 副作用：原地写入 site_torrent_ids 字段，不修改其他字段。
+func (r *MigrateRepository) attachSiteTorrentIDs(rows []map[string]any) error {
+	hashes := make([]string, 0, len(rows))
+	names := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if hash := strings.TrimSpace(toString(row["hash"], "")); hash != "" {
+			hashes = append(hashes, hash)
+		}
+		if name := strings.TrimSpace(toString(row["name"], "")); name != "" {
+			names = append(names, name)
+		}
+	}
+	if len(hashes) == 0 && len(names) == 0 {
+		return nil
+	}
+
+	seedRows := make([]map[string]any, 0)
+	query := r.store.DB.Table("seed_parameters").Select("hash, name, torrent_id, site_name, nickname")
+	if len(hashes) > 0 && len(names) > 0 {
+		query = query.Where("hash IN ? OR name IN ?", hashes, names)
+	} else if len(hashes) > 0 {
+		query = query.Where("hash IN ?", hashes)
+	} else {
+		query = query.Where("name IN ?", names)
+	}
+	if err := query.Scan(&seedRows).Error; err != nil {
+		return err
+	}
+
+	byHash := map[string]map[string]string{}
+	byName := map[string]map[string]string{}
+	for _, seedRow := range seedRows {
+		hash := strings.TrimSpace(toString(seedRow["hash"], ""))
+		name := strings.TrimSpace(toString(seedRow["name"], ""))
+		torrentID := strings.TrimSpace(toString(seedRow["torrent_id"], ""))
+		if torrentID == "" {
+			continue
+		}
+		siteIDs := map[string]string{}
+		for _, alias := range []string{
+			strings.TrimSpace(toString(seedRow["nickname"], "")),
+			strings.TrimSpace(toString(seedRow["site_name"], "")),
+		} {
+			if alias != "" {
+				siteIDs[alias] = torrentID
+			}
+		}
+		mergeSiteIDs(byHash, hash, siteIDs)
+		mergeSiteIDs(byName, name, siteIDs)
+	}
+
+	for _, row := range rows {
+		hash := strings.TrimSpace(toString(row["hash"], ""))
+		name := strings.TrimSpace(toString(row["name"], ""))
+		siteIDs, ok := byHash[hash]
+		if !ok || len(siteIDs) == 0 {
+			siteIDs, ok = byName[name]
+		}
+		if !ok || len(siteIDs) == 0 {
+			continue
+		}
+		row["site_torrent_ids"] = siteIDs
+	}
+	return nil
+}
+
+// mergeSiteIDs 将站点 ID 映射合并进目标映射，已存在的站点优先保留。
+// 参数/返回：target 为目标映射，key 为索引键，incoming 为待合并映射；无返回值。
+// 失败场景：不适用。
+// 副作用：原地写入 target。
+func mergeSiteIDs(target map[string]map[string]string, key string, incoming map[string]string) {
+	if key == "" {
+		return
+	}
+	existing, ok := target[key]
+	if !ok {
+		existing = map[string]string{}
+		target[key] = existing
+	}
+	for site, id := range incoming {
+		if _, exists := existing[site]; !exists {
+			existing[site] = id
+		}
+	}
 }
 
 func (r *MigrateRepository) ListSitesStatus() ([]map[string]any, error) {

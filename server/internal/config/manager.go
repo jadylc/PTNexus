@@ -157,6 +157,7 @@ func defaultConfig() map[string]any {
 			"e2e_password": "",
 		},
 		"network_proxy": DefaultNetworkProxyConfig().ToMap(),
+		"flare_solver":  DefaultFlareSolverrConfig().ToMap(),
 		"cross_seed": map[string]any{
 			"image_hoster":                     "pixhost",
 			"seedvault_email":                  "",
