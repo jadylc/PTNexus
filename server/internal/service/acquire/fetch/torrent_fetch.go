@@ -80,6 +80,17 @@ func PrepareSourceSite(reader SiteInfoReader, siteName string) (map[string]any, 
 // 失败场景：详情页不可访问、下载链接无效、下载内容不是 torrent、写文件失败。
 // 副作用：会发起网络请求并在 data/tmp/torrents 写入临时文件。
 func DownloadTorrentForSource(sourceInfo map[string]any, torrentID string) (string, string, []byte, error) {
+	return DownloadTorrentForSourceWithHint(sourceInfo, torrentID, "")
+}
+
+// DownloadTorrentForSourceWithHint 在 DownloadTorrentForSource 基础上接受种子名提示。
+// 参数/返回：sourceInfo 为站点配置，torrentID 为详情页 ID/URL，nameHint 为种子名（下载器内名称）；
+// 返回 torrent 文件路径、详情页 URL 与字节内容。
+// 失败场景：torrentID 为 infohash 且（无名称提示或按名称搜索无法定位）时返回 error；其余同 DownloadTorrentForSource。
+// 副作用：infohash 形式的 torrentID 会先发起一次 torrents.php 搜索请求定位数字 ID，再走正常下载流程。
+// 说明：IYUU 对彩虹岛（CHDBits）等站点返回的 torrent_id 是 infohash，无法直接构造详情页，
+// 这里按种子名搜索站点列表页补齐数字 torrent_id。
+func DownloadTorrentForSourceWithHint(sourceInfo map[string]any, torrentID, nameHint string) (string, string, []byte, error) {
 	trimmedID := strings.TrimSpace(torrentID)
 	if trimmedID == "" {
 		logx.Warnf(sourceDownloadLogModule, "参数校验失败 torrent_id 为空")
@@ -93,6 +104,20 @@ func DownloadTorrentForSource(sourceInfo map[string]any, torrentID string) (stri
 	cookie := strings.TrimSpace(toStringAny(sourceInfo["cookie"], ""))
 	passkey := strings.TrimSpace(toStringAny(sourceInfo["passkey"], ""))
 	siteName := strings.TrimSpace(toStringAny(sourceInfo["nickname"], siteCode))
+
+	if isInfohash(trimmedID) {
+		resolvedID, resolveErr := resolveTorrentIDBySearch(baseURL, cookie, nameHint)
+		if resolveErr != nil {
+			logx.Warnf(sourceDownloadLogModule, "按名称定位站点种子ID失败 source_site=%s torrent_id=%s err=%v", siteName, trimmedID, resolveErr)
+			if strings.TrimSpace(nameHint) == "" {
+				return "", "", nil, fmt.Errorf("站点 '%s' 以 infohash 标识种子且缺少名称提示，无法定位详情页（%s）", siteName, trimmedID)
+			}
+			return "", "", nil, fmt.Errorf("按名称搜索未能定位站点 '%s' 的种子ID: %v", siteName, resolveErr)
+		}
+		logx.Infof(sourceDownloadLogModule, "已按名称定位站点种子ID source_site=%s info_hash=%s torrent_id=%s", siteName, trimmedID, resolvedID)
+		trimmedID = resolvedID
+	}
+
 	logx.Infof(sourceDownloadLogModule, "开始下载 source_site=%s site_code=%s torrent_id=%s base_url=%s", siteName, siteCode, trimmedID, baseURL)
 
 	detailURL := trimmedID

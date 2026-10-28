@@ -109,3 +109,88 @@ func TestDownloadTorrentForSourceNumericID(t *testing.T) {
 		t.Fatalf("expected torrent body preserved, got %q", string(body))
 	}
 }
+
+// TestDownloadTorrentForSourceInfohashResolvedBySearch 完整复现彩虹岛故障场景：
+// IYUU 存的 torrent_id 是 infohash，details 为空——传入种子名后按名称搜索 torrents.php
+// 定位数字 ID，再走详情页/下载流程。
+func TestDownloadTorrentForSourceInfohashResolvedBySearch(t *testing.T) {
+	t.Setenv("PTNEXUS_DATA_DIR", t.TempDir())
+
+	infohash := "42293da64df095a71380aa0ab3a8a77d8b22ca08"
+	torrentName := "Carrie.S01.2160p.AMZN.WEB-DL.DDP.5.1.Atmos.HDR10+.H.265-CHDWEB"
+	torrentBody := []byte("d8:announce40:http://tracker.example/announcee")
+
+	searchCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/torrents.php":
+			searchCalled = true
+			if r.URL.Query().Get("search") != torrentName {
+				t.Errorf("expected search by torrent name, got %q", r.URL.Query().Get("search"))
+			}
+			_, _ = w.Write([]byte(`<table class="torrents"><tr>
+				<td><a href="details.php?id=593793&amp;hit=1">` + torrentName + `</a></td>
+			</tr></table>`))
+		case "/details.php":
+			if r.URL.Query().Get("id") != "593793" {
+				t.Errorf("expected numeric id on details page, got %q", r.URL.Query().Get("id"))
+			}
+			_, _ = w.Write([]byte(`<html><body><a href="download.php?id=593793&passkey=pk">Download</a></body></html>`))
+		case "/download.php":
+			w.Header().Set("Content-Type", "application/x-bittorrent")
+			_, _ = w.Write(torrentBody)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	sourceInfo := map[string]any{
+		"base_url": server.URL,
+		"site":     "chdbits",
+		"nickname": "彩虹岛",
+		"cookie":   "uid=1",
+		"passkey":  "pk",
+	}
+
+	path, detailURL, body, err := DownloadTorrentForSourceWithHint(sourceInfo, infohash, torrentName)
+	if err != nil {
+		t.Fatalf("DownloadTorrentForSourceWithHint failed: %v", err)
+	}
+	if !searchCalled {
+		t.Fatalf("expected torrents.php search to be performed for infohash id")
+	}
+	if detailURL != server.URL+"/details.php?id=593793" {
+		t.Fatalf("expected resolved detail url, got %s", detailURL)
+	}
+	if path == "" || string(body) != string(torrentBody) {
+		t.Fatalf("expected torrent downloaded, path=%q body=%q", path, string(body))
+	}
+}
+
+// TestDownloadTorrentForSourceInfohashWithoutHint 无名称提示且 ID 为 infohash 时应给出可读错误。
+func TestDownloadTorrentForSourceInfohashWithoutHint(t *testing.T) {
+	t.Setenv("PTNEXUS_DATA_DIR", t.TempDir())
+	infohash := "42293da64df095a71380aa0ab3a8a77d8b22ca08"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	sourceInfo := map[string]any{
+		"base_url": server.URL,
+		"site":     "chdbits",
+		"nickname": "彩虹岛",
+		"cookie":   "uid=1",
+		"passkey":  "pk",
+	}
+
+	_, _, _, err := DownloadTorrentForSourceWithHint(sourceInfo, infohash, "")
+	if err == nil {
+		t.Fatalf("expected error for infohash id without name hint")
+	}
+	if !strings.Contains(err.Error(), "infohash") {
+		t.Fatalf("expected readable error mentioning infohash, got %v", err)
+	}
+}

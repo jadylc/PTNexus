@@ -77,7 +77,8 @@ func AcquireSeedForFetch(input FetchAcquireInput, deps FetchAcquireDeps) (FetchA
 	}
 
 	emit("下载种子", "正在下载源站种子文件...", "processing")
-	torrentPath, detailURL, torrentBytes, err := DownloadTorrentForSource(sourceInfo, searchTerm)
+	// 传入种子名提示：彩虹岛等站点以 infohash 标识种子，下载层会按名称搜索补齐数字 ID。
+	torrentPath, detailURL, torrentBytes, err := DownloadTorrentForSourceWithHint(sourceInfo, searchTerm, strings.TrimSpace(input.TorrentName))
 	if err != nil {
 		statusCode := 500
 		displayMessage := err.Error()

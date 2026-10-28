@@ -117,8 +117,9 @@ func selectSourceByPriority(entries []map[string]any, sourcePriority []string) (
 		}
 		siteIDs := siteTorrentIDs(row)
 		details := toStringAny(row["details"], "")
+		rowHash := toStringAny(row["hash"], "")
 		for _, site := range sites {
-			torrentID := resolveSiteTorrentID(siteIDs, site, details)
+			torrentID := resolveSiteTorrentID(siteIDs, site, details, rowHash)
 			if torrentID == "" {
 				continue
 			}
@@ -194,11 +195,14 @@ func siteTorrentIDs(row map[string]any) map[string]string {
 }
 
 // resolveSiteTorrentID 解析指定站点的 torrent_id。
-// 参数/返回：siteIDs 为 seed_parameters 权威站点 ID 映射，site 为站点标识，details 为详情页链接。
-// 失败场景：不适用。
+// 参数/返回：siteIDs 为 seed_parameters 权威站点 ID 映射，site 为站点标识，
+// details 为详情页链接，rowHash 为该行 torrents.hash。
+// 失败场景：不适用（无可用标识时返回空串）。
 // 副作用：无。
-// 说明：infohash（40 位十六进制）不是站点内部 ID，一律拒绝，避免再次拼出无效详情页 URL。
-func resolveSiteTorrentID(siteIDs map[string]string, site, details string) string {
+// 说明：优先返回站点内部 ID（数字/UUID）；infohash 形式的候选一律不当作站点 ID。
+// 但当没有任何站点 ID 时，返回 40 位 infohash 本身——下载层会按种子名在站点
+// 搜索定位真实数字 ID（IYUU 对彩虹岛等站点的 torrent_id 就是 infohash）。
+func resolveSiteTorrentID(siteIDs map[string]string, site, details, rowHash string) string {
 	trimmedSite := strings.TrimSpace(site)
 	if len(siteIDs) > 0 {
 		if id := strings.TrimSpace(siteIDs[trimmedSite]); id != "" && !isInfohash(id) {
@@ -210,6 +214,9 @@ func resolveSiteTorrentID(siteIDs map[string]string, site, details string) strin
 	}
 	if id := extractTorrentIDFromDetails(details); id != "" && !isInfohash(id) {
 		return id
+	}
+	if isInfohash(rowHash) {
+		return strings.TrimSpace(rowHash)
 	}
 	return ""
 }

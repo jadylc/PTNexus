@@ -23,7 +23,7 @@ func TestSplitSiteList(t *testing.T) {
 
 func TestResolveSiteTorrentIDPrefersAuthoritative(t *testing.T) {
 	siteIDs := map[string]string{"彩虹岛": "593793"}
-	got := resolveSiteTorrentID(siteIDs, "彩虹岛", "")
+	got := resolveSiteTorrentID(siteIDs, "彩虹岛", "", "42293da64df095a71380aa0ab3a8a77d8b22ca08")
 	if got != "593793" {
 		t.Fatalf("expected 593793, got %s", got)
 	}
@@ -31,22 +31,26 @@ func TestResolveSiteTorrentIDPrefersAuthoritative(t *testing.T) {
 
 func TestResolveSiteTorrentIDFallsBackToDetails(t *testing.T) {
 	siteIDs := map[string]string{"ssd": "123"}
-	got := resolveSiteTorrentID(siteIDs, "彩虹岛", "https://ptchdbits.co/details.php?id=593793&hit=1")
+	got := resolveSiteTorrentID(siteIDs, "彩虹岛", "https://ptchdbits.co/details.php?id=593793&hit=1", "")
 	if got != "593793" {
 		t.Fatalf("expected 593793 from details, got %s", got)
 	}
 }
 
-func TestResolveSiteTorrentIDNoInfohashFallback(t *testing.T) {
-	// 站点 ID 缺失且详情页无有效 ID 时，不能回退到 infohash。
-	got := resolveSiteTorrentID(map[string]string{}, "彩虹岛", "")
-	if got != "" {
-		t.Fatalf("expected empty id (no infohash fallback), got %s", got)
-	}
+func TestResolveSiteTorrentIDFallsBackToInfohashForSearch(t *testing.T) {
+	// 站点 ID 与详情页都拿不到时，返回 40 位 infohash——下载层会按名称搜索定位真实 ID。
 	infohash := "42293da64df095a71380aa0ab3a8a77d8b22ca08"
-	got = resolveSiteTorrentID(map[string]string{}, "彩虹岛", infohash)
-	if got != "" {
-		t.Fatalf("expected empty id for infohash-only details, got %s", got)
+	got := resolveSiteTorrentID(map[string]string{}, "彩虹岛", "", infohash)
+	if got != infohash {
+		t.Fatalf("expected infohash %s for search-based resolution, got %q", infohash, got)
+	}
+}
+
+func TestResolveSiteTorrentIDNoInfohashFromDetailsText(t *testing.T) {
+	// details 文本里出现的 infohash 不是站点 ID，不采用。
+	infohash := "42293da64df095a71380aa0ab3a8a77d8b22ca08"
+	if got := resolveSiteTorrentID(map[string]string{}, "彩虹岛", infohash, ""); got != "" {
+		t.Fatalf("expected empty for infohash-only details text, got %q", got)
 	}
 }
 
@@ -57,6 +61,7 @@ func TestResolveSiteTorrentIDRejectsInfohashFromAuthoritative(t *testing.T) {
 		map[string]string{"彩虹岛": infohash},
 		"彩虹岛",
 		"https://ptchdbits.co/details.php?id=593793&hit=1",
+		"",
 	)
 	if got != "593793" {
 		t.Fatalf("expected 593793 from details after rejecting infohash, got %q", got)
@@ -65,7 +70,7 @@ func TestResolveSiteTorrentIDRejectsInfohashFromAuthoritative(t *testing.T) {
 
 func TestResolveSiteTorrentIDRejectsInfohashDetails(t *testing.T) {
 	infohash := "42293da64df095a71380aa0ab3a8a77d8b22ca08"
-	got := resolveSiteTorrentID(map[string]string{}, "彩虹岛", "https://ptchdbits.co/"+infohash)
+	got := resolveSiteTorrentID(map[string]string{}, "彩虹岛", "https://ptchdbits.co/"+infohash, "")
 	if got != "" {
 		t.Fatalf("expected empty for infohash-shaped details, got %q", got)
 	}
@@ -136,12 +141,50 @@ func TestSelectSourceByPrioritySkipsUnknownIDs(t *testing.T) {
 	entries := []map[string]any{
 		{
 			"sites":   "彩虹岛",
-			"hash":    "42293da64df095a71380aa0ab3a8a77d8b22ca08",
+			"hash":    "not-a-valid-id",
 			"details": "",
 		},
 	}
 	if _, _, matched := selectSourceByPriority(entries, []string{"彩虹岛"}); matched {
-		t.Fatalf("expected no match when no authoritative id is available")
+		t.Fatalf("expected no match when no usable id is available")
+	}
+}
+
+// TestRunBatchFetchInfohashResolvesBySearch 复现故障日志：details 为空、hash 为 infohash、
+// 站点无权威 ID——批量抓取把 infohash 传给抓取流程（由下载层按名称搜索定位真实数字 ID）。
+func TestRunBatchFetchInfohashResolvesBySearch(t *testing.T) {
+	infohash := "42293da64df095a71380aa0ab3a8a77d8b22ca08"
+	rows := []map[string]any{
+		{
+			"name":      "Carrie.S01.2160p.AMZN.WEB-DL.DDP.5.1.Atmos.HDR10+.H.265-CHDWEB",
+			"sites":     "彩虹岛",
+			"hash":      infohash,
+			"details":   "",
+			"save_path": "/downloads/qb",
+		},
+	}
+
+	captured := map[string]any{}
+	RunBatchFetch(
+		[]string{"Carrie.S01.2160p.AMZN.WEB-DL.DDP.5.1.Atmos.HDR10+.H.265-CHDWEB"},
+		[]string{"彩虹岛"},
+		rows,
+		BatchFetchRunnerDeps{
+			FetchAndStore: func(payload map[string]any) (map[string]any, int) {
+				captured = payload
+				return map[string]any{"success": true}, 200
+			},
+			OnResult: func(bool, map[string]any) {},
+		},
+	)
+
+	searchTerm := strings.TrimSpace(toStringAny(captured["searchTerm"], ""))
+	if searchTerm != infohash {
+		t.Fatalf("expected searchTerm=infohash %s, got %q", infohash, searchTerm)
+	}
+	torrentName := strings.TrimSpace(toStringAny(captured["torrentName"], ""))
+	if torrentName == "" {
+		t.Fatalf("expected torrentName hint passed to fetch flow")
 	}
 }
 
