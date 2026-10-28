@@ -16,8 +16,8 @@ func TestParseAndValidateFlareSolverrConfig(t *testing.T) {
 				if cfg.Enabled {
 					t.Fatalf("expected disabled by default")
 				}
-				if cfg.TimeoutSeconds != 60 {
-					t.Fatalf("expected default timeout 60, got %d", cfg.TimeoutSeconds)
+				if cfg.TimeoutSeconds != 90 {
+					t.Fatalf("expected default timeout 90, got %d", cfg.TimeoutSeconds)
 				}
 			},
 		},

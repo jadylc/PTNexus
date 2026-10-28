@@ -139,7 +139,12 @@ func fetchBinarySmart(targetURL, referer, cookie string, timeout time.Duration) 
 		return body, cookie, fmt.Errorf("%w（站点开启 Cloudflare 防护，请部署 FlareSolverr 并在「设置 → FlareSolverr」启用后重试）", ErrCloudflareChallenge)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	// 求解预算使用 FlareSolverr 自身配置（TimeoutSeconds + 余量），不受页面抓取超时约束：
+	// 页面抓取超时只约束直连请求；managed challenge 求解常需 60~120 秒，
+	// 若沿用页面超时（如搜索页 45s）会把求解中途掐断。
+	solveCfg := flaresolverr.Config()
+	solveBudget := time.Duration(solveCfg.TimeoutSeconds)*time.Second + 30*time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), solveBudget)
 	defer cancel()
 	solution, solveErr := flaresolverr.Solve(ctx, targetURL, cookie)
 	if solveErr != nil {
@@ -152,20 +157,24 @@ func fetchBinarySmart(targetURL, referer, cookie string, timeout time.Duration) 
 		return body, cookie, fmt.Errorf("%w: %v", ErrCloudflareChallenge, solveErr)
 	}
 
+	// 求解超时（managed challenge 跑满预算）时 body 可能为空，但 Cookie 可能已就位——
+	// 先尝试用拿到的 Cookie 直连重试，成功就不算失败。
 	merged := mergeCookieStrings(cookie, solution.Cookies)
-	logx.Infof(cloudflareFallbackLogModule, "FlareSolverr 求解成功 target_url=%s cookies=%d merged=%t", redactURLQuery(targetURL), len(solution.Cookies), merged != cookie)
+	logx.Infof(cloudflareFallbackLogModule, "FlareSolverr 求解成功 target_url=%s cookies=%d merged=%t body_len=%d", redactURLQuery(targetURL), len(solution.Cookies), merged != cookie, len(solution.Body))
 
 	// 优先用求解得到的 Cookie 重新直接抓取，避免二进制内容经 JSON 字符串转换损坏。
 	if merged != cookie {
-		if retried, retryErr := fetchBinaryWithCookie(targetURL, referer, merged, timeout); retryErr == nil {
+		if retried, retryErr := fetchBinaryWithCookie(targetURL, referer, merged, timeout); retryErr == nil && !isCloudflareChallengeBody(retried) {
 			return retried, merged, nil
-		} else {
+		} else if retryErr != nil {
 			logx.Warnf(cloudflareFallbackLogModule, "使用 FlareSolverr Cookie 重试失败 target_url=%s err=%v", redactURLQuery(targetURL), retryErr)
+		} else {
+			logx.Warnf(cloudflareFallbackLogModule, "使用 FlareSolverr Cookie 重试仍命中挑战 target_url=%s", redactURLQuery(targetURL))
 		}
 	}
 
 	if strings.TrimSpace(solution.Body) == "" {
-		return body, merged, ErrCloudflareChallenge
+		return body, merged, fmt.Errorf("%w（FlareSolverr 求解超时未取得页面内容，可在「设置 → FlareSolverr」调大求解超时后重试）", ErrCloudflareChallenge)
 	}
 	if isCloudflareChallengeBody([]byte(solution.Body)) {
 		return []byte(solution.Body), merged, ErrCloudflareChallenge

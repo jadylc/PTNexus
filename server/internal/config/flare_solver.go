@@ -28,7 +28,7 @@ func DefaultFlareSolverrConfig() FlareSolverrConfig {
 		Enabled:          false,
 		APIURL:           "",
 		APIKey:           "",
-		TimeoutSeconds:   60,
+		TimeoutSeconds:   90,
 		MaxTimeoutMillis: 0,
 		CustomUserAgent:  "",
 		ExtraHeaders:     map[string]string{},

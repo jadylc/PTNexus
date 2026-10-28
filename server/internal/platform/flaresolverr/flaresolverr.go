@@ -88,6 +88,9 @@ var (
 // 参数/返回：cfg 为当前应用配置；返回 error 表示配置校验失败。
 // 失败场景：FlareSolverr 未启用但配置非法时返回 error。
 // 副作用：替换全局运行时配置与 HTTP 客户端。
+// 说明：HTTP 客户端超时在求解预算（TimeoutSeconds）之上加 15 秒余量——
+// FlareSolverr 用满 maxTimeout 才返回是常态（managed challenge 常需 60 秒+），
+// 客户端与预算同刻到期会把"求解完成但响应没收完"误判成超时。
 func Install(cfg config.FlareSolverrConfig) error {
 	normalized := config.NormalizeFlareSolverrConfig(cfg)
 	if err := config.ValidateFlareSolverrConfig(normalized); err != nil {
@@ -96,10 +99,13 @@ func Install(cfg config.FlareSolverrConfig) error {
 	globalMu.Lock()
 	defer globalMu.Unlock()
 	globalCfg = normalized
-	globalHTTP = &http.Client{Timeout: time.Duration(normalized.TimeoutSeconds) * time.Second}
+	globalHTTP = &http.Client{Timeout: time.Duration(normalized.TimeoutSeconds)*time.Second + httpTimeoutMargin}
 	logx.Infof(logModule, "已应用 FlareSolverr 配置 enabled=%t api_url=%s", normalized.Enabled, redactAPIURL(normalized.APIURL))
 	return nil
 }
+
+// httpTimeoutMargin 是 HTTP 客户端相对求解预算的额外等待余量。
+const httpTimeoutMargin = 15 * time.Second
 
 // Update 热更新全局 FlareSolverr 运行时配置。
 // 参数/返回：cfg 为新配置；返回 error 表示配置非法。
@@ -210,7 +216,7 @@ func Solve(ctx context.Context, targetURL, cookie string) (*Solution, error) {
 		return nil, fmt.Errorf("FlareSolverr 未启用")
 	}
 	if client == nil {
-		client = &http.Client{Timeout: time.Duration(cfg.TimeoutSeconds) * time.Second}
+		client = &http.Client{Timeout: time.Duration(cfg.TimeoutSeconds)*time.Second + httpTimeoutMargin}
 	}
 
 	payload := buildRequestPayload(cfg, targetURL, cookie)
