@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/pt-nexus/server/internal/platform/logx"
+	extract "github.com/pt-nexus/server/internal/service/acquire/extract"
 	processingshared "github.com/pt-nexus/server/internal/service/processing/shared"
 	processingtitle "github.com/pt-nexus/server/internal/service/processing/title"
 )
@@ -24,7 +25,7 @@ func (s *MigrateService) ReparseTitleComponents(payload map[string]any) (map[str
 	siteName := strings.TrimSpace(processingshared.ToString(payload["site_name"], ""))
 	torrentID := strings.TrimSpace(processingshared.ToString(payload["torrent_id"], ""))
 
-	selectSQL := "SELECT hash, torrent_id, site_name, title, name, mediainfo FROM seed_parameters"
+	selectSQL := "SELECT hash, torrent_id, site_name, title, subtitle, name, mediainfo FROM seed_parameters"
 	where := make([]string, 0)
 	args := make([]any, 0)
 	if siteName != "" {
@@ -52,6 +53,7 @@ func (s *MigrateService) ReparseTitleComponents(payload map[string]any) (map[str
 		rowTorrentID := strings.TrimSpace(processingshared.ToString(row["torrent_id"], ""))
 		rowSite := strings.TrimSpace(processingshared.ToString(row["site_name"], ""))
 		title := strings.TrimSpace(processingshared.ToString(row["title"], ""))
+		subtitle := strings.TrimSpace(processingshared.ToString(row["subtitle"], ""))
 		if title == "" {
 			title = strings.TrimSpace(processingshared.ToString(row["name"], ""))
 		}
@@ -61,7 +63,14 @@ func (s *MigrateService) ReparseTitleComponents(payload map[string]any) (map[str
 		}
 		mediaInfoText := strings.TrimSpace(processingshared.ToString(row["mediainfo"], ""))
 
-		result := processingtitle.BuildTitleComponentsForStorage(title, mediaInfoText, processingtitle.BuildSimpleTitleComponentsWithMediaInfo)
+		// 双标题纠正：① 主标题为中文信息条且副标题为英文发布名时交换（互倒场景）；
+		// ② 顶部标题混入多行（信息条+发布名）时按西文发布名行拆分。
+		// 纠正需同步写回 title/subtitle，否则下次读取仍是混排状态。
+		fixedTitle, fixedSubtitle := extract.NormalizeSiteDualTitle(title, subtitle)
+		fixedTitle, fixedSubtitle = extract.NormalizeMultilineTitle(fixedTitle, fixedSubtitle)
+		updates := map[string]any{}
+
+		result := processingtitle.BuildTitleComponentsForStorage(fixedTitle, mediaInfoText, processingtitle.BuildSimpleTitleComponentsWithMediaInfo)
 		if len(result.Components) == 0 {
 			skipped++
 			continue
@@ -72,10 +81,15 @@ func (s *MigrateService) ReparseTitleComponents(payload map[string]any) (map[str
 			failed++
 			continue
 		}
-		if err := s.repo.UpdateSeedParameterByKey(rowHash, rowTorrentID, rowSite, map[string]any{
-			"title_components": string(encoded),
-			"updated_at":       now,
-		}); err != nil {
+		updates["title_components"] = string(encoded)
+		if fixedTitle != title {
+			updates["title"] = fixedTitle
+		}
+		if fixedSubtitle != subtitle {
+			updates["subtitle"] = fixedSubtitle
+		}
+		updates["updated_at"] = now
+		if err := s.repo.UpdateSeedParameterByKey(rowHash, rowTorrentID, rowSite, updates); err != nil {
 			logx.Warnf(reparseTitleComponentsLogModule, "写回失败 seed=%s_%s_%s err=%v", rowHash, rowTorrentID, rowSite, err)
 			failed++
 			continue

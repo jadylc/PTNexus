@@ -127,6 +127,10 @@ func extractReviewDataFromHTMLWithSite(pageHTML, fallbackTitle string, siteCode 
 	result.Title = title
 
 	result.Subtitle = extractSubtitle(page)
+	// 双标题纠正：① 主标题为含竖线的中文信息条且副标题为纯西文时交换；
+	// ② 顶部标题元素混入多行（信息条+发布名）时按西文发布名行拆分。
+	result.Title, result.Subtitle = NormalizeSiteDualTitle(result.Title, result.Subtitle)
+	result.Title, result.Subtitle = NormalizeMultilineTitle(result.Title, result.Subtitle)
 	descrHTML := extractElementInnerHTMLByID(page, "div", "kdescr")
 	if strings.TrimSpace(descrHTML) == "" {
 		descrHTML = extractElementInnerHTMLByID(page, "td", "kdescr")
@@ -898,6 +902,147 @@ func cleanTopTitleText(rawHTML string) string {
 		text = next
 	}
 	return strings.TrimSpace(text)
+}
+
+// normalizeSiteDualTitle 纠正主副标题互倒：主标题为含竖线的中文信息块且副标题
+// 为纯西文发布名时，交换两者。
+// 参数/返回：mainTitle/subtitle 为提取到的主副标题；返回纠正后的主副标题。
+// 失败场景：不适用。
+// 副作用：无。
+// 说明：HHWEB/岛组风格站点将"中文名 | 集数 | 分辨率 | 类型 | 导演 | 主演"信息条
+// 放在主标题位、英文发布名放在副标题。不交换会导致标题组件把英文发布名
+// 与信息条碎片一起判进"无法识别"。
+func NormalizeSiteDualTitle(mainTitle, subtitle string) (string, string) {
+	main := strings.TrimSpace(mainTitle)
+	sub := strings.TrimSpace(subtitle)
+	if main == "" || sub == "" {
+		return main, sub
+	}
+	if !strings.Contains(main, " | ") && !strings.Contains(main, "｜") {
+		return main, sub
+	}
+	if containsCJKText(main) && !containsCJKText(sub) {
+		return sub, main
+	}
+	return main, sub
+}
+
+// reReleaseNameLike 判断是否为西文发布名行：无汉字，且包含分辨率或常见技术标记。
+var reReleaseNameLike = regexp.MustCompile(`(?i)\b(?:2160p|1080p|720p|WEB-?DL|WEBRip|BluRay|REMUX|HDTV|x264|x265|H\.?26[45]|HEVC|AAC|FLAC|DDP|TrueHD)\b`)
+
+// NormalizeMultilineTitle 拆分混入副标题的多行标题块。
+// 参数/返回：mainTitle/subtitle 为纠正互倒后的主副标题；返回拆分后的主副标题。
+// 失败场景：不适用。
+// 副作用：无。
+// 说明：部分站点详情页的顶部标题元素同时包含主标题与副标题两行
+// （如 "行骗天下JP | … 信息条\nThe Confidence Man JP S01 …-HHWEB"），
+// 会导致英文发布名整段落进标题组件的"无法识别"。这里选取其中
+// 西文发布名行作为主标题，其余行并入副标题（与已有副标题去重）。
+func NormalizeMultilineTitle(mainTitle, subtitle string) (string, string) {
+	main := strings.TrimSpace(mainTitle)
+	existing := strings.TrimSpace(subtitle)
+	if !strings.Contains(main, "\n") {
+		// 存量数据：两行被空格折叠连接。若副标题片段能在标题中顺序定位，
+		// 切掉前缀后剩余的西文发布名即为主标题。
+		if strings.Contains(main, " | ") && containsCJKText(main) && containsCJKText(existing) {
+			if remainder, _, ok := cutSubtitlePrefixFromTitle(main, existing); ok {
+				return remainder, existing
+			}
+		}
+		return main, existing
+	}
+
+	lines := make([]string, 0, 4)
+	for _, line := range strings.Split(main, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) < 2 {
+		return main, strings.TrimSpace(subtitle)
+	}
+
+	titleIdx := -1
+	for i, line := range lines {
+		if !containsCJKText(line) && reReleaseNameLike.MatchString(line) {
+			titleIdx = i
+			break
+		}
+	}
+	if titleIdx < 0 {
+		return main, strings.TrimSpace(subtitle)
+	}
+
+	otherLines := make([]string, 0, len(lines)-1)
+	for i, line := range lines {
+		if i != titleIdx {
+			otherLines = append(otherLines, line)
+		}
+	}
+	newSubtitle := strings.Join(otherLines, "\n")
+	if existing == "" {
+		return lines[titleIdx], newSubtitle
+	}
+	// 已有副标题且与拆分结果不同时：拆分行是站点顶部标题的组成部分，优先保留；
+	// 已有副标题若包含拆分行内容则维持原样，避免重复。
+	if strings.Contains(existing, otherLines[0]) || strings.Contains(otherLines[0], existing) {
+		return lines[titleIdx], existing
+	}
+	return lines[titleIdx], newSubtitle
+}
+
+// cutSubtitlePrefixFromTitle 处理"副标题片段+英文发布名"被空格连接的存量标题：
+// 按竖线段顺序在标题中匹配副标题前缀，切掉已匹配部分，剩余的西文发布名作为主标题。
+// 参数/返回：mainTitle 为污染标题，subtitle 为站点副标题；返回拆分结果与是否命中。
+// 失败场景：不适用。
+// 副作用：无。
+// 说明：站点提取时标题中的换行会被折叠为空格，按 \n 的多行拆分无法命中存量数据；
+// 但副标题列保存的是完整信息条，其前缀片段能在污染标题中顺序定位出切割点。
+func cutSubtitlePrefixFromTitle(mainTitle, subtitle string) (string, string, bool) {
+	title := strings.TrimSpace(mainTitle)
+	sub := strings.TrimSpace(subtitle)
+	if title == "" || sub == "" || !containsCJKText(title) || !containsCJKText(sub) {
+		return title, sub, false
+	}
+
+	offset := 0
+	matched := 0
+	for _, seg := range strings.Split(sub, "|") {
+		seg = strings.TrimSpace(seg)
+		if seg == "" {
+			continue
+		}
+		idx := strings.Index(title[offset:], seg)
+		if idx < 0 {
+			break
+		}
+		offset += idx + len(seg)
+		matched++
+	}
+	if matched == 0 {
+		return title, sub, false
+	}
+
+	remainder := strings.TrimLeft(title[offset:], " |｜")
+	remainder = strings.TrimSpace(remainder)
+	if remainder == "" || !reReleaseNameLike.MatchString(remainder) {
+		return title, sub, false
+	}
+	return remainder, sub, true
+}
+
+// containsCJKText 判断文本是否包含汉字。
+// 参数/返回：s 为待判断文本；返回是否含汉字。
+// 失败场景：不适用。
+// 副作用：无。
+func containsCJKText(s string) bool {
+	for _, r := range s {
+		if unicode.Is(unicode.Han, r) {
+			return true
+		}
+	}
+	return false
 }
 
 func extractSubtitle(page string) string {
