@@ -186,7 +186,34 @@ func normalizeQueryRow(item map[string]any, reverseMappings map[string]any) {
 
 	titleComponents := parseAnyArray(item["title_components"])
 	item["unrecognized"] = extractUnrecognized(titleComponents)
+	item["has_problem"] = hasRowDataProblem(titleComponents, item, reverseMappings)
 	item["is_publishable"] = isRowPublishable(item, reverseMappings)
+}
+
+// hasRowDataProblem 判断该行是否存在需要人工修复的数据问题（"错误"类的判定依据）。
+// 参数/返回：titleComponents 为标题组件；item 为当前行；reverseMappings 为反向映射表；
+// 返回是否存在数据问题。
+// 失败场景：不适用。
+// 副作用：无。
+// 说明：数据问题包含两类——标题组件含「无法识别」字段（标题解析失败），
+// 或已填写的标准字段值非法/无法反向映射（映射缺失）。
+// 禁转/限转/分集属业务约束而非数据错误，不计入问题；它们落回"待检查"由人工判断。
+func hasRowDataProblem(titleComponents []any, item map[string]any, reverseMappings map[string]any) bool {
+	if hasUnrecognizedValue(titleComponents) {
+		return true
+	}
+
+	fieldCategories := []string{"type", "medium", "video_codec", "audio_codec", "resolution", "team", "source"}
+	for _, category := range fieldCategories {
+		value := strings.TrimSpace(toString(item[category], ""))
+		if value == "" {
+			continue
+		}
+		if !isValidStandardValue(value) || !isStandardValueMapped(reverseMappings, category, value) {
+			return true
+		}
+	}
+	return false
 }
 
 func paginateMaps(items []map[string]any, offset int, pageSize int) []map[string]any {
@@ -200,19 +227,36 @@ func paginateMaps(items []map[string]any, offset int, pageSize int) []map[string
 	return items[offset:end]
 }
 
+// matchesReviewStatus 判断行是否命中指定检查状态。
+// 参数/返回：item 为归一化后的行；reviewStatus 为 reviewed/unreviewed/error/deleted；
+// 返回是否命中。
+// 失败场景：不适用。
+// 副作用：无。
+// 说明：四类语义互斥且覆盖全部行——
+//   - reviewed（已检查）：可发布（字段齐全、映射有效、无数据问题、无受限标签）；
+//   - error（错误）：未删除但存在数据问题（无法识别字段 / 字段值未映射）；
+//   - unreviewed（待检查）：未删除、无数据问题、但尚不可发布（未审核或业务受限）；
+//   - deleted（已删除）：种子在下载器中已不存在。
 func matchesReviewStatus(item map[string]any, reviewStatus string) bool {
 	publishable, ok := item["is_publishable"].(bool)
 	if !ok {
 		publishable = false
 	}
+	hasProblem, ok := item["has_problem"].(bool)
+	if !ok {
+		hasProblem = false
+	}
+	deleted := boolFromAny(item["is_deleted"])
 
 	switch reviewStatus {
 	case "reviewed":
 		return publishable
 	case "unreviewed":
-		return !boolFromAny(item["is_deleted"]) && !publishable
+		return !deleted && !publishable && !hasProblem
 	case "error":
-		return boolFromAny(item["is_deleted"])
+		return !deleted && hasProblem
+	case "deleted":
+		return deleted
 	default:
 		return true
 	}

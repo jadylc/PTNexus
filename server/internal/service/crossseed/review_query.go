@@ -55,17 +55,18 @@ func (s *CrossSeedService) queryReviewFilteredData(params CrossSeedQueryParams, 
 		}
 	}
 
-	// 将 reviewed/unreviewed/error 的判定必要条件下推到 SQL，缩小全量扫描范围：
-	// - reviewed = is_publishable => 必需 is_reviewed=1 且未删除（存在非隐藏 torrent）
-	// - unreviewed = 未删除 且 不可发布 => 必需未删除
-	// - error = 已删除 => 必需不存在非隐藏 torrent
+	// 将 reviewed/unreviewed/error/deleted 的判定必要条件下推到 SQL，缩小全量扫描范围：
+	// - reviewed（已检查）  = is_publishable    => 必需 is_reviewed=1 且未删除
+	// - error（错误）       = 数据问题           => 必需未删除（问题判定依赖标题/映射，Go 侧完成）
+	// - unreviewed（待检查）= 无问题但不可发布   => 必需未删除
+	// - deleted（已删除）   = 种子已不存在       => 必需不存在非隐藏种子
 	// 这些条件只是"必要条件"，最终仍由 Go 侧 matchesReviewStatus 完成精确判定，语义不变。
 	if strings.EqualFold(reviewStatus, "reviewed") {
 		whereConditions = append(whereConditions, "sp.is_reviewed = 1")
 		whereConditions = append(whereConditions, reviewExistsActiveTorrentCondition(dbType, "sp"))
-	} else if strings.EqualFold(reviewStatus, "unreviewed") {
+	} else if strings.EqualFold(reviewStatus, "unreviewed") || strings.EqualFold(reviewStatus, "error") {
 		whereConditions = append(whereConditions, reviewExistsActiveTorrentCondition(dbType, "sp"))
-	} else if strings.EqualFold(reviewStatus, "error") {
+	} else if strings.EqualFold(reviewStatus, "deleted") {
 		whereConditions = append(whereConditions, reviewMissingActiveTorrentCondition(dbType, "sp"))
 	}
 

@@ -71,3 +71,12 @@ func (h *CrossSeedHandler) DeleteData(c *gin.Context) {
 	result, status := h.service.DeleteCrossSeedData(payload)
 	c.JSON(status, result)
 }
+
+// ClearDeletedData 一键清除所有"已删除"记录（种子已不在下载器的数据行）。
+// 参数/返回：无请求参数；返回 success/message/deleted_count。
+// 失败场景：数据库删除失败时返回对应错误码。
+// 副作用：删除 seed_parameters 中已不存在未隐藏种子的数据行。
+func (h *CrossSeedHandler) ClearDeletedData(c *gin.Context) {
+	result, status := h.service.ClearDeletedData()
+	c.JSON(status, result)
+}

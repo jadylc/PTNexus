@@ -72,7 +72,19 @@
         <el-radio-button label="reviewed">已检查</el-radio-button>
         <el-radio-button label="unreviewed">待检查</el-radio-button>
         <el-radio-button label="error">错误</el-radio-button>
+        <el-radio-button label="deleted">已删除</el-radio-button>
       </el-radio-group>
+
+      <el-button
+        v-if="isMaintenanceMode && reviewStatusFilter === 'deleted'"
+        type="danger"
+        plain
+        :loading="clearingDeleted"
+        style="margin-right: 15px"
+        @click="clearDeletedRecords"
+      >
+        一键清除
+      </el-button>
 
       <div
         v-if="hasActiveFilters"
@@ -554,6 +566,8 @@ const currentFilterText = computed(() => {
     filterTexts.push('待检查')
   } else if (reviewStatusFilter.value === 'error') {
     filterTexts.push('错误')
+  } else if (reviewStatusFilter.value === 'deleted') {
+    filterTexts.push('已删除')
   }
 
   if (filters.paths.length > 0) {
@@ -1260,6 +1274,41 @@ const getDeleteButtonText = () => {
 const toggleDeleteMode = () => {
   isDeleteMode.value = !isDeleteMode.value
   selectedRows.value = []
+}
+
+// 一键清除"已删除"记录：删除所有"种子已不在下载器"的 seed_parameters 行。
+const clearingDeleted = ref(false)
+const clearDeletedRecords = async () => {
+  if (clearingDeleted.value) return
+  try {
+    await ElMessageBox.confirm(
+      '将清除所有「已删除」记录（种子已不在下载器中的数据），此操作无法恢复！',
+      '确认一键清除',
+      { confirmButtonText: '确定清除', cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch {
+    return
+  }
+
+  clearingDeleted.value = true
+  try {
+    const response = await axios.post('/api/cross-seed-data/clear-deleted')
+    const result = response.data
+    if (!result?.success) {
+      throw new Error(result?.error || '清除失败')
+    }
+    ElMessage.success(result.message || `已清除 ${result.deleted_count || 0} 条记录`)
+    await fetchData()
+  } catch (error: unknown) {
+    const message = axios.isAxiosError(error)
+      ? String(error.response?.data?.error || error.response?.data?.message || error.message)
+      : error instanceof Error
+        ? error.message
+        : '清除失败'
+    ElMessage.error(message)
+  } finally {
+    clearingDeleted.value = false
+  }
 }
 
 const executeBatchDelete = async () => {

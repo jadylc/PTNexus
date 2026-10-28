@@ -28,7 +28,7 @@ func stateRankExpr(alias string) string {
 func normalizeReviewStatus(reviewStatus string) string {
 	normalized := strings.ToLower(strings.TrimSpace(reviewStatus))
 	switch normalized {
-	case "reviewed", "unreviewed", "error":
+	case "reviewed", "unreviewed", "error", "deleted":
 		return normalized
 	default:
 		return ""
@@ -328,6 +328,31 @@ func (s *CrossSeedService) DeleteCrossSeedData(payload map[string]any) (map[stri
 	}
 	s.invalidateCache()
 	return map[string]any{"success": true, "message": fmt.Sprintf("种子数据 %s from %s 已删除", torrentID, siteName)}, 200
+}
+
+// ClearDeletedData 一键清除"已删除"记录。
+// 参数/返回：无参数；返回 success/message/deleted_count。
+// 失败场景：数据库删除失败时返回 500。
+// 副作用：从 seed_parameters 删除所有"已不存在未隐藏种子"的数据行，并使查询缓存失效。
+// 说明：与"已删除"筛选同一定义（hash 上没有未隐藏的 torrent 行），
+// 用于一次性清理下载器中已移除的种子记录。
+func (s *CrossSeedService) ClearDeletedData() (map[string]any, int) {
+	deleteSQL := `DELETE FROM seed_parameters
+		WHERE NOT EXISTS (
+			SELECT 1 FROM torrents current_torrent
+			WHERE current_torrent.hash = seed_parameters.hash
+			  AND (current_torrent.is_hidden = 0 OR current_torrent.is_hidden IS NULL)
+		)`
+	deletedCount, err := s.repo.Exec(deleteSQL)
+	if err != nil {
+		return map[string]any{"success": false, "error": err.Error()}, 500
+	}
+	s.invalidateCache()
+	return map[string]any{
+		"success":       true,
+		"message":       fmt.Sprintf("已清除 %d 条已删除记录", deletedCount),
+		"deleted_count": deletedCount,
+	}, 200
 }
 
 func buildAliasMatchCondition(dbType string, field string, aliases []string) string {

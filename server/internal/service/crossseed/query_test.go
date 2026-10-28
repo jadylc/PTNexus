@@ -165,8 +165,77 @@ func TestQueryDataReviewStatusUsesPublishableClassification(t *testing.T) {
 	if err != nil {
 		t.Fatalf("QueryData unreviewed returned error: %v", err)
 	}
-	if unreviewed["total"].(int) != 3 {
-		t.Fatalf("expected unreviewed total 3, got %#v", unreviewed["total"])
+	// 新语义：待检查只保留"无数据问题但不可发布"的行——Restricted（禁转属业务约束）1 条；
+	// BadTeam（字段值非法）与 Unrecognized（含无法识别字段）归入"错误"。
+	if unreviewed["total"].(int) != 1 {
+		t.Fatalf("expected unreviewed total 1, got %#v", unreviewed["total"])
+	}
+	unreviewedData := unreviewed["data"].([]map[string]any)
+	if len(unreviewedData) != 1 || unreviewedData[0]["torrent_id"] != "1003" {
+		t.Fatalf("expected only business-restricted row in unreviewed data, got %#v", unreviewedData)
+	}
+
+	// 错误 = 未删除但存在数据问题（字段值未映射 / 含无法识别字段）。
+	errorsResult, err := service.QueryData(CrossSeedQueryParams{Page: 1, PageSize: 20, ReviewStatus: "error"})
+	if err != nil {
+		t.Fatalf("QueryData error returned error: %v", err)
+	}
+	if errorsResult["total"].(int) != 2 {
+		t.Fatalf("expected error total 2, got %#v", errorsResult["total"])
+	}
+	errorIDs := map[string]struct{}{}
+	for _, row := range errorsResult["data"].([]map[string]any) {
+		if id, ok := row["torrent_id"].(string); ok {
+			errorIDs[id] = struct{}{}
+		}
+	}
+	for _, want := range []string{"1002", "1004"} {
+		if _, ok := errorIDs[want]; !ok {
+			t.Fatalf("expected %s in error classification, got %#v", want, errorIDs)
+		}
+	}
+}
+
+// TestQueryDataReviewStatusDeletedAndClear 验证"已删除"分类与一键清除：
+// 种子在下载器中已不存在时归入 deleted；一键清除后该批数据被物理删除。
+func TestQueryDataReviewStatusDeletedAndClear(t *testing.T) {
+	store := newCrossSeedTestStore(t)
+	repo := repository.NewCrossSeedRepository(store)
+	service := NewCrossSeedService(repo)
+
+	// 仍在做种的行（不存在于 deleted）。
+	insertCrossSeedReviewRow(t, store.DB, "3001", "Alive", "team.other", `[]`, `[]`, 1)
+	// 已删除的行：seed_parameters 有记录，但 torrents 中无对应未隐藏种子。
+	mustExecCrossSeedTest(t, store.DB, `INSERT INTO seed_parameters (
+		hash, torrent_id, site_name, nickname, title, subtitle, type, medium, video_codec,
+		audio_codec, resolution, team, source, tags, title_components,
+		screenshot_review_status, is_reviewed, created_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"hash-3002", "3002", "hdsky", "HDSky", "Gone", "", "category.movie", "medium.bluray", "video.h264",
+		"audio.dts", "resolution.r1080p", "team.other", "", "[]", "[]", "none", 1, "2026-04-14 10:00:00", "2026-04-14 10:00:00")
+
+	deletedResult, err := service.QueryData(CrossSeedQueryParams{Page: 1, PageSize: 20, ReviewStatus: "deleted"})
+	if err != nil {
+		t.Fatalf("QueryData deleted returned error: %v", err)
+	}
+	if deletedResult["total"].(int) != 1 {
+		t.Fatalf("expected deleted total 1, got %#v", deletedResult["total"])
+	}
+
+	cleared, status := service.ClearDeletedData()
+	if status != 200 || cleared["success"] != true {
+		t.Fatalf("ClearDeletedData failed: status=%d result=%#v", status, cleared)
+	}
+	if count, _ := cleared["deleted_count"].(int64); count != 1 {
+		t.Fatalf("expected deleted_count 1, got %#v", cleared["deleted_count"])
+	}
+
+	afterClear, err := service.QueryData(CrossSeedQueryParams{Page: 1, PageSize: 20, ReviewStatus: "deleted"})
+	if err != nil {
+		t.Fatalf("QueryData deleted after clear returned error: %v", err)
+	}
+	if afterClear["total"].(int) != 0 {
+		t.Fatalf("expected deleted total 0 after clear, got %#v", afterClear["total"])
 	}
 }
 

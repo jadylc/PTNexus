@@ -303,6 +303,7 @@ func registerRoutes(
 		api.GET("/cross-seed-data/test-no-auth", crossSeedHandler.TestNoAuth)
 		api.POST("/cross-seed-data/delete", crossSeedHandler.DeleteData)
 		api.DELETE("/cross-seed-data/delete", crossSeedHandler.DeleteData)
+		api.POST("/cross-seed-data/clear-deleted", crossSeedHandler.ClearDeletedData)
 
 		api.POST("/utils/parse_title", migrateHandler.ParseTitle)
 		api.POST("/media/validate", migrateHandler.MediaValidate)
