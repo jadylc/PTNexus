@@ -51,11 +51,12 @@
       <el-button
         v-if="isMaintenanceMode"
         type="danger"
-        @click="isDeleteMode && selectedRows.length > 0 ? executeBatchDelete() : toggleDeleteMode()"
+        :disabled="selectedRows.length === 0"
+        @click="executeBatchDelete()"
         plain
         style="margin-right: 15px"
       >
-        {{ getDeleteButtonText() }}
+        {{ selectedRows.length > 0 ? `批量删除 (${selectedRows.length})` : '批量删除' }}
       </el-button>
 
       <el-button type="primary" @click="openFilterDialog" plain style="margin-right: 15px">
@@ -536,7 +537,6 @@ const selectedRows = ref<SeedParameter[]>([])
 const pendingBatchCrossSeedAfterFilter = ref(false)
 const batchFetchDialogVisible = ref(false)
 const batchFetchPanelRef = ref<InstanceType<typeof BatchFetchPanel> | null>(null)
-const isDeleteMode = ref(false)
 const recordDialogVisible = ref(false)
 const pathTreeRef = ref<InstanceType<typeof ElTree> | null>(null)
 const pathTreeData = ref<PathNode[]>([])
@@ -854,8 +854,10 @@ const buildPathTree = (paths: string[]): PathNode[] => {
   return root
 }
 
+// 维护模式下所有行直接可勾选（含错误/未审核/已删除行），
+// 勾选后即可执行批量删除或批量重算；转种模式仍只允许可发布行（原逻辑）。
 const checkSelectable = (row: SeedParameter) => {
-  if (isMaintenanceMode.value && isDeleteMode.value) {
+  if (isMaintenanceMode.value) {
     return true
   }
   if (row.is_deleted) {
@@ -1279,21 +1281,6 @@ const handleSingleCrossSeed = async (row: SeedParameter) => {
   }
 }
 
-const getDeleteButtonText = () => {
-  if (!isDeleteMode.value) {
-    return '批量删除模式'
-  }
-  if (selectedRows.value.length === 0) {
-    return '退出删除模式'
-  }
-  return `删除选中项 (${selectedRows.value.length})`
-}
-
-const toggleDeleteMode = () => {
-  isDeleteMode.value = !isDeleteMode.value
-  selectedRows.value = []
-}
-
 // 一键清除"已删除"记录：删除所有"种子已不在下载器"的 seed_parameters 行。
 const clearingDeleted = ref(false)
 const clearDeletedRecords = async () => {
@@ -1413,7 +1400,6 @@ const executeBatchDelete = async () => {
 
     ElMessage.success(result.message || `成功删除 ${result.deleted_count} 条数据`)
     selectedRows.value = []
-    isDeleteMode.value = false
     await fetchData()
   } catch (error: unknown) {
     if (error === 'cancel' || error === 'close') return
