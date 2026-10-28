@@ -105,6 +105,8 @@ func NewApp() (*App, error) {
 	migrateService.InitPublishQueue(queueRepo, statsRepo)
 	migrateService.InitPublishLogs(publishLogRepo)
 	migrateService.InitTaskRuns(taskRunRepo)
+	// 批量写 seed_parameters（如标题重算）后失效跨种查询缓存，避免列表在 TTL 内展示旧数据。
+	migrateService.SetSeedParametersChangedHook(crossSeedService.InvalidateCaches)
 	migrateService.StartPublishQueueWorker()
 	// 续跑上一次进程被中断的批次任务（批量发布/批量获取），必须在队列线程之后启动。
 	migrateService.StartTaskRunResume()

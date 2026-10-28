@@ -66,6 +66,12 @@ func (s *CrossSeedService) invalidateCache() {
 	s.cacheMu.Unlock()
 }
 
+// InvalidateCaches 导出的缓存失效入口：其他服务（如标题重算）批量写库后调用，
+// 避免跨种/维护列表在缓存 TTL 内展示旧数据。
+func (s *CrossSeedService) InvalidateCaches() {
+	s.invalidateCache()
+}
+
 // getCachedQuery 返回未过期的缓存结果；不存在或已过期时返回 nil。
 func (s *CrossSeedService) getCachedQuery(key string) map[string]any {
 	s.cacheMu.Lock()

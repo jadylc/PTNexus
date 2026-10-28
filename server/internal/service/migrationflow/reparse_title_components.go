@@ -150,6 +150,10 @@ func (s *MigrateService) ReparseTitleComponents(payload map[string]any) (map[str
 	}
 
 	logx.Infof(reparseTitleComponentsLogModule, "标题重算完成 site=%s torrent_id=%s only_errors=%t total=%d updated=%d skipped=%d failed=%d", siteName, torrentID, onlyErrors, len(rows), updated, skipped, failed)
+	if updated > 0 {
+		// 通知跨种服务失效查询缓存，避免维护/跨种列表在 TTL 内展示旧数据。
+		s.notifySeedParametersChanged()
+	}
 	return map[string]any{
 		"success":     true,
 		"message":     "重算完成",

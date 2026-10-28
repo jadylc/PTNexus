@@ -47,7 +47,7 @@ var (
 
 var specialReleaseGroupSuffixes = []string{"mUHD-FRDS", "MNHD-FRDS", "￡cXcY-FRDS", "￡cXcY@FRDS", "DMG&VCB-Studio", "VCB-Studio"}
 
-const sourcePlatformAlternatives = `MA|Apple\s?TV\+|ViuTV|MyTVSuper|MyTVS|DNSP|iT|NowE|MyVideo|TWN|LiTV|TVBAnywhere|DMM|iPad|TX|iQIYI|MUBI|TVB|YOUKU|NowPlay|AMZN|Amazon|Netflix|NF|DSNP|PMTP|ODK|WAVVE|MAX|HMAX|HULU|ATVP|iTunes|friDay|USA|EUR|JPN|CEE|FRA|LINETV|PCOK|Hami|GBR|NowPlayer|CR|Crunchyroll|SEEZN|GER|CAN|CHN|Viu|WeTV|meWATCH|CATCHPLAY|AMC\+|TVING|Baha|KKTV|IQ|HKG|ITA|ESP|Disney\+|Disney`
+const sourcePlatformAlternatives = `MA|Apple\s?TV\+|ViuTV|MyTVSuper|MyTVS|DNSP|iT|NowE|MyVideo|TWN|LiTV|TVBAnywhere|DMM|iPad|TX|iQIYI|MUBI|TVB|YOUKU|NowPlay|AMAZN|AMZN|Amazon|Netflix|NF|DSNP|PMTP|ODK|WAVVE|MAX|HMAX|HULU|ATVP|iTunes|friDay|USA|EUR|JPN|CEE|FRA|LINETV|PCOK|Hami|GBR|NowPlayer|CR|Crunchyroll|SEEZN|GER|CAN|CHN|Viu|WeTV|meWATCH|CATCHPLAY|AMC\+|TVING|Baha|KKTV|IQ|HKG|ITA|ESP|Disney\+|Disney`
 
 var (
 	reSourcePlatformBoundary = regexp.MustCompile("(?i)(?:^|[^\\p{L}\\p{N}_])(" + sourcePlatformAlternatives + ")(?:$|[^\\p{L}\\p{N}_])")
@@ -505,7 +505,11 @@ func extractMainTitleAndUnrecognized(titlePart string, values map[string]string)
 		// 双声道标题（如粘连拆分后的 "DDP 2.0 5.1"）：音频编码值只含首个声道，
 		// 其余声道 token 需按标题补齐清理，避免泄漏进"无法识别"。
 		found = append(found, audioChannelsAfterCodec(titlePart, v)...)
+		// 多音轨标题（如 "DTS-HD MA 5.1 / DD 5.1 2Audio"）：第二音轨的编码/声道/音轨数同样清理。
+		found = append(found, extraAudioCleanupTokens(titlePart, v)...)
 	}
+	// 音频语言标记（如韩剧的 Kor、国语 Chi/曼德 Mand）：非标准组件，从无法识别中清理。
+	found = append(found, titleLanguageTokens(titlePart)...)
 
 	// 先移除长标签，避免短标签破坏长标签的结构（对齐 Python sorted(..., key=len, reverse=True)）。
 	sort.Slice(found, func(i, j int) bool { return len(found[i]) > len(found[j]) })
@@ -548,6 +552,10 @@ func extractMainTitleAndUnrecognized(titlePart string, values map[string]string)
 		if item == "" {
 			continue
 		}
+		// 纯符号残片（如多音轨分隔符"/"）不是有效信息，直接丢弃。
+		if !containsAlnumRune(item) {
+			continue
+		}
 		if _, ok := uniq[item]; ok {
 			continue
 		}
@@ -576,15 +584,87 @@ func audioChannelsAfterCodec(titlePart, audioValue string) []string {
 		return nil
 	}
 	rest := titlePart[idx+len(codec):]
-	channelRe := regexp.MustCompile(`(?:^|[^\p{L}\p{N}_])(\d{1,2}\.\d(?:\.\d+)?)(?:$|[^\p{L}\p{N}_])`)
-	matches := channelRe.FindAllStringSubmatch(rest, -1)
-	out := make([]string, 0, len(matches))
-	for _, m := range matches {
-		if len(m) >= 2 && strings.TrimSpace(m[1]) != "" {
-			out = append(out, m[1])
+	// 不带边界的裸匹配 + 手工边界检查：若把分隔符放进正则，前一个匹配会消费掉
+	// 分隔符，导致紧随其后的声道（如 "2.0 5.1" 的 5.1）因缺少前导边界而漏配。
+	channelRe := regexp.MustCompile(`\d{1,2}\.\d(?:\.\d+)?`)
+	out := make([]string, 0, 2)
+	for _, loc := range channelRe.FindAllStringIndex(rest, -1) {
+		start, end := loc[0], loc[1]
+		if start > 0 && isTechTagWordRune(rune(rest[start-1])) {
+			continue
 		}
+		if end < len(rest) && isTechTagWordRune(rune(rest[end])) {
+			continue
+		}
+		out = append(out, rest[start:end])
 	}
 	return out
+}
+
+// reAudioExtraCodecToken 匹配音频编码 token（用于多音轨标题的第二音轨清理）。
+var reAudioExtraCodecToken = regexp.MustCompile(`(?i)\b(?:DDP|DD|AC-?3|FLAC|AAC|LPCM|PCM|TRUEHD|OPUS|DTS(?:-HD)?(?:[-\s]?(?:MA|HR))?)\b`)
+
+// reAudioExtraChannelToken 匹配声道 token。
+var reAudioExtraChannelToken = regexp.MustCompile(`(?i)\b\d{1,2}\.\d(?:\.\d+)?\b`)
+
+// reAudioExtraCountToken 匹配音轨数 token（如 2Audio / 2 Audios）。
+var reAudioExtraCountToken = regexp.MustCompile(`(?i)\b\d+\s*Audios?\b`)
+
+// extraAudioCleanupTokens 清理多音轨标题里第二音轨的编码/声道/音轨数 token。
+// 参数/返回：titlePart 为标题技术段，audioValue 为首个音轨的音频编码值；返回额外清理 token。
+// 失败场景：不适用。
+// 副作用：无。
+// 说明：音频编码值只记录首个音轨（如 "DTS-HD MA 5.1"），多音轨标题的后续音轨
+// （如 "… / DD 5.1 2Audio"）需要按标题补齐清理，否则"/ DD"等残片落进无法识别。
+func extraAudioCleanupTokens(titlePart, audioValue string) []string {
+	fields := strings.Fields(audioValue)
+	if len(fields) == 0 {
+		return nil
+	}
+	codec := fields[0]
+	upperTitle := strings.ToUpper(titlePart)
+	idx := strings.Index(upperTitle, strings.ToUpper(codec))
+	if idx < 0 {
+		return nil
+	}
+	rest := titlePart[idx+len(codec):]
+
+	out := make([]string, 0, 4)
+	for _, m := range reAudioExtraCodecToken.FindAllString(rest, -1) {
+		out = append(out, m)
+	}
+	for _, m := range reAudioExtraChannelToken.FindAllString(rest, -1) {
+		out = append(out, m)
+	}
+	for _, m := range reAudioExtraCountToken.FindAllString(rest, -1) {
+		out = append(out, strings.ReplaceAll(m, " ", ""))
+		out = append(out, m)
+	}
+	return out
+}
+
+// containsAlnumRune 判断文本是否包含字母或数字。
+// 参数/返回：s 为待判断文本；返回是否含字母/数字。
+// 失败场景：不适用。
+// 副作用：无。
+func containsAlnumRune(s string) bool {
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return true
+		}
+	}
+	return false
+}
+
+// reTitleLanguageToken 匹配标题中的音频语言标记（如韩源 Kor、国语 Chi/Man、日语 Jpn）。
+var reTitleLanguageToken = regexp.MustCompile(`(?i)\b(?:Kor|Chi|Eng|Jpn|Mand|Can|Chs|Cht)\b`)
+
+// titleLanguageTokens 提取标题中的音频语言标记，用于从无法识别中清理。
+// 参数/返回：titlePart 为标题技术段；返回语言标记列表。
+// 失败场景：不适用。
+// 副作用：无。
+func titleLanguageTokens(titlePart string) []string {
+	return reTitleLanguageToken.FindAllString(titlePart, -1)
 }
 
 func audioCleanupTags(audio string) []string {
@@ -773,6 +853,10 @@ func videoCodecCleanupTags(codec string) []string {
 		for _, tag := range []string{trimmed, "AVC", "H.264", "H264", "x264"} {
 			appendTag(tag)
 		}
+	case "mpeg2":
+		for _, tag := range []string{trimmed, "MPEG-2", "MPEG2"} {
+			appendTag(tag)
+		}
 	default:
 		appendTag(trimmed)
 		switch {
@@ -933,15 +1017,20 @@ func detectVideoCodecFamily(candidates ...string) string {
 
 	reH265 := regexp.MustCompile(`(?i)\b(HEVC|x265|H\s*\.?\s*265)\b`)
 	reH264 := regexp.MustCompile(`(?i)\b(AVC|x264|H\s*\.?\s*264)\b`)
+	reMPEG2 := regexp.MustCompile(`(?i)\bMPEG[-\s]?2\b`)
 
 	hasH265 := reH265.FindStringIndex(combined) != nil
 	hasH264 := reH264.FindStringIndex(combined) != nil
+	hasMPEG2 := reMPEG2.FindStringIndex(combined) != nil
 
 	if hasH265 && !hasH264 {
 		return "h265"
 	}
 	if hasH264 && !hasH265 {
 		return "h264"
+	}
+	if hasMPEG2 {
+		return "mpeg2"
 	}
 	return ""
 }
@@ -1079,7 +1168,7 @@ func extractVideoCodecFromTitle(title string) string {
 		return "AVC"
 	case strings.Contains(upper, "VC-1"), strings.Contains(upper, "VC1"):
 		return "VC-1"
-	case strings.Contains(upper, "MPEG-2"):
+	case strings.Contains(upper, "MPEG2"), strings.Contains(upper, "MPEG-2"):
 		return "MPEG-2"
 	default:
 		return ""
@@ -1347,6 +1436,10 @@ func normalizeTitleAudioTokens(title string) string {
 	// （如 7.1.4）中间段只有一位，不会误伤；且必须紧邻音频编码，版本号不受影响。
 	reGluedDualChannel := regexp.MustCompile(`(?i)\b(DDP|DD|E-AC-?3|AC-?3|FLAC|AAC|LPCM|PCM|TRUEHD|DTS(?:[-\s]?(?:HD[-\s]?(?:MA|HR)|X))?|OPUS|AV3A)\s*(\d)\.(\d)(\d)\.(\d)\b`)
 	out = reGluedDualChannel.ReplaceAllString(out, `$1 $2.$3 $4.$5`)
+
+	// 修复媒介与分辨率粘连：如 "MiniBD1080p" → "MiniBD 1080p"（否则媒介与分辨率都提取不到）。
+	reMediumResGlue := regexp.MustCompile(`(?i)\b(MiniBD)(1080p|720p|2160p)\b`)
+	out = reMediumResGlue.ReplaceAllString(out, `$1 $2`)
 
 	// 对齐 Python：修复音频标签中常见的缺空格/缺小数点/单复数问题（避免影响其他字段提取）。
 	audioKeywords := `DTS[-\s\.]*HD[-\s\.]*MA|DTS[-\s\.]*HD[-\s\.]*HR|DTS[-\s\.]*HD|DTS[:\-\s\.]*X|DTS|TRUEHD|DDP|DD\+|DD|E[-\s]?AC[-\s]?3|AC[-\s]?3|AC3|FLAC|AAC|LPCM|PCM|OPUS|MP3`

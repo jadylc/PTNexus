@@ -37,6 +37,29 @@ type MigrateService struct {
 	queueStartOnce sync.Once
 	queueStopCh    chan struct{}
 	queueDoneCh    chan struct{}
+
+	// seedParamsChangedHook 在批量写 seed_parameters 后触发（如标题重算），
+	// 用于通知跨种服务失效查询缓存，避免列表在 TTL 内展示旧数据。
+	seedParamsChangedHook func()
+}
+
+// SetSeedParametersChangedHook 注入 seed_parameters 批量写库后的回调（由启动流程接线到跨种缓存失效）。
+// 参数/返回：hook 为回调函数；无返回值。
+// 失败场景：传入 nil 时忽略。
+// 副作用：写入服务内部依赖引用。
+func (s *MigrateService) SetSeedParametersChangedHook(hook func()) {
+	if s == nil || hook == nil {
+		return
+	}
+	s.seedParamsChangedHook = hook
+}
+
+// notifySeedParametersChanged 触发 seed_parameters 变更回调（存在时）。
+func (s *MigrateService) notifySeedParametersChanged() {
+	if s == nil || s.seedParamsChangedHook == nil {
+		return
+	}
+	s.seedParamsChangedHook()
 }
 
 // InitTaskRuns 注入批次任务仓储（由启动流程调用，未注入时批次只保留内存态）。
