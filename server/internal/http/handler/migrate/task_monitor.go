@@ -45,3 +45,17 @@ func (h *Handler) TaskMonitorAction(c *gin.Context) {
 	result, status := h.service.TaskMonitorAction(kind, rawID, action)
 	c.JSON(status, result)
 }
+
+// TaskRunItems 返回指定批次任务的全部条目明细（含每条的成败与失败原因）。
+// 参数/返回：路径参数 run_id 为批次标识；成功时返回 success/items。
+// 失败场景：缺少 run_id、批次不存在或读取条目失败时返回对应错误码。
+// 副作用：无（只读）。
+func (h *Handler) TaskRunItems(c *gin.Context) {
+	runID := strings.TrimSpace(c.Param("run_id"))
+	if runID == "" {
+		c.JSON(400, gin.H{"success": false, "message": "缺少批次标识 run_id"})
+		return
+	}
+	result, status := h.service.TaskRunItems(runID)
+	c.JSON(status, result)
+}

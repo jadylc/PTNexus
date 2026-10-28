@@ -105,6 +105,14 @@
                       终止
                     </el-button>
                     <el-button
+                      v-if="task.kind === 'batch_fetch' || task.kind === 'publish_batch'"
+                      link
+                      type="primary"
+                      @click="openTaskRunItems(task)"
+                    >
+                      明细
+                    </el-button>
+                    <el-button
                       v-if="task.status === 'running'"
                       link
                       @click="clearTaskMonitorItem(task)"
@@ -325,6 +333,14 @@
                   终止
                 </el-button>
                 <el-button
+                  v-if="task.kind === 'batch_fetch' || task.kind === 'publish_batch'"
+                  link
+                  type="primary"
+                  @click="openTaskRunItems(task)"
+                >
+                  明细
+                </el-button>
+                <el-button
                   v-if="task.routeTarget"
                   link
                   type="primary"
@@ -338,6 +354,36 @@
         </div>
       </div>
     </el-drawer>
+
+    <!-- 批次任务条目明细：批量获取/批量发布结束后可回看每条结果 -->
+    <el-dialog
+      v-model="taskRunItemsVisible"
+      :title="taskRunItemsTitle"
+      width="72%"
+      top="6vh"
+      append-to-body
+    >
+      <div v-if="taskRunItemsLoading" style="text-align: center; padding: 24px">
+        加载中...
+      </div>
+      <el-empty v-else-if="taskRunItems.length === 0" description="暂无条目明细" />
+      <el-table v-else :data="taskRunItems" size="small" stripe max-height="60vh">
+        <el-table-column prop="seq" label="#" width="60" align="center" />
+        <el-table-column prop="target" label="条目" min-width="280" show-overflow-tooltip />
+        <el-table-column prop="status" label="状态" width="90" align="center">
+          <template #default="scope">
+            <el-tag :type="taskRunItemStatusType(scope.row.status)" size="small">
+              {{ taskRunItemStatusText(scope.row.status) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="message" label="说明" min-width="260" show-overflow-tooltip />
+        <el-table-column prop="finished_at" label="完成时间" width="170" align="center" />
+      </el-table>
+      <template #footer>
+        <el-button @click="taskRunItemsVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 
   <main
@@ -485,6 +531,79 @@ const clearFinishedTasks = () => {
 
 const clearTaskMonitorItem = (task: TaskMonitorItem) => {
   taskMonitorStore.clearTask(task.key)
+}
+
+// ===== 批次任务条目明细（批量获取/批量发布结束后的结果回看） =====
+interface TaskRunItemRow {
+  seq: number
+  target: string
+  status: string
+  message: string
+  started_at: string
+  finished_at: string
+}
+
+const taskRunItemsVisible = ref(false)
+const taskRunItemsLoading = ref(false)
+const taskRunItemsTitle = ref('批次任务明细')
+const taskRunItems = ref<TaskRunItemRow[]>([])
+
+const taskRunItemStatusText = (status: string) => {
+  switch (status) {
+    case 'succeeded':
+      return '成功'
+    case 'failed':
+      return '失败'
+    case 'skipped':
+      return '跳过'
+    case 'running':
+      return '执行中'
+    default:
+      return '待执行'
+  }
+}
+
+const taskRunItemStatusType = (status: string): 'success' | 'danger' | 'info' | 'primary' => {
+  switch (status) {
+    case 'succeeded':
+      return 'success'
+    case 'failed':
+      return 'danger'
+    case 'running':
+      return 'primary'
+    default:
+      return 'info'
+  }
+}
+
+// openTaskRunItems 打开批次条目明细弹窗并拉取条目列表。
+const openTaskRunItems = async (task: TaskMonitorItem) => {
+  const runId = String(task.rawId || '').trim()
+  if (!runId) {
+    ElMessage.warning('该任务缺少批次标识，无法查看明细')
+    return
+  }
+  taskRunItemsTitle.value = `${task.title} · 明细`
+  taskRunItemsVisible.value = true
+  taskRunItemsLoading.value = true
+  taskRunItems.value = []
+  try {
+    const response = await axios.get(`/api/migrate/task_run/${encodeURIComponent(runId)}/items`)
+    const payload = response.data
+    if (!payload?.success) {
+      throw new Error(payload?.message || '获取明细失败')
+    }
+    taskRunItems.value = (payload.items || []) as TaskRunItemRow[]
+  } catch (error: unknown) {
+    const message = axios.isAxiosError(error)
+      ? String(error.response?.data?.message || error.message || '获取明细失败')
+      : error instanceof Error
+        ? error.message
+        : '获取明细失败'
+    ElMessage.error(message)
+  } finally {
+    taskRunItemsLoading.value = false
+  }
 }
 
 const normalizeTaskMonitorActions = (actions?: unknown[]) => {

@@ -256,6 +256,12 @@ wget -O - https://github.com/jadylc/PTNexus/releases/latest/download/install-pt-
 
 # 更新日志
 
+### v4.0.74（2026.10.28）
+
+- 修复：按名称搜索定位种子ID命中多候选时不再直接失败——名称精确匹配支持列表页 title 属性（完整名常在属性里、可见文本被截断），多候选时自动逐个下载候选种子比对 infohash 唯一确定目标（上限 8 个）
+- 新增：任务监控支持批次明细回看——批量获取/批量发布条目新增「明细」按钮，弹窗展示每个条目的状态、失败原因与完成时间（数据来自 task_run_items 持久化，批次结束后仍可查看）
+- 优化：Cloudflare 挑战页失败提示可操作化——命中挑战且未启用 FlareSolverr 时，明确提示「站点开启 Cloudflare 防护，请部署 FlareSolverr 并在设置中启用后重试」（如我堡/OurBits），而非裸 HTTP 403
+
 ### v4.0.73（2026.10.28）
 
 - 修复：彩虹岛（CHDBits）等以 infohash 标识种子的源站真正可抓取——此前 IYUU 存的 torrent_id 是 infohash、拼出的详情页必然 404；现在抓取时检测到 infohash 会自动按种子名搜索站点 torrents.php 定位真实数字 ID，再走详情页与下载流程

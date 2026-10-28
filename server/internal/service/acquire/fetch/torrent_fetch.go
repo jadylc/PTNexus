@@ -106,7 +106,7 @@ func DownloadTorrentForSourceWithHint(sourceInfo map[string]any, torrentID, name
 	siteName := strings.TrimSpace(toStringAny(sourceInfo["nickname"], siteCode))
 
 	if isInfohash(trimmedID) {
-		resolvedID, resolveErr := resolveTorrentIDBySearch(baseURL, cookie, nameHint)
+		resolvedID, resolveErr := resolveTorrentIDBySearch(baseURL, cookie, passkey, nameHint, trimmedID)
 		if resolveErr != nil {
 			logx.Warnf(sourceDownloadLogModule, "按名称定位站点种子ID失败 source_site=%s torrent_id=%s err=%v", siteName, trimmedID, resolveErr)
 			if strings.TrimSpace(nameHint) == "" {

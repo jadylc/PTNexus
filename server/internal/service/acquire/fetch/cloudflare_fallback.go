@@ -131,10 +131,12 @@ func fetchBinarySmart(targetURL, referer, cookie string, timeout time.Duration) 
 	}
 
 	if !flaresolverr.Enabled() {
+		// 挑战页但 FlareSolverr 未启用：给出可操作的指引而非裸 HTTP 错误，
+		// 让用户知道该部署 FlareSolverr（如我堡/OurBits 这类 CF 防护站点）。
 		if err != nil {
-			return body, cookie, err
+			return body, cookie, fmt.Errorf("%w（站点开启 Cloudflare 防护，请部署 FlareSolverr 并在「设置 → FlareSolverr」启用后重试）: %v", ErrCloudflareChallenge, err)
 		}
-		return body, cookie, ErrCloudflareChallenge
+		return body, cookie, fmt.Errorf("%w（站点开启 Cloudflare 防护，请部署 FlareSolverr 并在「设置 → FlareSolverr」启用后重试）", ErrCloudflareChallenge)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -143,7 +145,7 @@ func fetchBinarySmart(targetURL, referer, cookie string, timeout time.Duration) 
 	if solveErr != nil {
 		logx.Warnf(cloudflareFallbackLogModule, "FlareSolverr 求解失败 target_url=%s err=%v", redactURLQuery(targetURL), solveErr)
 		if err != nil {
-			return body, cookie, err
+			return body, cookie, fmt.Errorf("%w（FlareSolverr 求解失败，请检查其服务是否可用）: %v", ErrCloudflareChallenge, err)
 		}
 		return body, cookie, fmt.Errorf("%w: %v", ErrCloudflareChallenge, solveErr)
 	}

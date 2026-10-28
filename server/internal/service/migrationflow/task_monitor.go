@@ -139,6 +139,46 @@ func (s *MigrateService) TaskMonitorSnapshot() (map[string]any, int) {
 	return result, 200
 }
 
+// TaskRunItems 返回指定批次任务的全部条目明细（含每条的成败与失败原因）。
+// 参数/返回：runID 为批次标识；返回 success/items（items 按 seq 升序）。
+// 失败场景：仓储未注入返回 500；批次不存在返回 404；读取条目失败返回 500。
+// 副作用：仅读取 task_runs / task_run_items。
+// 说明：批量获取/批量发布结束后，内存态进度会被清理，用户需要一处
+// 可回看每条结果的地方——条目明细就是持久化的结果真相。
+func (s *MigrateService) TaskRunItems(runID string) (map[string]any, int) {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return map[string]any{"success": false, "message": "缺少批次标识 run_id"}, 400
+	}
+	if s.taskRunRepo == nil {
+		return map[string]any{"success": false, "message": "批次任务仓储未初始化"}, 500
+	}
+
+	if _, found, err := s.taskRunRepo.GetRun(runID); err != nil {
+		return map[string]any{"success": false, "message": "读取批次失败: " + err.Error()}, 500
+	} else if !found {
+		return map[string]any{"success": false, "message": "批次任务不存在"}, 404
+	}
+
+	items, err := s.taskRunRepo.ListItems(runID)
+	if err != nil {
+		return map[string]any{"success": false, "message": "读取批次条目失败: " + err.Error()}, 500
+	}
+
+	rows := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		rows = append(rows, map[string]any{
+			"seq":         item.Seq,
+			"target":      item.Target,
+			"status":      item.Status,
+			"message":     item.Message,
+			"started_at":  item.StartedAt,
+			"finished_at": item.FinishedAt,
+		})
+	}
+	return map[string]any{"success": true, "items": rows}, 200
+}
+
 // TaskMonitorAction 对任务监控中的可控后台任务执行手动结束或终止。
 // 参数/返回：kind 为任务类型；rawID 为任务原始标识；action 为 finish/terminate；返回标准响应与状态码。
 // 失败场景：任务不存在返回 404；不支持的动作或状态返回 409；参数错误返回 400。

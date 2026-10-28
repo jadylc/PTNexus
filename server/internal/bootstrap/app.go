@@ -334,6 +334,7 @@ func registerRoutes(
 		migrateAPI.GET("/logs/stream/:task_id", migrateHandler.LogsStream)
 		migrateAPI.GET("/task_monitor", migrateHandler.TaskMonitor)
 		migrateAPI.POST("/task_monitor/action", migrateHandler.TaskMonitorAction)
+		migrateAPI.GET("/task_run/:run_id/items", migrateHandler.TaskRunItems)
 
 		migrateAPI.POST("/get_downloader_info", migrateHandler.GetDownloaderInfo)
 		migrateAPI.POST("/add_to_downloader", migrateHandler.AddToDownloader)
