@@ -491,7 +491,10 @@ func extractMainTitleAndUnrecognized(titlePart string, values map[string]string)
 		found = append(found, hdrCleanupTags(v)...)
 	}
 	if v := strings.TrimSpace(values["视频格式"]); v != "" {
-		found = append(found, v)
+		// 视频格式值（如 "3D HSBS"）含多个 token，逐个纳入清理。
+		for _, token := range strings.Fields(v) {
+			found = append(found, token)
+		}
 	}
 	if v := strings.TrimSpace(values["色深"]); v != "" {
 		found = append(found, v)
@@ -515,6 +518,9 @@ func extractMainTitleAndUnrecognized(titlePart string, values map[string]string)
 	found = append(found, titleLanguageTokens(titlePart)...)
 	// 独立音轨数标记（如 "2Audio"，无编码关键字也可无歧义清理）。
 	found = append(found, standaloneAudioCountTokens(titlePart)...)
+	// 技术区中的裸声道（如 "… x265 10bit 5.1 2Audios 组名" 编码未标注时）：
+	// 声道格式无歧义，纳入清理。
+	found = append(found, standaloneChannelTokens(techZone)...)
 
 	// 先移除长标签，避免短标签破坏长标签的结构（对齐 Python sorted(..., key=len, reverse=True)）。
 	sort.Slice(found, func(i, j int) bool { return len(found[i]) > len(found[j]) })
@@ -687,6 +693,31 @@ func standaloneAudioCountTokens(titlePart string) []string {
 	return out
 }
 
+// reStandaloneChannelToken 匹配裸声道 token（如 "5.1"、"7.1.4"）。
+var reStandaloneChannelToken = regexp.MustCompile(`\d{1,2}\.\d(?:\.\d+)?`)
+
+// standaloneChannelTokens 在技术区上扫描裸声道 token（如 "… x265 10bit 5.1 2Audios"）。
+// 参数/返回：techZone 为技术区文本；返回声道 token 列表。
+// 失败场景：不适用。
+// 副作用：无。
+// 说明：声道格式（X.Y / X.Y.Z）无歧义。注意不能用 reTechSplit 分词扫描——
+// 其分隔符含点号，会把 "5.1" 拆成 "5" 与 "1"（这正是无法识别出现 "1 5" 残片的根因）。
+// 这里直接在原文上裸匹配并用手工边界检查保证 token 完整。
+func standaloneChannelTokens(techZone string) []string {
+	out := make([]string, 0, 2)
+	for _, loc := range reStandaloneChannelToken.FindAllStringIndex(techZone, -1) {
+		start, end := loc[0], loc[1]
+		if start > 0 && isTechTagWordRune(rune(techZone[start-1])) {
+			continue
+		}
+		if end < len(techZone) && isTechTagWordRune(rune(techZone[end])) {
+			continue
+		}
+		out = append(out, techZone[start:end])
+	}
+	return out
+}
+
 // normalizeReleaseGroupToken 归一化制作组标记：去掉 "上传者@站点组" 的前缀段。
 // 参数/返回：team 为原始制作组；返回归一化后的组名。
 // 失败场景：不适用。
@@ -766,6 +797,10 @@ func audioCleanupTags(audio string) []string {
 
 	if strings.Contains(upper, "ATMOS") {
 		appendTag("Atmos")
+	}
+	// DTS:X 的品牌后缀 X（如 "DTS:X 7.1 X 5Audios" 中的独立 X）一并清理。
+	if strings.Contains(upper, "DTS:X") || strings.Contains(upper, "DTS X") {
+		appendTag("X")
 	}
 
 	audioCountRe := regexp.MustCompile(`(?i)\b(\d+\s*Audios?)\b`)
@@ -1214,14 +1249,17 @@ func extractVideoCodecFromTitle(title string) string {
 
 func extractVideoFormatFromTitle(title string) string {
 	upper := strings.ToUpper(title)
-	switch {
-	case strings.Contains(upper, "3D"):
-		return "3D"
-	case strings.Contains(upper, "HSBS"):
-		return "HSBS"
-	default:
-		return ""
+	// 3D 布局标记（HSBS/HOU/半高宽等）与 3D 是同类信息，合并输出且全部纳入清理。
+	parts := make([]string, 0, 2)
+	if strings.Contains(upper, "3D") {
+		parts = append(parts, "3D")
 	}
+	for _, layout := range []string{"HSBS", "HOU", "HTAB", "FSBS", "FULLSB"} {
+		if strings.Contains(upper, layout) {
+			parts = append(parts, layout)
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 func extractHDRFormatFromTitle(title string) string {
