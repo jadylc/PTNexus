@@ -256,6 +256,13 @@ wget -O - https://github.com/jadylc/PTNexus/releases/latest/download/install-pt-
 
 # 更新日志
 
+### v4.0.86（2026.10.28）
+
+- 修复：技术区起点候选查找无词边界导致主标题被切——片源平台 NF 命中 Co【NF】idence、3D 布局 HOU 命中 S【HOU】/【HOU】use/【HOU】rou，主标题后半段整体落进无法识别（如 The Last House→House、Confidence Man JP→JP Man nfidence、守护解放西→Fang Hu Jie Xi）；候选位置查找全部改为显式字符类边界
+- 新增：重算修复标准列值——范围升级为行级判定（组件含无法识别 OR 任一列值无效），此前只筛组件会把 2Audio/team.hdsky 这类列值无效的行漏掉；重算时无效列值用标题推断的标准键替换（team.hdsky→team.hds、2Audio→推断键），有效列值不动
+- 新增：重算修复无效标签——tag.Atmos 这类把音频/视频/HDR 技术特性误存为标签的条目自动移除，可映射的转标准键，重复标签去重，无法处理的保留人工修改
+- 修复：Dolby/Audio 品牌词（如 Dolby TrueHD Audio 5.1）不再残留在无法识别
+
 ### v4.0.85（2026.10.28）
 
 - 修复：技术区分词正则的分隔符含点号，把裸声道 5.1 拆成 5/1 残片落进无法识别——裸声道扫描改为原文匹配+手工边界检查（如 x265 10bit 5.1 2Audios 无编码前缀的场景）
