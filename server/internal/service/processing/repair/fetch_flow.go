@@ -18,8 +18,10 @@ const (
 	fetchRepairScreenshotLogModule = "迁移-截图修复"
 	fetchRepairIntroLogModule      = "迁移-简介修复"
 
-	fetchMinValidScreenshots      = 3
-	fetchScreenshotValidateWorker = 4
+	fetchMinValidScreenshots = 3
+	// 校验并发数：探测客户端已共享连接（同域 keep-alive 复用），
+	// 并发提升不再带来握手成本，用于缩短整批截图的校验耗时。
+	fetchScreenshotValidateWorker = 8
 )
 
 var fetchForbiddenMediaPatterns = []*regexp.Regexp{
