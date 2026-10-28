@@ -107,6 +107,9 @@ func BuildSimpleTitleComponentsWithMediaInfo(title string, releaseGroup string, 
 	// 与 Python 的 upload_data_title 行为对齐：优先按 title 中的 "-" / "@" 做制作组切分，
 	// 这会导致诸如 WEB-DL / DTS-HD 等标题把后半段误识别为制作组，但可以确保 Go 侧输出与 Python 一致。
 	titlePart, team := splitTitleAndTeamPythonish(trimmed, releaseGroup)
+	// 制作组归一化："上传者@站点组"（如 ping181@HDSky）取 @ 后段的标准组名，
+	// 否则该值无法映射到标准制作组键、整行被误判为数据错误。
+	team = normalizeReleaseGroupToken(team)
 
 	values := map[string]string{}
 	if team != "" {
@@ -510,6 +513,8 @@ func extractMainTitleAndUnrecognized(titlePart string, values map[string]string)
 	}
 	// 音频语言标记（如韩剧的 Kor、国语 Chi/曼德 Mand）：非标准组件，从无法识别中清理。
 	found = append(found, titleLanguageTokens(titlePart)...)
+	// 独立音轨数标记（如 "2Audio"，无编码关键字也可无歧义清理）。
+	found = append(found, standaloneAudioCountTokens(titlePart)...)
 
 	// 先移除长标签，避免短标签破坏长标签的结构（对齐 Python sorted(..., key=len, reverse=True)）。
 	sort.Slice(found, func(i, j int) bool { return len(found[i]) > len(found[j]) })
@@ -665,6 +670,38 @@ var reTitleLanguageToken = regexp.MustCompile(`(?i)\b(?:Kor|Chi|Eng|Jpn|Mand|Can
 // 副作用：无。
 func titleLanguageTokens(titlePart string) []string {
 	return reTitleLanguageToken.FindAllString(titlePart, -1)
+}
+
+// standaloneAudioCountTokens 提取标题中独立出现的音轨数标记（如 "2Audio"）。
+// 参数/返回：titlePart 为标题技术段；返回音轨数 token（含归一化变体）。
+// 失败场景：不适用。
+// 副作用：无。
+// 说明：部分源站只用 "2Audio" 标注双音轨而不写编码关键字，此时音频编码值为空、
+// 常规音频清理不触发，需要独立清理该标记（音轨数本身无歧义）。
+func standaloneAudioCountTokens(titlePart string) []string {
+	out := make([]string, 0, 2)
+	for _, m := range reAudioExtraCountToken.FindAllString(titlePart, -1) {
+		out = append(out, m)
+		out = append(out, strings.ReplaceAll(m, " ", ""))
+	}
+	return out
+}
+
+// normalizeReleaseGroupToken 归一化制作组标记：去掉 "上传者@站点组" 的前缀段。
+// 参数/返回：team 为原始制作组；返回归一化后的组名。
+// 失败场景：不适用。
+// 副作用：无。
+// 说明："ping181@HDSky" 表示 HDSky 站内发布（ping181 为发布者），标准组名取 @ 后段；
+// 与 ￡cXcY@FRDS 这类官组后缀的处理一致。
+func normalizeReleaseGroupToken(team string) string {
+	t := strings.TrimSpace(team)
+	if idx := strings.LastIndex(t, "@"); idx >= 0 {
+		after := strings.TrimSpace(t[idx+1:])
+		if after != "" {
+			return after
+		}
+	}
+	return t
 }
 
 func audioCleanupTags(audio string) []string {
