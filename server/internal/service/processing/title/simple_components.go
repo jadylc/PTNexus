@@ -54,7 +54,7 @@ var (
 	reAudioDTSHDMA           = regexp.MustCompile(`(?i)\bDTS[-\s]?HD\s*MA\b`)
 	reAudioCodecDD           = regexp.MustCompile(`(?i)\bDD\b`)
 	reReleaseGroupSplit      = regexp.MustCompile(`[@\-\s]+`)
-	reHDRTitleToken          = regexp.MustCompile(`(?i)Dolby Vision|DoVi|HDR10\+|HDRVivid|HDR10|HLG|HDR|SDR|EDR|DV|Vivid`)
+	reHDRTitleToken          = regexp.MustCompile(`(?i)Dolby Vision|DoVi|HDR10\+|HDR10plus|HDRVivid|HDR10|HLG|HDR|SDR|EDR|DV|Vivid`)
 )
 
 // BuildSimpleTitleComponents 构建标题组件（不使用媒体文本纠偏）。
@@ -1120,7 +1120,8 @@ func extractHDRFormatFromTitle(title string) string {
 		switch strings.ToUpper(strings.TrimSpace(item)) {
 		case "DOLBY VISION", "DOVI", "DV":
 			hasDoVi = true
-		case "HDR10+":
+		// HDR10plus/HDR10Plus 是 HDR10+ 的无加号变体写法，归一化为 HDR10+。
+		case "HDR10+", "HDR10PLUS":
 			hasHDR10Plus = true
 		case "HDR10", "HDR":
 			hasHDR = true
@@ -1201,13 +1202,14 @@ func hdrCleanupAliases(hdr string) []string {
 	aliases := make([]string, 0, 6)
 	switch {
 	case strings.Contains(upper, "DOVI") && strings.Contains(upper, "HDR10+"):
-		aliases = append(aliases, "DoVi", "DV", "Dolby Vision", "HDR10+", "HDR")
+		// HDR10plus 为 HDR10+ 的无加号变体，清理时一并移除（移除正则大小写不敏感）。
+		aliases = append(aliases, "DoVi", "DV", "Dolby Vision", "HDR10+", "HDR10plus", "HDR")
 	case strings.Contains(upper, "DOVI") && strings.Contains(upper, "HDR"):
 		aliases = append(aliases, "DoVi", "DV", "Dolby Vision", "HDR10", "HDR")
 	case strings.Contains(upper, "DOVI"):
 		aliases = append(aliases, "DoVi", "DV", "Dolby Vision")
 	case strings.Contains(upper, "HDR10+"):
-		aliases = append(aliases, "HDR10+", "HDR")
+		aliases = append(aliases, "HDR10+", "HDR10plus", "HDR")
 	case strings.Contains(upper, "VIVID"):
 		aliases = append(aliases, "HDRVivid", "Vivid")
 	case strings.Contains(upper, "HDR"):

@@ -124,6 +124,21 @@ func TestBuildSimpleTitleComponentsLegitMultiLevelChannel(t *testing.T) {
 	}
 }
 
+// TestBuildSimpleTitleComponentsHDR10plusVariant HDR10+ 的无加号变体写法（HDR10plus）
+// 应归一化为 HDR10+，且与 DV 组合时不泄漏进"无法识别"。
+func TestBuildSimpleTitleComponentsHDR10plusVariant(t *testing.T) {
+	title := "The Housemaid 2025 iT WEBRip 1080p x265 10bit DDP5.1 Atmos DV HDR10plus MNHD-FRDS"
+	components := BuildSimpleTitleComponents(title, "MNHD-FRDS")
+
+	if got := componentValue(components, "HDR格式"); got != "DoVi HDR10+" {
+		t.Fatalf("expected HDR格式=DoVi HDR10+, got %q", got)
+	}
+	unrecognized := componentValue(components, "无法识别")
+	if strings.Contains(strings.ToUpper(unrecognized), "HDR10PLUS") || strings.Contains(unrecognized, "HDR10+") {
+		t.Fatalf("expected HDR10plus NOT in 无法识别, got %q", unrecognized)
+	}
+}
+
 func componentValue(components []map[string]any, key string) string {
 	for _, item := range components {
 		if k, ok := item["key"].(string); ok && k == key {
