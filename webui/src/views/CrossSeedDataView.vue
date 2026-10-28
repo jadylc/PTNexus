@@ -88,7 +88,9 @@
 
       <el-tooltip
         v-if="isMaintenanceMode"
-        content="按当前解析规则重建所有种子的标题组件（用于解析规则升级后修正存量数据）"
+        :content="selectedRows.length > 0
+          ? `重算选中的 ${selectedRows.length} 条种子的标题组件`
+          : '按当前解析规则重算含「无法识别」问题的种子标题组件（不重新请求站点，正确数据不动）'"
         placement="top"
       >
         <el-button
@@ -98,7 +100,7 @@
           style="margin-right: 15px"
           @click="reparseAllComponents"
         >
-          批量重算标题
+          {{ selectedRows.length > 0 ? `重算选中 (${selectedRows.length})` : '批量重算标题' }}
         </el-button>
       </el-tooltip>
 
@@ -222,7 +224,7 @@
         class="glass-table"
       >
         <el-table-column
-          v-if="isCrossSeedMode || (isMaintenanceMode && isDeleteMode)"
+          v-if="isCrossSeedMode || isMaintenanceMode"
           type="selection"
           width="55"
           align="center"
@@ -1327,28 +1329,44 @@ const clearDeletedRecords = async () => {
   }
 }
 
-// 批量重算标题组件：按当前解析规则重建全部种子的 title_components（存量数据修正口子）。
+// 批量重算标题组件：有选中行时只重算选中项，否则按当前规则重算全部含「无法识别」的行。
 const reparseComponents = ref(false)
 const reparseAllComponents = async () => {
   if (reparseComponents.value) return
+
+  const hasSelection = selectedRows.value.length > 0
+  const confirmMessage = hasSelection
+    ? `将按当前解析规则重算选中的 ${selectedRows.value.length} 条种子的标题组件（不重新请求站点）。继续吗？`
+    : '将按当前解析规则重算「含无法识别问题」的种子标题组件（不重新请求站点；正确数据与人工修改过的行不会改动）。继续吗？'
   try {
-    await ElMessageBox.confirm(
-      '将按当前解析规则重建所有种子的标题组件（不重新请求站点），用于解析规则升级后修正存量数据。继续吗？',
-      '确认批量重算',
-      { confirmButtonText: '开始重算', cancelButtonText: '取消', type: 'info' },
-    )
+    await ElMessageBox.confirm(confirmMessage, '确认重算', {
+      confirmButtonText: '开始重算',
+      cancelButtonText: '取消',
+      type: 'info',
+    })
   } catch {
     return
   }
 
   reparseComponents.value = true
   try {
-    const response = await axios.post('/api/migrate/reparse_title_components', {})
+    const payload = hasSelection
+      ? {
+          only_errors: false,
+          items: selectedRows.value.map((row) => ({
+            torrent_id: row.torrent_id,
+            site_name: row.site_name,
+          })),
+        }
+      : { only_errors: true }
+    const response = await axios.post('/api/migrate/reparse_title_components', payload)
     const result = response.data
     if (!result?.success) {
       throw new Error(result?.message || '重算失败')
     }
-    ElMessage.success(`重算完成：共 ${result.total || 0} 条，更新 ${result.updated || 0} 条`)
+    const scopeText = hasSelection ? '选中' : '含错误项'
+    ElMessage.success(`重算完成：扫描 ${result.total || 0} 条（${scopeText}），更新 ${result.updated || 0} 条`)
+    selectedRows.value = []
     await fetchData()
   } catch (error: unknown) {
     const message = axios.isAxiosError(error)

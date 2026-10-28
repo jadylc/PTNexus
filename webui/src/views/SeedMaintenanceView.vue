@@ -343,6 +343,7 @@ const reparseSeedComponents = async () => {
     const response = await axios.post('/api/migrate/reparse_title_components', {
       site_name: effectiveSiteName,
       torrent_id: effectiveTorrentId,
+      only_errors: false,
     })
     const result = response.data
     if (!result?.success) {
