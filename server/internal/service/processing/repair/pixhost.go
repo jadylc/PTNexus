@@ -722,20 +722,61 @@ func ResolvePixhostDirectURLFromUpload(responseDirectURL string, showURL string)
 	return showURL
 }
 
+// screenshotProbeClient 截图可达性探测的共享 HTTP 客户端。
+// 说明：同一图床的截图批量校验时复用 keep-alive 连接，避免每张图都重新
+// DNS+TLS 握手（这是批量校验普遍超时的主因之一）。
+var screenshotProbeClient = &http.Client{
+	Timeout: 15 * time.Second,
+	Transport: &http.Transport{
+		MaxIdleConns:          16,
+		MaxIdleConnsPerHost:   8,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   8 * time.Second,
+		ResponseHeaderTimeout: 12 * time.Second,
+	},
+}
+
 // IsImageURLReachable 通过 HEAD/GET 探测 URL 是否可访问且内容类型为图片。
+// 参数/返回：target 为图片直链；返回是否可达且有效。
+// 失败场景：不适用（探测失败返回 false）。
+// 副作用：发起网络探测（最多两次尝试）。
+// 说明：① 图床偶发限速/网络抖动导致的超时不应把好图判死，超时类失败自动重试一次；
+// ② 请求带图床根域 Referer，降低防盗链误杀；③ Content-Type 放宽——部分 CDN/图床
+// 返回 application/octet-stream 或空类型，仍视为有效图片；html 页面仍判死
+// （那就是错误页/占位页）。
 func IsImageURLReachable(target string) bool {
 	trimmed := strings.TrimSpace(target)
 	if trimmed == "" {
 		return false
 	}
-	client := &http.Client{Timeout: 12 * time.Second}
+	// 最多两次尝试：首次失败后短暂等待再试，吸收瞬时抖动与单次超时。
+	for attempt := 0; attempt < 2; attempt++ {
+		if isImageURLReachableOnce(trimmed) {
+			return true
+		}
+		if attempt == 0 {
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+	return false
+}
+
+// isImageURLReachableOnce 单次截图可达性探测。
+// 参数/返回：trimmed 为图片直链；返回是否可达且有效。
+// 失败场景：HEAD 与 GET 均失败或内容类型非图片时返回 false。
+// 副作用：发起 HEAD 及必要的 GET 网络请求。
+func isImageURLReachableOnce(trimmed string) bool {
+	referer := imageProbeReferer(trimmed)
 
 	headReq, err := http.NewRequest(http.MethodHead, trimmed, nil)
 	if err == nil {
 		headReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-		if resp, headErr := client.Do(headReq); headErr == nil {
+		if referer != "" {
+			headReq.Header.Set("Referer", referer)
+		}
+		if resp, headErr := screenshotProbeClient.Do(headReq); headErr == nil {
 			ct := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Type")))
-			reachable := resp.StatusCode >= 200 && resp.StatusCode < 400 && strings.HasPrefix(ct, "image/")
+			reachable := resp.StatusCode >= 200 && resp.StatusCode < 400 && isAcceptableImageContentType(ct)
 			_ = resp.Body.Close()
 			if reachable && !isPixhostRemovedPlaceholder(resp) {
 				return true
@@ -748,15 +789,47 @@ func IsImageURLReachable(target string) bool {
 		return false
 	}
 	getReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+	if referer != "" {
+		getReq.Header.Set("Referer", referer)
+	}
 	getReq.Header.Set("Range", "bytes=0-32")
-	resp, err := client.Do(getReq)
+	resp, err := screenshotProbeClient.Do(getReq)
 	if err != nil {
 		return false
 	}
 	defer resp.Body.Close()
 	ct := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Type")))
-	reachable := resp.StatusCode >= 200 && resp.StatusCode < 400 && strings.HasPrefix(ct, "image/")
+	reachable := resp.StatusCode >= 200 && resp.StatusCode < 400 && isAcceptableImageContentType(ct)
 	return reachable && !isPixhostRemovedPlaceholder(resp)
+}
+
+// isAcceptableImageContentType 判断内容类型是否可视为有效图片。
+// 参数/返回：ct 为小写化的 Content-Type；返回是否接受。
+// 失败场景：不适用。
+// 副作用：无。
+// 说明：image/* 为主；application/octet-stream 与空类型也接受——部分图床/CDN
+// 不回正确类型；text/html 及其他类型判死（那是错误页或占位页）。
+func isAcceptableImageContentType(ct string) bool {
+	if strings.HasPrefix(ct, "image/") {
+		return true
+	}
+	return ct == "" || ct == "application/octet-stream" || ct == "binary/octet-stream"
+}
+
+// imageProbeReferer 从图片 URL 推导图床根域作为 Referer。
+// 参数/返回：target 为图片直链；返回 Referer 值（解析失败返回空串）。
+// 失败场景：不适用。
+// 副作用：无。
+func imageProbeReferer(target string) string {
+	parsed, err := neturl.Parse(target)
+	if err != nil || parsed.Host == "" {
+		return ""
+	}
+	scheme := parsed.Scheme
+	if scheme == "" {
+		scheme = "https"
+	}
+	return scheme + "://" + parsed.Host + "/"
 }
 
 // isPixhostRemovedPlaceholder 识别 Pixhost 的“图片不存在”占位响应。
