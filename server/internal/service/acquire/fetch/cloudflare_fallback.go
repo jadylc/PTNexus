@@ -113,20 +113,26 @@ func isCloudflareChallengeBody(body []byte) bool {
 }
 
 // fetchBinarySmart 抓取二进制内容；命中 Cloudflare 挑战时通过 FlareSolverr 求解后重试。
-// 参数/返回：targetURL 为目标地址，referer 为来源页，cookie 为站点登录态，timeout 为超时；
-// 返回响应体、合并后的 Cookie 与错误。
+// 参数/返回：targetURL 为目标地址，referer 为来源页，cookie 为站点登录态，
+// userAgent 为上次求解得到的 UA（空串用默认值），timeout 为超时；
+// 返回响应体、合并后的 Cookie、本次请求实际使用的 UA 与错误。
 // 失败场景：非挑战类错误直接返回原错误；挑战页且 FlareSolverr 未启用或求解失败时返回对应错误。
 // 副作用：可能调用 FlareSolverr 发起网络请求。
-func fetchBinarySmart(targetURL, referer, cookie string, timeout time.Duration) ([]byte, string, error) {
-	body, err := fetchBinaryWithCookie(targetURL, referer, cookie, timeout)
+// 说明：cf_clearance 绑定 UA——求解成功后返回的 UA 必须在后续同站请求中复用。
+func fetchBinarySmart(targetURL, referer, cookie, userAgent string, timeout time.Duration) ([]byte, string, string, error) {
+	body, err := fetchBinaryWithUA(targetURL, referer, cookie, userAgent, timeout)
+	effectiveUA := strings.TrimSpace(userAgent)
+	if effectiveUA == "" {
+		effectiveUA = defaultFetchUserAgent
+	}
 	if err == nil {
 		if !isCloudflareChallengeBody(body) {
-			return body, cookie, nil
+			return body, cookie, effectiveUA, nil
 		}
 	} else {
 		var statusErr *httpStatusError
 		if !errors.As(err, &statusErr) || !isCloudflareChallengeBody(statusErr.body) {
-			return body, cookie, err
+			return body, cookie, effectiveUA, err
 		}
 	}
 
@@ -134,9 +140,9 @@ func fetchBinarySmart(targetURL, referer, cookie string, timeout time.Duration) 
 		// 挑战页但 FlareSolverr 未启用：给出可操作的指引而非裸 HTTP 错误，
 		// 让用户知道该部署 FlareSolverr（如我堡/OurBits 这类 CF 防护站点）。
 		if err != nil {
-			return body, cookie, fmt.Errorf("%w（站点开启 Cloudflare 防护，请部署 FlareSolverr 并在「设置 → FlareSolverr」启用后重试）: %v", ErrCloudflareChallenge, err)
+			return body, cookie, effectiveUA, fmt.Errorf("%w（站点开启 Cloudflare 防护，请部署 FlareSolverr 并在「设置 → FlareSolverr」启用后重试）: %v", ErrCloudflareChallenge, err)
 		}
-		return body, cookie, fmt.Errorf("%w（站点开启 Cloudflare 防护，请部署 FlareSolverr 并在「设置 → FlareSolverr」启用后重试）", ErrCloudflareChallenge)
+		return body, cookie, effectiveUA, fmt.Errorf("%w（站点开启 Cloudflare 防护，请部署 FlareSolverr 并在「设置 → FlareSolverr」启用后重试）", ErrCloudflareChallenge)
 	}
 
 	// 求解预算使用 FlareSolverr 自身配置（TimeoutSeconds + 余量），不受页面抓取超时约束：
@@ -152,34 +158,37 @@ func fetchBinarySmart(targetURL, referer, cookie string, timeout time.Duration) 
 		// FlareSolverr 的失败原因（连接被拒/超时/地址错误）必须透出给用户，
 		// 原始 HTTP 状态只作附注——否则用户只看到 403，无从判断是服务没起还是地址填错。
 		if err != nil {
-			return body, cookie, fmt.Errorf("%w（FlareSolverr 求解失败: %v | 原始响应: %v）", ErrCloudflareChallenge, solveErr, err)
+			return body, cookie, effectiveUA, fmt.Errorf("%w（FlareSolverr 求解失败: %v | 原始响应: %v）", ErrCloudflareChallenge, solveErr, err)
 		}
-		return body, cookie, fmt.Errorf("%w: %v", ErrCloudflareChallenge, solveErr)
+		return body, cookie, effectiveUA, fmt.Errorf("%w: %v", ErrCloudflareChallenge, solveErr)
 	}
 
 	// 求解超时（managed challenge 跑满预算）时 body 可能为空，但 Cookie 可能已就位——
 	// 先尝试用拿到的 Cookie 直连重试，成功就不算失败。
 	merged := mergeCookieStrings(cookie, solution.Cookies)
-	logx.Infof(cloudflareFallbackLogModule, "FlareSolverr 求解成功 target_url=%s cookies=%d merged=%t body_len=%d", redactURLQuery(targetURL), len(solution.Cookies), merged != cookie, len(solution.Body))
+	logx.Infof(cloudflareFallbackLogModule, "FlareSolverr 求解完成 target_url=%s cookies=%d merged=%t body_len=%d", redactURLQuery(targetURL), len(solution.Cookies), merged != cookie, len(solution.Body))
 
-	// 优先用求解得到的 Cookie 重新直接抓取，避免二进制内容经 JSON 字符串转换损坏。
-	if merged != cookie {
-		if retried, retryErr := fetchBinaryWithCookie(targetURL, referer, merged, timeout); retryErr == nil && !isCloudflareChallengeBody(retried) {
-			return retried, merged, nil
+	// cf_clearance 绑定求解所用浏览器的 User-Agent：直连重试必须带同一 UA，
+	// 否则 CF 判定 Cookie 无效、重试必然仍是 403。
+	solverUA := strings.TrimSpace(solution.UserAgent)
+	if solverUA != "" {
+		if retried, retryErr := fetchBinaryWithUA(targetURL, referer, merged, solverUA, timeout); retryErr == nil && !isCloudflareChallengeBody(retried) {
+			logx.Infof(cloudflareFallbackLogModule, "使用求解 UA 直连重试成功 target_url=%s", redactURLQuery(targetURL))
+			return retried, merged, solverUA, nil
 		} else if retryErr != nil {
-			logx.Warnf(cloudflareFallbackLogModule, "使用 FlareSolverr Cookie 重试失败 target_url=%s err=%v", redactURLQuery(targetURL), retryErr)
+			logx.Warnf(cloudflareFallbackLogModule, "使用求解 UA 直连重试失败 target_url=%s err=%v", redactURLQuery(targetURL), retryErr)
 		} else {
-			logx.Warnf(cloudflareFallbackLogModule, "使用 FlareSolverr Cookie 重试仍命中挑战 target_url=%s", redactURLQuery(targetURL))
+			logx.Warnf(cloudflareFallbackLogModule, "使用求解 UA 直连重试仍命中挑战 target_url=%s", redactURLQuery(targetURL))
 		}
 	}
 
 	if strings.TrimSpace(solution.Body) == "" {
-		return body, merged, fmt.Errorf("%w（FlareSolverr 求解超时未取得页面内容，可在「设置 → FlareSolverr」调大求解超时后重试）", ErrCloudflareChallenge)
+		return body, merged, effectiveUA, fmt.Errorf("%w（FlareSolverr 求解超时未取得页面内容，可在「设置 → FlareSolverr」调大求解超时后重试）", ErrCloudflareChallenge)
 	}
 	if isCloudflareChallengeBody([]byte(solution.Body)) {
-		return []byte(solution.Body), merged, ErrCloudflareChallenge
+		return []byte(solution.Body), merged, effectiveUA, ErrCloudflareChallenge
 	}
-	return []byte(solution.Body), merged, nil
+	return []byte(solution.Body), merged, solverUA, nil
 }
 
 // mergeCookieStrings 合并站点 Cookie 与 FlareSolverr 返回的 Cookie。

@@ -135,7 +135,10 @@ func DownloadTorrentForSourceWithHint(sourceInfo map[string]any, torrentID, name
 		downloadCandidates = append(downloadCandidates, direct)
 	}
 
-	htmlBytes, cookie, htmlErr := fetchBinarySmart(detailURL, "", cookie, 45*time.Second)
+	// userAgent 在整条下载链路中贯穿复用：cf_clearance 绑定 UA，
+	// 详情页求解得到的 UA 必须同样用于后续下载候选请求。
+	userAgent := ""
+	htmlBytes, cookie, userAgent, htmlErr := fetchBinarySmart(detailURL, "", cookie, userAgent, 45*time.Second)
 	html := string(htmlBytes)
 	if htmlErr != nil && errors.Is(htmlErr, ErrSourceCookieExpired) && strings.TrimSpace(passkey) == "" {
 		logx.Warnf(sourceDownloadLogModule, "详情页鉴权失败 source_site=%s torrent_id=%s detail_url=%s err=%v", siteName, trimmedID, detailURL, htmlErr)
@@ -165,7 +168,7 @@ func DownloadTorrentForSourceWithHint(sourceInfo map[string]any, torrentID, name
 	var cookieExpiredErr error
 	for _, candidate := range downloadCandidates {
 		logx.Infof(sourceDownloadLogModule, "尝试下载候选 source_site=%s torrent_id=%s candidate=%s", siteName, trimmedID, candidate)
-		body, solvedCookie, err := fetchBinarySmart(candidate, detailURL, cookie, 90*time.Second)
+		body, solvedCookie, solvedUA, err := fetchBinarySmart(candidate, detailURL, cookie, userAgent, 90*time.Second)
 		if err != nil {
 			logx.Warnf(sourceDownloadLogModule, "候选下载失败 source_site=%s torrent_id=%s candidate=%s err=%v", siteName, trimmedID, candidate, err)
 			if errors.Is(err, ErrSourceCookieExpired) {
@@ -179,6 +182,7 @@ func DownloadTorrentForSourceWithHint(sourceInfo map[string]any, torrentID, name
 			continue
 		}
 		cookie = solvedCookie
+		userAgent = solvedUA
 		if !isLikelyTorrent(body) {
 			logx.Warnf(sourceDownloadLogModule, "候选内容无效 source_site=%s torrent_id=%s candidate=%s bytes=%d", siteName, trimmedID, candidate, len(body))
 			lastErr = fmt.Errorf("下载内容不是 torrent 文件: %s", candidate)
@@ -663,19 +667,36 @@ func deduplicateURLs(urls []string) []string {
 }
 
 func fetchPageWithCookie(targetURL, cookie string, timeout time.Duration) (string, error) {
-	body, _, err := fetchBinarySmart(targetURL, "", cookie, timeout)
+	body, _, _, err := fetchBinarySmart(targetURL, "", cookie, "", timeout)
 	if err != nil {
 		return "", err
 	}
 	return string(body), nil
 }
 
+// defaultFetchUserAgent 是直连抓取使用的默认浏览器 UA。
+const defaultFetchUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
+
 func fetchBinaryWithCookie(targetURL, referer, cookie string, timeout time.Duration) ([]byte, error) {
+	return fetchBinaryWithUA(targetURL, referer, cookie, "", timeout)
+}
+
+// fetchBinaryWithUA 抓取二进制内容，允许指定 User-Agent。
+// 参数/返回：targetURL 为目标地址，referer 为来源页，cookie 为登录态，
+// userAgent 为自定义 UA（空串使用默认值），timeout 为超时；返回响应体。
+// 失败场景：网络错误、HTTP 非 2xx（封装为 httpStatusError）、命中登录页返回 ErrSourceCookieExpired。
+// 副作用：发起网络请求。
+// 说明：cf_clearance 等 CF Cookie 绑定 UA——FlareSolverr 求解后的直连重试必须带求解 UA。
+func fetchBinaryWithUA(targetURL, referer, cookie, userAgent string, timeout time.Duration) ([]byte, error) {
 	request, err := http.NewRequest(http.MethodGet, targetURL, nil)
 	if err != nil {
 		return nil, err
 	}
-	request.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36")
+	trimmedUA := strings.TrimSpace(userAgent)
+	if trimmedUA == "" {
+		trimmedUA = defaultFetchUserAgent
+	}
+	request.Header.Set("User-Agent", trimmedUA)
 	if strings.TrimSpace(cookie) != "" {
 		request.Header.Set("Cookie", cookie)
 	}

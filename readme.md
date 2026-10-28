@@ -256,6 +256,10 @@ wget -O - https://github.com/jadylc/PTNexus/releases/latest/download/install-pt-
 
 # 更新日志
 
+### v4.0.79（2026.10.28）
+
+- 修复：FlareSolverr 求解超时返回空 body 但已签发 Cookie 时直接报错、Cookie 被丢弃——现在返回带 Cookie 的结果，上层用求解 UA 直连重试（cf_clearance 绑定 User-Agent，此前重试用硬编码 UA 必然仍 403）；求解得到的 UA 在详情页与下载候选请求中全程复用。这是 OurBits（我堡）求解后仍失败的直接原因
+
 ### v4.0.78（2026.10.28）
 
 - 修复：设置页卡片内容超出框体——FlareSolverr 等内容较多的设置卡片在桌面端被固定 320px 高度截断；卡片改为最小高度自适应，内容多时自然增高，网格行随最高卡片对齐

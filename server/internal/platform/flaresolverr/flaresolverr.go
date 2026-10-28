@@ -29,7 +29,10 @@ const logModule = "FlareSolverr"
 // 失败场景：不适用。
 // 副作用：无。
 type Solution struct {
-	Body       string
+	Body string
+	// UserAgent 是求解时所用浏览器的 User-Agent。
+	// cf_clearance 等 CF Cookie 绑定 UA：后续直连请求必须使用同一 UA，否则 CF 判定 Cookie 无效。
+	UserAgent  string
 	Cookies    []Cookie
 	Headers    map[string]string
 	StatusCode int
@@ -70,11 +73,12 @@ type responsePayload struct {
 	Status   string `json:"status"`
 	Message  string `json:"message"`
 	Solution *struct {
-		URL     string            `json:"url"`
-		Status  int               `json:"status"`
-		Body    string            `json:"body"`
-		Headers map[string]string `json:"headers"`
-		Cookies []cookiePayload   `json:"cookies"`
+		URL       string            `json:"url"`
+		Status    int               `json:"status"`
+		Body      string            `json:"body"`
+		UserAgent string            `json:"userAgent"`
+		Headers   map[string]string `json:"headers"`
+		Cookies   []cookiePayload   `json:"cookies"`
 	} `json:"solution"`
 }
 
@@ -258,6 +262,7 @@ func Solve(ctx context.Context, targetURL, cookie string) (*Solution, error) {
 
 	solution := &Solution{
 		Body:       parsed.Solution.Body,
+		UserAgent:  strings.TrimSpace(parsed.Solution.UserAgent),
 		StatusCode: parsed.Solution.Status,
 		FinalURL:   parsed.Solution.URL,
 		Headers:    normalizeHeaders(parsed.Solution.Headers),
@@ -276,11 +281,33 @@ func Solve(ctx context.Context, targetURL, cookie string) (*Solution, error) {
 		})
 	}
 
+	// 求解超时（managed challenge 跑满预算）时 body 常为空，但 Cookie 可能已签发。
+	// 此时必须把 solution 返回给上层：cf_clearance 绑定 UA，上层会用同一 UA 直连重试。
+	// 这里直接报错会把 Cookie 白白丢弃——那是我堡（OurBits）此前一直失败的直接原因。
 	if strings.TrimSpace(solution.Body) == "" {
-		return nil, fmt.Errorf("FlareSolverr 未返回页面内容: status=%d", parsed.Solution.Status)
+		if len(solution.Cookies) == 0 {
+			return nil, fmt.Errorf("FlareSolverr 未返回页面内容且无 Cookie: status=%d", parsed.Solution.Status)
+		}
+		logx.Warnf(logModule, "求解超时未取得页面内容，但已取得 %d 个 Cookie，交由上层用同 UA 直连重试 target_url=%s ua=%s", len(solution.Cookies), redactURL(targetURL), redactUA(solution.UserAgent))
+		return solution, nil
 	}
-	logx.Infof(logModule, "求解成功 target_url=%s status=%d cookies=%d body_len=%d", redactURL(targetURL), solution.StatusCode, len(solution.Cookies), len(solution.Body))
+	logx.Infof(logModule, "求解成功 target_url=%s status=%d cookies=%d body_len=%d ua=%s", redactURL(targetURL), solution.StatusCode, len(solution.Cookies), len(solution.Body), redactUA(solution.UserAgent))
 	return solution, nil
+}
+
+// redactUA 截断 User-Agent 用于日志输出。
+// 参数/返回：ua 为原始 UA；返回截断到 60 字符的文本。
+// 失败场景：不适用。
+// 副作用：无。
+func redactUA(ua string) string {
+	ua = strings.TrimSpace(ua)
+	if ua == "" {
+		return "<空>"
+	}
+	if len(ua) > 60 {
+		return ua[:60] + "..."
+	}
+	return ua
 }
 
 func buildRequestPayload(cfg config.FlareSolverrConfig, targetURL, cookie string) requestPayload {

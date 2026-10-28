@@ -81,7 +81,7 @@ func TestFetchBinarySmartChallengeWithoutSolver(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, cookie, err := fetchBinarySmart(server.URL, "", "uid=1", 5*time.Second)
+	_, cookie, _, err := fetchBinarySmart(server.URL, "", "uid=1", "", 5*time.Second)
 	if err == nil {
 		t.Fatalf("expected error for challenge page")
 	}
@@ -100,7 +100,7 @@ func TestFetchBinarySmartNormalPage(t *testing.T) {
 	}))
 	defer server.Close()
 
-	got, cookie, err := fetchBinarySmart(server.URL, "", "uid=1", 5*time.Second)
+	got, cookie, _, err := fetchBinarySmart(server.URL, "", "uid=1", "", 5*time.Second)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -136,15 +136,86 @@ func TestHTTPStatusErrorCarriesFlareSolverrFailure(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, _, err := fetchBinarySmart(server.URL, "", "uid=1", 3*time.Second)
-	if err == nil {
+	if _, _, _, err := fetchBinarySmart(server.URL, "", "uid=1", "", 3*time.Second); err == nil {
 		t.Fatalf("expected error for challenge page with failing FlareSolverr")
+	} else {
+		message := err.Error()
+		if !strings.Contains(message, "FlareSolverr") {
+			t.Fatalf("expected FlareSolverr failure detail in error, got %q", message)
+		}
+		if !strings.Contains(message, "127.0.0.1:1") {
+			t.Fatalf("expected unreachable endpoint echoed in error, got %q", message)
+		}
 	}
-	message := err.Error()
-	if !strings.Contains(message, "FlareSolverr") {
-		t.Fatalf("expected FlareSolverr failure detail in error, got %q", message)
+}
+
+// TestFetchBinarySmartSolveTimeoutWithCookieRetriesWithSolverUA 完整复现我堡（OurBits）场景：
+// FlareSolverr 求解超时返回空 body 但带 cf_clearance 与 userAgent——
+// 必须用求解返回的 UA 直连重试并成功，而不是报"未返回页面内容"失败。
+func TestFetchBinarySmartSolveTimeoutWithCookieRetriesWithSolverUA(t *testing.T) {
+	t.Setenv("PTNEXUS_DATA_DIR", t.TempDir())
+
+	solverUA := "Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0"
+	pageBody := []byte("d8:announce41:http://tracker.example/announcee")
+
+	// 模拟 FlareSolverr：首次调用（求解）返回空 body + cookie + userAgent；
+	// 二次调用（用求解 UA 的直连重试）返回真实页面。
+	solveCalled := false
+	var solver *httptest.Server
+	solver = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !solveCalled {
+			solveCalled = true
+			_, _ = w.Write([]byte(`{"status":"ok","message":"","solution":{"url":"http://target.example/x","status":200,"body":"","userAgent":"` + solverUA + `","cookies":[{"name":"cf_clearance","value":"tok","domain":"target.example","path":"/"}]}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"ok","solution":{"url":"http://target.example/x","status":200,"body":"","userAgent":"` + solverUA + `","cookies":[]}}`))
+	}))
+	defer solver.Close()
+	defer func() { solver = nil }()
+
+	// 目标站点：校验 UA 与 Cookie；带求解 UA + cf_clearance 才返回真实内容，否则 CF 挑战页。
+	var seenUA, seenCookie string
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenUA = r.Header.Get("User-Agent")
+		seenCookie = r.Header.Get("Cookie")
+		if strings.Contains(seenCookie, "cf_clearance=tok") && seenUA == solverUA {
+			_, _ = w.Write(pageBody)
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte("<html><title>Just a moment...</title></html>"))
+	}))
+	defer target.Close()
+
+	_ = solver
+	if err := flaresolverr.Install(config.FlareSolverrConfig{
+		Enabled:        true,
+		APIURL:         solver.URL,
+		TimeoutSeconds: 5,
+	}); err != nil {
+		t.Fatalf("install flaresolverr config failed: %v", err)
 	}
-	if !strings.Contains(message, "127.0.0.1:1") {
-		t.Fatalf("expected unreachable endpoint echoed in error, got %q", message)
+	t.Cleanup(func() {
+		_ = flaresolverr.Install(config.DefaultFlareSolverrConfig())
+	})
+
+	got, mergedCookie, usedUA, err := fetchBinarySmart(target.URL+"/page", "", "uid=1", "", 5*time.Second)
+	if err != nil {
+		t.Fatalf("expected solve-timeout cookie retry to succeed, got error: %v", err)
+	}
+	if string(got) != string(pageBody) {
+		t.Fatalf("expected real page body after retry, got %q", string(got))
+	}
+	if !strings.Contains(mergedCookie, "cf_clearance=tok") {
+		t.Fatalf("expected merged cookie to contain cf_clearance, got %q", mergedCookie)
+	}
+	if usedUA != solverUA {
+		t.Fatalf("expected solver UA reused for subsequent requests, got %q", usedUA)
+	}
+	if seenUA != solverUA {
+		t.Fatalf("expected retry request to carry solver UA, got %q", seenUA)
+	}
+	if !strings.Contains(seenCookie, "cf_clearance=tok") {
+		t.Fatalf("expected retry request to carry merged cookie, got %q", seenCookie)
 	}
 }

@@ -2,38 +2,45 @@
   "schema": 2,
   "note": "repo-root metadata only; production updater must use release UPDATE_MANIFEST.json",
   "latest": {
-    "version": "v4.0.78",
+    "version": "v4.0.79",
     "artifacts": [
       {
         "os": "linux",
         "arch": "amd64",
-        "url": "https://github.com/jadylc/PTNexus/releases/download/v4.0.78/ptnexus-runtime-linux-amd64.tar.gz",
+        "url": "https://github.com/jadylc/PTNexus/releases/download/v4.0.79/ptnexus-runtime-linux-amd64.tar.gz",
         "sha256": "",
         "size": 11163781,
         "format": "tar.gz",
         "mirror_urls": [
-          "https://gitee.com/jadylc/PTNexus/releases/download/v4.0.78/ptnexus-runtime-linux-amd64.tar.gz",
-          "https://gh.ddlc.top/https://github.com/jadylc/PTNexus/releases/download/v4.0.78/ptnexus-runtime-linux-amd64.tar.gz",
-          "https://ghproxy.net/https://github.com/jadylc/PTNexus/releases/download/v4.0.78/ptnexus-runtime-linux-amd64.tar.gz"
+          "https://gitee.com/jadylc/PTNexus/releases/download/v4.0.79/ptnexus-runtime-linux-amd64.tar.gz",
+          "https://gh.ddlc.top/https://github.com/jadylc/PTNexus/releases/download/v4.0.79/ptnexus-runtime-linux-amd64.tar.gz",
+          "https://ghproxy.net/https://github.com/jadylc/PTNexus/releases/download/v4.0.79/ptnexus-runtime-linux-amd64.tar.gz"
         ]
       },
       {
         "os": "linux",
         "arch": "arm64",
-        "url": "https://github.com/jadylc/PTNexus/releases/download/v4.0.78/ptnexus-runtime-linux-arm64.tar.gz",
+        "url": "https://github.com/jadylc/PTNexus/releases/download/v4.0.79/ptnexus-runtime-linux-arm64.tar.gz",
         "sha256": "",
         "size": 10104449,
         "format": "tar.gz",
         "mirror_urls": [
-          "https://gitee.com/jadylc/PTNexus/releases/download/v4.0.78/ptnexus-runtime-linux-arm64.tar.gz",
-          "https://gh.ddlc.top/https://github.com/jadylc/PTNexus/releases/download/v4.0.78/ptnexus-runtime-linux-arm64.tar.gz",
-          "https://ghproxy.net/https://github.com/jadylc/PTNexus/releases/download/v4.0.78/ptnexus-runtime-linux-arm64.tar.gz"
+          "https://gitee.com/jadylc/PTNexus/releases/download/v4.0.79/ptnexus-runtime-linux-arm64.tar.gz",
+          "https://gh.ddlc.top/https://github.com/jadylc/PTNexus/releases/download/v4.0.79/ptnexus-runtime-linux-arm64.tar.gz",
+          "https://ghproxy.net/https://github.com/jadylc/PTNexus/releases/download/v4.0.79/ptnexus-runtime-linux-arm64.tar.gz"
         ]
       }
     ],
     "date": "2026.10.28"
   },
   "history": [
+    {
+      "version": "v4.0.79",
+      "date": "2026.10.28",
+      "changes": [
+        "修复：FlareSolverr 求解超时返回空 body 但已签发 Cookie 时直接报错、Cookie 被丢弃——现在返回带 Cookie 的结果，上层用求解 UA 直连重试（cf_clearance 绑定 User-Agent，此前重试用硬编码 UA 必然仍 403）；求解得到的 UA 在详情页与下载候选请求中全程复用。这是 OurBits（我堡）求解后仍失败的直接原因"
+      ]
+    },
     {
       "version": "v4.0.78",
       "date": "2026.10.28",

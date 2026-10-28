@@ -55,6 +55,8 @@ func resolveTorrentIDBySearch(baseURL, cookie, passkey, torrentName, expectedHas
 	searchURL := strings.TrimRight(normalizedBase, "/") + "/torrents.php?" + query.Encode()
 
 	logx.Infof(sourceDownloadLogModule, "按名称搜索定位站点种子ID search_url=%s", redactURLQuery(searchURL))
+	// fetchPageWithCookie 内部走 fetchBinarySmart：命中 CF 挑战会经 FlareSolverr 求解，
+	// 求解得到的 Cookie/UA 在本轮搜索内已由重试逻辑使用。
 	html, err := fetchPageWithCookie(searchURL, cookie, 45*time.Second)
 	if err != nil {
 		return "", fmt.Errorf("搜索请求失败: %w", err)
