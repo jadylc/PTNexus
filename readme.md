@@ -256,6 +256,10 @@ wget -O - https://github.com/jadylc/PTNexus/releases/latest/download/install-pt-
 
 # 更新日志
 
+### v4.0.78（2026.10.28）
+
+- 修复：设置页卡片内容超出框体——FlareSolverr 等内容较多的设置卡片在桌面端被固定 320px 高度截断；卡片改为最小高度自适应，内容多时自然增高，网格行随最高卡片对齐
+
 ### v4.0.77（2026.10.28）
 
 - 修复：FlareSolverr 求解必超时——三处超时叠加导致 managed challenge 永远跑不完：① HTTP 客户端超时与求解预算同刻到期（现加 15 秒余量）；② 求解受页面抓取超时（搜索页仅 45 秒）约束（现改用 FlareSolverr 自身预算）；③ 求解超时默认仅 60 秒（现默认 90 秒，可在设置调大）。求解超时返回空 body 时若已取得 Cookie 仍会尝试直连重试，不再直接失败

@@ -1959,7 +1959,10 @@ onMounted(() => {
 
 .card-content {
   padding: 16px;
-  height: 320px;
+  /* 自适应高度：内容多的卡片（如 FlareSolverr）可自然增高，不再溢出；
+     少内容的卡片保持最小高度，网格行随最高卡片对齐。 */
+  min-height: 320px;
+  height: auto;
   display: flex;
   flex-direction: column;
 }
