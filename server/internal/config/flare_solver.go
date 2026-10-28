@@ -20,13 +20,13 @@ type FlareSolverrConfig struct {
 }
 
 // DefaultFlareSolverrConfig 返回默认的 FlareSolverr 配置。
-// 参数/返回：无参数；默认关闭，本地默认地址 127.0.0.1:8112。
+// 参数/返回：无参数；默认关闭且 API 地址留空（本系统未内置 FlareSolverr，需用户自行部署后填写）。
 // 失败场景：无。
 // 副作用：无。
 func DefaultFlareSolverrConfig() FlareSolverrConfig {
 	return FlareSolverrConfig{
 		Enabled:          false,
-		APIURL:           "http://127.0.0.1:8112",
+		APIURL:           "",
 		APIKey:           "",
 		TimeoutSeconds:   60,
 		MaxTimeoutMillis: 0,

@@ -223,18 +223,19 @@
                 <el-switch v-model="flareSolverForm.enabled" />
                 <span style="font-weight: 500; font-size: 13px">启用 FlareSolverr</span>
               </div>
-              <el-text type="info" size="small" style="display: block; margin-top: 4px">
+              <el-text type="warning" size="small" style="display: block; margin-top: 4px">
                 <el-icon size="12" style="vertical-align: middle; margin-right: 4px">
                   <InfoFilled />
                 </el-icon>
-                开启后，当详情页返回 Cloudflare 挑战页时自动调用 FlareSolverr 求解
+                本系统未内置 FlareSolverr：需先自行部署（如 docker run -p 8112:8112
+                ghcr.io/flaresolverr/flaresolverr），再填写其 API 地址
               </el-text>
             </el-form-item>
 
             <el-form-item label="API 地址" class="form-item">
               <el-input
                 v-model="flareSolverForm.api_url"
-                placeholder="例如 http://127.0.0.1:8112"
+                placeholder="填写已部署的 FlareSolverr 服务地址，如 http://127.0.0.1:8112"
                 clearable
               />
             </el-form-item>
@@ -1162,7 +1163,8 @@ const flareSolverForm = reactive<{
   custom_user_agent: string
 }>({
   enabled: false,
-  api_url: 'http://127.0.0.1:8112',
+  // 留空而非预填默认地址：避免用户误以为本机已部署 FlareSolverr（未内置，需自行部署）。
+  api_url: '',
   api_key: '',
   timeout_seconds: 60,
   custom_user_agent: '',
@@ -1418,8 +1420,8 @@ const fetchSettings = async () => {
     // 获取 FlareSolverr 设置
     if (config.flare_solver) {
       flareSolverForm.enabled = !!config.flare_solver.enabled
-      flareSolverForm.api_url =
-        config.flare_solver.api_url || 'http://127.0.0.1:8112'
+      // 未配置时留空，避免预填的默认地址造成"已部署"的错觉。
+      flareSolverForm.api_url = config.flare_solver.api_url || ''
       flareSolverForm.api_key = config.flare_solver.api_key || ''
       flareSolverForm.timeout_seconds =
         Number(config.flare_solver.timeout_seconds) || 60
