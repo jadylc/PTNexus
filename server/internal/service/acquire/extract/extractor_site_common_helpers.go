@@ -27,13 +27,30 @@ var (
 	reHTMLBreakTag        = regexp.MustCompile(`(?i)<br\s*/?>`)
 )
 
+// extractKeepfrdsTitles 提取月月（keepfrds）的主标题与副标题。
+// 参数/返回：pageHTML 为详情页 HTML，fallbackTitle 为公共提取得到的标题兜底；
+// 返回 (mainTitle, subtitle)。
+// 失败场景：不适用。
+// 副作用：无。
+// 说明：月月用户发种惯例——种子 name 字段填英文主标题，「副标题」（small_descr）
+// 行填中文描述；页面顶部 h1 是站点格式化后的显示名（常为中文），不能直接当主标题。
+// 因此优先取「副标题」行内容作为主标题，顶部标题作为副标题兜底。
 func extractKeepfrdsTitles(pageHTML string, fallbackTitle string) (string, string) {
-	mainTitle := strings.TrimSpace(extractTopTitle(pageHTML))
-	subtitle := strings.TrimSpace(extractRowValueByLabels(pageHTML, []string{"副标题"}))
-	if subtitle != "" {
-		return subtitle, mainTitle
+	topTitle := strings.TrimSpace(extractTopTitle(pageHTML))
+	smallDescr := strings.TrimSpace(extractRowValueByLabels(pageHTML, []string{"副标题"}))
+
+	// 「副标题」行存在时，其内容是用户填写的英文主标题（NexusPHP small_descr 惯例）。
+	if smallDescr != "" {
+		// 顶部标题若与主标题不同（通常为中文显示名），作为中文副标题返回。
+		subtitle := ""
+		if topTitle != "" && topTitle != smallDescr {
+			subtitle = topTitle
+		}
+		return smallDescr, subtitle
 	}
-	return strings.TrimSpace(firstNonEmpty(mainTitle, fallbackTitle)), ""
+
+	// 无「副标题」行：回退到顶部标题/公共提取标题作为主标题。
+	return strings.TrimSpace(firstNonEmpty(topTitle, fallbackTitle)), ""
 }
 
 func extractMediaInfoByRegexes(pageHTML string, patterns []*regexp.Regexp) string {
