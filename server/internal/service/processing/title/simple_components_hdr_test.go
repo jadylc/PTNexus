@@ -117,3 +117,18 @@ func TestBuildSimpleTitleComponentsHDTVRipVariants(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildSimpleTitleComponentsODKPlatform 验证 OnDemandKorea 场景标记 ODK 被识别为片源平台，
+// 且不泄漏进"无法识别"（标题：The Deal 2015 1080p ODK WEB-DL DD5.1 x264-iZON3）。
+func TestBuildSimpleTitleComponentsODKPlatform(t *testing.T) {
+	title := "The Deal 2015 1080p ODK WEB-DL DD5.1 x264-iZON3"
+	components := BuildSimpleTitleComponents(title, "iZON3")
+
+	if got := componentValue(components, "片源平台"); got != "ODK" {
+		t.Fatalf("expected 片源平台=ODK, got %q", got)
+	}
+	unrecognized := componentValue(components, "无法识别")
+	if strings.Contains(strings.ToUpper(unrecognized), "ODK") {
+		t.Fatalf("expected ODK NOT in 无法识别, got %q", unrecognized)
+	}
+}
