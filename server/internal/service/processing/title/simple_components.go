@@ -69,8 +69,36 @@ func BuildSimpleTitleComponents(title string, releaseGroup string) []map[string]
 // 参数/返回：mediaInfo 可为空；返回统一结构的标题组件数组。
 // 失败场景：标题为空时返回空切片。
 // 副作用：无。
+// 标题尾部促销残留清理：站点列表/详情页常在标题后挂 [50%]、[免费] 等徽标
+// 与"剩余时间：…"倒计时文本，这些内容会随标题进入组件解析，需在入口剥离。
+var (
+	rePromoRemainingTime = regexp.MustCompile(`(?i)\s*(?:剩余时间|剩餘時間|remaining\s*time)\s*[:：].*$`)
+	rePromoPercentBadge  = regexp.MustCompile(`(?i)\s*\[\s*\d+(?:\.\d+)?\s*(?:%|x)(?:\s*off)?\s*\]\s*$`)
+	rePromoKeywordBadge  = regexp.MustCompile(`(?i)\s*\[[^\]]*(?:免费|免費|free|hot|置顶|置頂|促销|促銷|活动|活動|推荐|推薦|通过|通過)[^\]]*\]\s*$`)
+	rePromoLimitedTime   = regexp.MustCompile(`(?i)\s*[（(]\s*限时[^）)]*[）)]\s*$`)
+)
+
+// stripTitlePromoTail 剥离标题尾部的促销徽标与倒计时文本。
+// 参数/返回：title 为原始标题；返回清理后的标题。
+// 失败场景：不适用。
+// 副作用：无。
+func stripTitlePromoTail(title string) string {
+	out := strings.TrimSpace(title)
+	for {
+		next := rePromoRemainingTime.ReplaceAllString(out, "")
+		next = rePromoPercentBadge.ReplaceAllString(next, "")
+		next = rePromoKeywordBadge.ReplaceAllString(next, "")
+		next = rePromoLimitedTime.ReplaceAllString(next, "")
+		next = strings.TrimSpace(next)
+		if next == out {
+			return out
+		}
+		out = next
+	}
+}
+
 func BuildSimpleTitleComponentsWithMediaInfo(title string, releaseGroup string, mediaInfo string) []map[string]any {
-	trimmed := strings.TrimSpace(title)
+	trimmed := strings.TrimSpace(stripTitlePromoTail(title))
 	if trimmed == "" {
 		return []map[string]any{}
 	}
@@ -177,7 +205,9 @@ func splitTitleAndTeamPythonish(title string, releaseGroup string) (string, stri
 	trimmed := strings.TrimSpace(title)
 	team := strings.TrimSpace(releaseGroup)
 	if team != "" {
-		return trimmed, team
+		// 制作组已由上游给出（如站点提取）时直接沿用，但标题尾部若仍挂着
+		// 组后缀（如月月的 "…AC3￡cXcY@FRDS"）需剥离，否则整段落进"无法识别"。
+		return trimTrailingGroupToken(trimmed, team), team
 	}
 	if trimmed == "" {
 		return "", ""
@@ -218,6 +248,38 @@ func splitTitleAndTeamPythonish(title string, releaseGroup string) (string, stri
 	}
 
 	return trimmed, ""
+}
+
+// trimTrailingGroupToken 剥离标题尾部的制作组后缀。
+// 参数/返回：title 为标题文本，team 为制作组；返回剥离后的标题。
+// 失败场景：不适用。
+// 副作用：无。
+// 说明：优先匹配 specialReleaseGroupSuffixes 里的复合后缀（如 ￡cXcY@FRDS），
+// 再按 "-组名"/"@组名"/" 组名" 三种分隔符剥离（大小写不敏感）。
+func trimTrailingGroupToken(title, team string) string {
+	trimmed := strings.TrimSpace(title)
+	if trimmed == "" || strings.TrimSpace(team) == "" {
+		return trimmed
+	}
+	for _, suffix := range specialReleaseGroupSuffixes {
+		if hasSuffixFold(trimmed, suffix) {
+			return strings.TrimSpace(strings.TrimSuffix(trimmed, suffix))
+		}
+	}
+	for _, sep := range []string{"-", "@", " "} {
+		if hasSuffixFold(trimmed, sep+team) {
+			return strings.TrimSpace(strings.TrimSuffix(trimmed, sep+team))
+		}
+	}
+	return trimmed
+}
+
+// hasSuffixFold 判断 s 是否以 suffix 结尾（ASCII 大小写不敏感）。
+// 参数/返回：s 为原文本，suffix 为后缀；返回判断结果。
+// 失败场景：不适用。
+// 副作用：无。
+func hasSuffixFold(s, suffix string) bool {
+	return len(s) >= len(suffix) && strings.EqualFold(s[len(s)-len(suffix):], suffix)
 }
 
 func extractSeasonEpisodeAndRemove(title string) (string, string) {

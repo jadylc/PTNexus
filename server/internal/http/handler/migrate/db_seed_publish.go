@@ -54,6 +54,27 @@ func (h *Handler) FetchAndStore(c *gin.Context) {
 	c.JSON(status, result)
 }
 
+// RefetchMaintenanceSeed 维护页"重新拉取数据"：按源站与种子 ID 重跑抓取入库流程。
+// 参数/返回：请求体与 fetch_and_store 一致（sourceSite/searchTerm/torrentName/savePath/
+// downloaderId/task_id/screenshotReviewMode）；返回抓取入库结果。
+// 失败场景：参数缺失或抓取失败时返回对应错误码。
+// 副作用：重新请求源站详情页并更新 seed_parameters 对应行。
+// 说明：前端维护详情页此前调用该路径但后端无实现（404"接口不存在"），
+// 现在委托与跨种面板相同的抓取入库流程，保证两者行为一致。
+func (h *Handler) RefetchMaintenanceSeed(c *gin.Context) {
+	requestID := c.GetString("request_id")
+	payload, ok := bindMapPayload(c)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "请求体格式错误"})
+		return
+	}
+	sourceSite := strings.TrimSpace(handlerToString(payload["sourceSite"], ""))
+	searchTerm := strings.TrimSpace(handlerToString(payload["searchTerm"], ""))
+	logx.Infof(fetchStoreHandlerLogModule, "维护页重新拉取 请求ID=%s source_site=%s search_term=%s", requestID, sourceSite, searchTerm)
+	result, status := h.service.FetchAndStore(payload)
+	c.JSON(status, result)
+}
+
 func (h *Handler) UpdateDBSeedInfo(c *gin.Context) {
 	requestID := c.GetString("request_id")
 	payload, ok := bindMapPayload(c)
@@ -93,6 +114,26 @@ func (h *Handler) UpdateScreenshotReviewStatus(c *gin.Context) {
 	} else {
 		logx.Infof(updateScreenshotReviewLogModule, "请求结束 请求ID=%s torrent_id=%s site_name=%s 状态码=%d", requestID, torrentID, siteName, status)
 	}
+	c.JSON(status, result)
+}
+
+// ReparseTitleComponents 按当前解析规则重建标题组件并写回（存量数据修正口子）。
+// 参数/返回：请求体可选 site_name / torrent_id 限定范围（均缺省为全量）；
+// 返回 success/message/updated/skipped/failed/total。
+// 失败场景：数据库读取或写入失败时返回对应错误码。
+// 副作用：批量更新 seed_parameters.title_components。
+// 说明：标题解析规则升级（如 HDR10+/PMTP/HDTVRip 识别修复）后，存量数据需
+// 显式重算才会刷新；维护详情页可传 torrent_id+site_name 重算单条。
+func (h *Handler) ReparseTitleComponents(c *gin.Context) {
+	requestID := c.GetString("request_id")
+	payload, ok := bindMapPayload(c)
+	if !ok {
+		payload = map[string]any{}
+	}
+	siteName := strings.TrimSpace(handlerToString(payload["site_name"], ""))
+	torrentID := strings.TrimSpace(handlerToString(payload["torrent_id"], ""))
+	logx.Infof(updateDBSeedHandlerLogModule, "标题重算 请求ID=%s site_name=%s torrent_id=%s", requestID, siteName, torrentID)
+	result, status := h.service.ReparseTitleComponents(payload)
 	c.JSON(status, result)
 }
 

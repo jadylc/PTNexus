@@ -53,6 +53,15 @@
         >
           重新拉取数据
         </el-button>
+        <el-button
+          type="primary"
+          plain
+          :loading="reparseComponents"
+          :disabled="loading"
+          @click="reparseSeedComponents"
+        >
+          重算标题组件
+        </el-button>
       </div>
     </div>
 
@@ -302,7 +311,6 @@ const refetchSeedInfo = async () => {
     if (!result.success) {
       throw new Error(result.message || result.error || '重新拉取失败')
     }
-
     applySeedInfo(result)
     ElMessage.success('重新拉取完成')
   } catch (err: unknown) {
@@ -317,6 +325,41 @@ const refetchSeedInfo = async () => {
     ElMessage.error(message)
   } finally {
     refetching.value = false
+  }
+}
+
+// 重算标题组件：按当前解析规则重建当前种子的 title_components（存量数据修正口子）。
+const reparseComponents = ref(false)
+const reparseSeedComponents = async () => {
+  const effectiveTorrentId = sourceTorrentId.value.trim() || routeTorrentId.value
+  const effectiveSiteName = selectedSourceSite.value.trim() || routeSiteName.value
+  if (!effectiveTorrentId || !effectiveSiteName) {
+    ElMessage.warning('请先选择源站并填写源站种子 ID')
+    return
+  }
+
+  reparseComponents.value = true
+  try {
+    const response = await axios.post('/api/migrate/reparse_title_components', {
+      site_name: effectiveSiteName,
+      torrent_id: effectiveTorrentId,
+    })
+    const result = response.data
+    if (!result?.success) {
+      throw new Error(result?.message || '重算失败')
+    }
+    ElMessage.success(`重算完成：更新 ${result.updated || 0} 条`)
+    await loadSeedInfo()
+  } catch (err: unknown) {
+    const message = axios.isAxiosError(err)
+      ? (err.response?.data as { message?: string; error?: string } | undefined)?.message ||
+        err.message
+      : err instanceof Error
+        ? err.message
+        : '重算失败'
+    ElMessage.error(message)
+  } finally {
+    reparseComponents.value = false
   }
 }
 

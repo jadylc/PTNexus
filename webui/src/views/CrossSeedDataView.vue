@@ -86,6 +86,22 @@
         一键清除
       </el-button>
 
+      <el-tooltip
+        v-if="isMaintenanceMode"
+        content="按当前解析规则重建所有种子的标题组件（用于解析规则升级后修正存量数据）"
+        placement="top"
+      >
+        <el-button
+          type="primary"
+          plain
+          :loading="reparseComponents"
+          style="margin-right: 15px"
+          @click="reparseAllComponents"
+        >
+          批量重算标题
+        </el-button>
+      </el-tooltip>
+
       <div
         v-if="hasActiveFilters"
         class="current-filters"
@@ -1308,6 +1324,41 @@ const clearDeletedRecords = async () => {
     ElMessage.error(message)
   } finally {
     clearingDeleted.value = false
+  }
+}
+
+// 批量重算标题组件：按当前解析规则重建全部种子的 title_components（存量数据修正口子）。
+const reparseComponents = ref(false)
+const reparseAllComponents = async () => {
+  if (reparseComponents.value) return
+  try {
+    await ElMessageBox.confirm(
+      '将按当前解析规则重建所有种子的标题组件（不重新请求站点），用于解析规则升级后修正存量数据。继续吗？',
+      '确认批量重算',
+      { confirmButtonText: '开始重算', cancelButtonText: '取消', type: 'info' },
+    )
+  } catch {
+    return
+  }
+
+  reparseComponents.value = true
+  try {
+    const response = await axios.post('/api/migrate/reparse_title_components', {})
+    const result = response.data
+    if (!result?.success) {
+      throw new Error(result?.message || '重算失败')
+    }
+    ElMessage.success(`重算完成：共 ${result.total || 0} 条，更新 ${result.updated || 0} 条`)
+    await fetchData()
+  } catch (error: unknown) {
+    const message = axios.isAxiosError(error)
+      ? String(error.response?.data?.message || error.message)
+      : error instanceof Error
+        ? error.message
+        : '重算失败'
+    ElMessage.error(message)
+  } finally {
+    reparseComponents.value = false
   }
 }
 

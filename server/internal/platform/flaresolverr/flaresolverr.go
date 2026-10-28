@@ -333,6 +333,11 @@ func buildRequestPayload(cfg config.FlareSolverrConfig, targetURL, cookie string
 		host = parsed.Hostname()
 	}
 	for _, item := range parseCookieString(cookie) {
+		// 过滤 Cloudflare 自有 Cookie：过期的 cf_clearance/__cf_bm 绑定旧 UA/IP，
+		// 带进求解浏览器反而会让 CF 判定会话可疑、立即重新下发挑战，导致求解超时。
+		if isCloudflareCookieName(item.Name) {
+			continue
+		}
 		payload.Cookies = append(payload.Cookies, cookiePayload{
 			Name:     item.Name,
 			Value:    item.Value,
@@ -343,6 +348,24 @@ func buildRequestPayload(cfg config.FlareSolverrConfig, targetURL, cookie string
 		})
 	}
 	return payload
+}
+
+// isCloudflareCookieName 判断是否为 Cloudflare 自有 Cookie 名。
+// 参数/返回：name 为 Cookie 名；返回是否属于 CF 管理。
+// 失败场景：不适用。
+// 副作用：无。
+func isCloudflareCookieName(name string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(name))
+	switch {
+	case normalized == "cf_clearance", normalized == "__cf_bm", normalized == "__cfruid",
+		normalized == "cf_ob_info", normalized == "cf_use_ob", normalized == "__cfwait",
+		normalized == "_cfuvid", normalized == "cf_chl_prog", normalized == "cf_chl_seq":
+		return true
+	case strings.HasPrefix(normalized, "cf_"), strings.HasPrefix(normalized, "__cf"):
+		return true
+	default:
+		return false
+	}
 }
 
 func postJSON(ctx context.Context, client *http.Client, endpoint string, body []byte, cfg config.FlareSolverrConfig) ([]byte, error) {

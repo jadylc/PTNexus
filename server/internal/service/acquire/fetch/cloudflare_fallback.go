@@ -150,11 +150,20 @@ func fetchBinarySmart(targetURL, referer, cookie, userAgent string, timeout time
 	// 若沿用页面超时（如搜索页 45s）会把求解中途掐断。
 	solveCfg := flaresolverr.Config()
 	solveBudget := time.Duration(solveCfg.TimeoutSeconds)*time.Second + 30*time.Second
-	ctx, cancel := context.WithTimeout(context.Background(), solveBudget)
-	defer cancel()
-	solution, solveErr := flaresolverr.Solve(ctx, targetURL, cookie)
-	if solveErr != nil {
-		logx.Warnf(cloudflareFallbackLogModule, "FlareSolverr 求解失败 target_url=%s err=%v", redactURLQuery(targetURL), solveErr)
+	// 求解失败自动重试一次：managed challenge 有一定概率首轮未过、次轮直接放行。
+	var solution *flaresolverr.Solution
+	var solveErr error
+	for attempt := 1; attempt <= 2; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), solveBudget)
+		solution, solveErr = flaresolverr.Solve(ctx, targetURL, cookie)
+		cancel()
+		if solveErr == nil {
+			break
+		}
+		logx.Warnf(cloudflareFallbackLogModule, "FlareSolverr 求解失败 attempt=%d target_url=%s err=%v", attempt, redactURLQuery(targetURL), solveErr)
+		if attempt < 2 {
+			continue
+		}
 		// FlareSolverr 的失败原因（连接被拒/超时/地址错误）必须透出给用户，
 		// 原始 HTTP 状态只作附注——否则用户只看到 403，无从判断是服务没起还是地址填错。
 		if err != nil {

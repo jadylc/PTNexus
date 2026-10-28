@@ -697,6 +697,15 @@ func fetchBinaryWithUA(targetURL, referer, cookie, userAgent string, timeout tim
 		trimmedUA = defaultFetchUserAgent
 	}
 	request.Header.Set("User-Agent", trimmedUA)
+	// 补齐浏览器标准请求头：部分站点（如我堡/OurBits）的 Cloudflare 规则会因
+	// 请求缺少 Accept/Sec-Fetch 等浏览器头而直接下发托管挑战页。
+	request.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+	request.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+	request.Header.Set("Upgrade-Insecure-Requests", "1")
+	request.Header.Set("Sec-Fetch-Dest", "document")
+	request.Header.Set("Sec-Fetch-Mode", "navigate")
+	request.Header.Set("Sec-Fetch-Site", "none")
+	request.Header.Set("Sec-Fetch-User", "?1")
 	if strings.TrimSpace(cookie) != "" {
 		request.Header.Set("Cookie", cookie)
 	}

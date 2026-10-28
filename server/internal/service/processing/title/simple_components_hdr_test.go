@@ -56,6 +56,44 @@ func TestBuildSimpleTitleComponentsHDRPlusNoGroup(t *testing.T) {
 	}
 }
 
+// TestBuildSimpleTitleComponentsOfficialGroupSuffix 月月官组场景：制作组已知（FRDS），
+// 标题尾部的 ￡cXcY@FRDS 复合后缀必须从标题剥离，不落入"无法识别"。
+func TestBuildSimpleTitleComponentsOfficialGroupSuffix(t *testing.T) {
+	title := "Homeland S08 2020 1080p WEB-DL x265 AC3￡cXcY@FRDS"
+	components := BuildSimpleTitleComponents(title, "FRDS")
+
+	if got := componentValue(components, "制作组"); got != "FRDS" {
+		t.Fatalf("expected 制作组=FRDS, got %q", got)
+	}
+	unrecognized := componentValue(components, "无法识别")
+	if strings.Contains(unrecognized, "cXcY") || strings.Contains(unrecognized, "FRDS") {
+		t.Fatalf("expected group suffix NOT in 无法识别, got %q", unrecognized)
+	}
+	mainTitle := componentValue(components, "主标题")
+	if strings.Contains(mainTitle, "￡cXcY") {
+		t.Fatalf("expected main title without group suffix, got %q", mainTitle)
+	}
+}
+
+// TestBuildSimpleTitleComponentsPromoTail 站点促销徽标（[50%]剩余时间：…）混入标题尾部的场景：
+// 制作组 ADE 之后挂着 [50%] 与剩余时间文本，不应把整段当成制作组或标题。
+func TestBuildSimpleTitleComponentsPromoTail(t *testing.T) {
+	title := "The Melancholy of Haruhi Suzumiya S01 2009 1080p BluRay x265 10bit FLAC 2.0-ADE[50%]剩余时间：2天13时"
+	components := BuildSimpleTitleComponents(title, "ADE")
+
+	if got := componentValue(components, "制作组"); got != "ADE" {
+		t.Fatalf("expected 制作组=ADE, got %q", got)
+	}
+	unrecognized := componentValue(components, "无法识别")
+	if strings.Contains(unrecognized, "50%") || strings.Contains(unrecognized, "剩余时间") {
+		t.Fatalf("expected promo tail NOT in 无法识别, got %q", unrecognized)
+	}
+	mainTitle := componentValue(components, "主标题")
+	if strings.Contains(mainTitle, "[50%]") || strings.Contains(mainTitle, "剩余时间") {
+		t.Fatalf("expected promo tail NOT in main title, got %q", mainTitle)
+	}
+}
+
 func componentValue(components []map[string]any, key string) string {
 	for _, item := range components {
 		if k, ok := item["key"].(string); ok && k == key {
