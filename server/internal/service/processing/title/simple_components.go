@@ -502,6 +502,9 @@ func extractMainTitleAndUnrecognized(titlePart string, values map[string]string)
 	if v := strings.TrimSpace(values["音频编码"]); v != "" {
 		// 对齐 Python：清理“无法识别”时优先移除完整音频标签，并补充声道/Atmos/音轨数 token。
 		found = append(found, audioCleanupTags(v)...)
+		// 双声道标题（如粘连拆分后的 "DDP 2.0 5.1"）：音频编码值只含首个声道，
+		// 其余声道 token 需按标题补齐清理，避免泄漏进"无法识别"。
+		found = append(found, audioChannelsAfterCodec(titlePart, v)...)
 	}
 
 	// 先移除长标签，避免短标签破坏长标签的结构（对齐 Python sorted(..., key=len, reverse=True)）。
@@ -553,6 +556,35 @@ func extractMainTitleAndUnrecognized(titlePart string, values map[string]string)
 	}
 	sort.Strings(out)
 	return mainTitle, strings.TrimSpace(strings.Join(out, " "))
+}
+
+// audioChannelsAfterCodec 在标题中音频编码之后查找所有声道 token（含第二个声道）。
+// 参数/返回：titlePart 为标题技术段，audioValue 为音频编码值；返回声道 token 列表。
+// 失败场景：不适用。
+// 副作用：无。
+// 说明：音频编码值只记录首个声道（如 "DDP 2.0"），双声道标题里的后续声道
+// （如粘连拆分出的 "5.1"）需要按标题补齐，用于从"无法识别"中清理。
+func audioChannelsAfterCodec(titlePart, audioValue string) []string {
+	fields := strings.Fields(audioValue)
+	if len(fields) == 0 {
+		return nil
+	}
+	codec := fields[0]
+	upperTitle := strings.ToUpper(titlePart)
+	idx := strings.Index(upperTitle, strings.ToUpper(codec))
+	if idx < 0 {
+		return nil
+	}
+	rest := titlePart[idx+len(codec):]
+	channelRe := regexp.MustCompile(`(?:^|[^\p{L}\p{N}_])(\d{1,2}\.\d(?:\.\d+)?)(?:$|[^\p{L}\p{N}_])`)
+	matches := channelRe.FindAllStringSubmatch(rest, -1)
+	out := make([]string, 0, len(matches))
+	for _, m := range matches {
+		if len(m) >= 2 && strings.TrimSpace(m[1]) != "" {
+			out = append(out, m[1])
+		}
+	}
+	return out
 }
 
 func audioCleanupTags(audio string) []string {
@@ -1307,6 +1339,12 @@ func normalizeTitleAudioTokens(title string) string {
 	for _, rule := range codecStandardizationRules {
 		out = rule.pattern.ReplaceAllString(out, rule.replacement)
 	}
+
+	// 修复源站把双声道写粘连的情况：如 "DDP 2.05.1" 实为 "DDP 2.0 5.1"。
+	// 判定特征：音频编码后紧跟 X.YZ.W 且中间段恰为两位数字——合法多级声道格式
+	// （如 7.1.4）中间段只有一位，不会误伤；且必须紧邻音频编码，版本号不受影响。
+	reGluedDualChannel := regexp.MustCompile(`(?i)\b(DDP|DD|E-AC-?3|AC-?3|FLAC|AAC|LPCM|PCM|TRUEHD|DTS(?:[-\s]?(?:HD[-\s]?(?:MA|HR)|X))?|OPUS|AV3A)\s*(\d)\.(\d)(\d)\.(\d)\b`)
+	out = reGluedDualChannel.ReplaceAllString(out, `$1 $2.$3 $4.$5`)
 
 	// 对齐 Python：修复音频标签中常见的缺空格/缺小数点/单复数问题（避免影响其他字段提取）。
 	audioKeywords := `DTS[-\s\.]*HD[-\s\.]*MA|DTS[-\s\.]*HD[-\s\.]*HR|DTS[-\s\.]*HD|DTS[:\-\s\.]*X|DTS|TRUEHD|DDP|DD\+|DD|E[-\s]?AC[-\s]?3|AC[-\s]?3|AC3|FLAC|AAC|LPCM|PCM|OPUS|MP3`

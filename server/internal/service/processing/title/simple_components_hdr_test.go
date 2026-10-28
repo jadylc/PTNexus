@@ -94,6 +94,36 @@ func TestBuildSimpleTitleComponentsPromoTail(t *testing.T) {
 	}
 }
 
+// TestBuildSimpleTitleComponentsGluedDualChannel 源站把双声道写粘连的场景：
+// "DDP 2.05.1" 实为 "DDP 2.0 5.1"（X.YZ.W 中间段两位数字只可能是粘连，
+// 合法多级声道如 7.1.4 中间段只有一位）。拆分后两个声道都不再进"无法识别"。
+func TestBuildSimpleTitleComponentsGluedDualChannel(t *testing.T) {
+	title := "The Fire Raven 2025 2160p WEB-DL H.265 HDR DDP 2.05.1-HHWEB"
+	components := BuildSimpleTitleComponents(title, "HHWEB")
+
+	if got := componentValue(components, "音频编码"); got != "DDP 2.0" {
+		t.Fatalf("expected 音频编码=DDP 2.0, got %q", got)
+	}
+	unrecognized := componentValue(components, "无法识别")
+	if strings.Contains(unrecognized, "2.05.1") || strings.Contains(unrecognized, "5.1") {
+		t.Fatalf("expected glued channels NOT in 无法识别, got %q", unrecognized)
+	}
+}
+
+// TestBuildSimpleTitleComponentsLegitMultiLevelChannel 保证合法多级声道（7.1.4）不被粘连拆分误伤。
+func TestBuildSimpleTitleComponentsLegitMultiLevelChannel(t *testing.T) {
+	title := "Movie 2023 2160p UHD BluRay TrueHD 7.1.4 Atmos-GRP"
+	components := BuildSimpleTitleComponents(title, "GRP")
+
+	if got := componentValue(components, "音频编码"); got != "TrueHD 7.1.4 Atmos" {
+		t.Fatalf("expected 音频编码=TrueHD 7.1.4 Atmos, got %q", got)
+	}
+	unrecognized := componentValue(components, "无法识别")
+	if strings.Contains(unrecognized, "7.1.4") {
+		t.Fatalf("expected 7.1.4 NOT in 无法识别, got %q", unrecognized)
+	}
+}
+
 func componentValue(components []map[string]any, key string) string {
 	for _, item := range components {
 		if k, ok := item["key"].(string); ok && k == key {
