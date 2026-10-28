@@ -144,8 +144,10 @@ func fetchBinarySmart(targetURL, referer, cookie string, timeout time.Duration) 
 	solution, solveErr := flaresolverr.Solve(ctx, targetURL, cookie)
 	if solveErr != nil {
 		logx.Warnf(cloudflareFallbackLogModule, "FlareSolverr 求解失败 target_url=%s err=%v", redactURLQuery(targetURL), solveErr)
+		// FlareSolverr 的失败原因（连接被拒/超时/地址错误）必须透出给用户，
+		// 原始 HTTP 状态只作附注——否则用户只看到 403，无从判断是服务没起还是地址填错。
 		if err != nil {
-			return body, cookie, fmt.Errorf("%w（FlareSolverr 求解失败，请检查其服务是否可用）: %v", ErrCloudflareChallenge, err)
+			return body, cookie, fmt.Errorf("%w（FlareSolverr 求解失败: %v | 原始响应: %v）", ErrCloudflareChallenge, solveErr, err)
 		}
 		return body, cookie, fmt.Errorf("%w: %v", ErrCloudflareChallenge, solveErr)
 	}

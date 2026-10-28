@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pt-nexus/server/internal/config"
 	"github.com/pt-nexus/server/internal/platform/flaresolverr"
 )
 
@@ -108,5 +109,42 @@ func TestFetchBinarySmartNormalPage(t *testing.T) {
 	}
 	if cookie != "uid=1" {
 		t.Fatalf("expected cookie preserved, got %q", cookie)
+	}
+}
+
+// TestHTTPStatusErrorCarriesFlareSolverrFailure 验证 CF 挑战 + FlareSolverr 求解失败时，
+// 错误信息透出 FlareSolverr 的失败原因（连接被拒/地址错误），而不是只剩原始 403。
+// 这是用户实际踩到的坑：启用了 FlareSolverr 仍失败，但错误只显示 HTTP 403，
+// 无从判断是服务没起还是地址填错。
+func TestHTTPStatusErrorCarriesFlareSolverrFailure(t *testing.T) {
+	// 启用一个指向不可达端口的 FlareSolverr 配置，让 Solve 必然失败。
+	if err := flaresolverr.Install(config.FlareSolverrConfig{
+		Enabled:        true,
+		APIURL:         "http://127.0.0.1:1", // 保留端口 1，必然连接失败
+		TimeoutSeconds: 2,
+	}); err != nil {
+		t.Fatalf("install flaresolverr config failed: %v", err)
+	}
+	t.Cleanup(func() {
+		// 恢复为禁用状态，避免影响其他测试。
+		_ = flaresolverr.Install(config.DefaultFlareSolverrConfig())
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte("<html><title>Just a moment...</title></html>"))
+	}))
+	defer server.Close()
+
+	_, _, err := fetchBinarySmart(server.URL, "", "uid=1", 3*time.Second)
+	if err == nil {
+		t.Fatalf("expected error for challenge page with failing FlareSolverr")
+	}
+	message := err.Error()
+	if !strings.Contains(message, "FlareSolverr") {
+		t.Fatalf("expected FlareSolverr failure detail in error, got %q", message)
+	}
+	if !strings.Contains(message, "127.0.0.1:1") {
+		t.Fatalf("expected unreachable endpoint echoed in error, got %q", message)
 	}
 }

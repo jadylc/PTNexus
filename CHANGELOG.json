@@ -19,6 +19,13 @@
   ],
   "history": [
     {
+      "version": "v4.0.76",
+      "date": "2026.10.28",
+      "changes": [
+        "修复：FlareSolverr 启用但求解失败时错误原因被吞——此前只显示原始 HTTP 403，无从判断服务是否可达；现在错误信息透出 FlareSolverr 的具体失败原因（如连接被拒/超时）与实际使用的 API 地址"
+      ]
+    },
+    {
       "version": "v4.0.75",
       "date": "2026.10.28",
       "changes": [
