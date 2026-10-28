@@ -129,6 +129,73 @@ func Config() config.FlareSolverrConfig {
 	return globalCfg
 }
 
+// Ping 探测 FlareSolverr 服务连通性（发送 sessions.list 命令，不发起求解）。
+// 参数/返回：apiURL 为 FlareSolverr 根地址（可带 /v1）；apiKey 为鉴权密钥（可空）；
+// 返回服务返回的说明文本与 error（网络/鉴权/协议错误时非空）。
+// 失败场景：地址不可达、非 FlareSolverr 服务、API Key 错误。
+// 副作用：发起一次 HTTP 请求。
+func Ping(apiURL, apiKey string) (string, error) {
+	normalized := config.NormalizeFlareSolverrConfig(config.FlareSolverrConfig{
+		APIURL:         apiURL,
+		APIKey:         apiKey,
+		TimeoutSeconds: 10,
+	})
+	if strings.TrimSpace(normalized.APIURL) == "" {
+		return "", fmt.Errorf("FlareSolverr API 地址不能为空")
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	payload := map[string]any{"cmd": "sessions.list"}
+	if strings.TrimSpace(normalized.APIKey) != "" {
+		payload["apiKey"] = strings.TrimSpace(normalized.APIKey)
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("构造探测请求失败: %w", err)
+	}
+
+	endpoint, err := resolveEndpoint(normalized.APIURL)
+	if err != nil {
+		return "", err
+	}
+
+	responseBody, err := postJSON(context.Background(), client, endpoint, body, normalized)
+	if err != nil {
+		if canFallbackToV1(normalized.APIURL, endpoint) {
+			if v1Endpoint, v1Err := resolveEndpoint(normalized.APIURL + "/v1"); v1Err == nil {
+				if retryBody, retryErr := postJSON(context.Background(), client, v1Endpoint, body, normalized); retryErr == nil {
+					responseBody = retryBody
+					err = nil
+				}
+			}
+		}
+		if err != nil {
+			return "", fmt.Errorf("无法连接 FlareSolverr（%s）: %v", redactAPIURL(normalized.APIURL), err)
+		}
+	}
+
+	var parsed struct {
+		Status  string `json:"status"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(responseBody, &parsed); err != nil {
+		return "", fmt.Errorf("响应不是有效的 FlareSolverr 服务（%s）：请确认地址指向 FlareSolverr", redactAPIURL(normalized.APIURL))
+	}
+	if strings.ToLower(parsed.Status) != "ok" {
+		return "", fmt.Errorf("FlareSolverr 探测失败: %s", firstNonEmpty(parsed.Message, parsed.Status))
+	}
+	return firstNonEmpty(parsed.Message, "FlareSolverr 服务可用"), nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 // Solve 调用 FlareSolverr 求解指定 URL 的 Cloudflare 挑战。
 // 参数/返回：ctx 为上下文；targetURL 为待求解页面；cookie 为站点现有 Cookie；返回求解结果。
 // 失败场景：FlareSolverr 未启用、网络错误、返回状态非 ok 或响应体解析失败。
@@ -168,7 +235,7 @@ func Solve(ctx context.Context, targetURL, cookie string) (*Solution, error) {
 			}
 		}
 		if err != nil {
-			return nil, fmt.Errorf("请求 FlareSolverr 失败: %w", err)
+			return nil, fmt.Errorf("请求 FlareSolverr 失败（%s，请确认服务可达）: %w", redactAPIURL(cfg.APIURL), err)
 		}
 	}
 

@@ -233,11 +233,20 @@
             </el-form-item>
 
             <el-form-item label="API 地址" class="form-item">
-              <el-input
-                v-model="flareSolverForm.api_url"
-                placeholder="填写已部署的 FlareSolverr 服务地址，如 http://127.0.0.1:8112"
-                clearable
-              />
+              <div style="display: flex; gap: 8px; width: 100%">
+                <el-input
+                  v-model="flareSolverForm.api_url"
+                  placeholder="填写已部署的 FlareSolverr 服务地址，如 http://127.0.0.1:8112"
+                  clearable
+                />
+                <el-button
+                  :loading="testingFlareSolver"
+                  @click="testFlareSolverConnection"
+                  plain
+                >
+                  测试连接
+                </el-button>
+              </div>
             </el-form-item>
 
             <el-form-item label="API Key" class="form-item">
@@ -1726,6 +1735,36 @@ const saveFlareSolverSettings = async () => {
     ElMessage.error(errorMessage)
   } finally {
     savingFlareSolver.value = false
+  }
+}
+
+// 测试 FlareSolverr 连通性（探测服务是否可达、是否为 FlareSolverr，不发起求解）
+const testingFlareSolver = ref(false)
+const testFlareSolverConnection = async () => {
+  const apiURL = flareSolverForm.api_url.trim()
+  if (!apiURL) {
+    ElMessage.warning('请先填写 FlareSolverr API 地址再测试')
+    return
+  }
+  testingFlareSolver.value = true
+  try {
+    const response = await axios.post('/api/test_flaresolverr_connection', {
+      api_url: apiURL,
+      api_key: flareSolverForm.api_key.trim(),
+    })
+    const result = response.data
+    if (result?.success) {
+      ElMessage.success(result.message || 'FlareSolverr 连接正常')
+    } else {
+      ElMessage.error(result?.message || '连接失败')
+    }
+  } catch (error: unknown) {
+    const message = axios.isAxiosError(error)
+      ? String(error.response?.data?.message || error.message || '连接失败')
+      : '连接失败'
+    ElMessage.error(message)
+  } finally {
+    testingFlareSolver.value = false
   }
 }
 

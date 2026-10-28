@@ -256,6 +256,7 @@ func registerRoutes(
 		api.POST("/sites/cookie_sync_batch", sitesHandler.BatchUpdateSiteCookies)
 		api.POST("/cookiecloud/sync", settingsHandler.CookieCloudSync)
 		api.POST("/test_connection", settingsHandler.TestConnection)
+		api.POST("/test_flaresolverr_connection", settingsHandler.TestFlareSolverrConnection)
 		api.POST("/upload_image", settingsHandler.UploadImage)
 		api.GET("/settings", settingsHandler.GetSettings)
 		api.POST("/settings", settingsHandler.UpdateSettings)

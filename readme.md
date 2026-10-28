@@ -256,6 +256,11 @@ wget -O - https://github.com/jadylc/PTNexus/releases/latest/download/install-pt-
 
 # 更新日志
 
+### v4.0.75（2026.10.28）
+
+- 新增：FlareSolverr「测试连接」按钮——保存前即可验证服务地址可达且确为 FlareSolverr（探测 sessions.list，不发起求解），避免启用了但服务不可达导致抓取仍然失败
+- 优化：FlareSolverr 请求失败信息带上实际使用的 API 地址并提示确认服务可达，便于排查地址填错/服务未启动的问题
+
 ### v4.0.74（2026.10.28）
 
 - 修复：按名称搜索定位种子ID命中多候选时不再直接失败——名称精确匹配支持列表页 title 属性（完整名常在属性里、可见文本被截断），多候选时自动逐个下载候选种子比对 infohash 唯一确定目标（上限 8 个）

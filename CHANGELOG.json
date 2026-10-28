@@ -19,6 +19,14 @@
   ],
   "history": [
     {
+      "version": "v4.0.75",
+      "date": "2026.10.28",
+      "changes": [
+        "新增：FlareSolverr「测试连接」按钮——保存前即可验证服务地址可达且确为 FlareSolverr（探测 sessions.list，不发起求解），避免启用了但服务不可达导致抓取仍然失败",
+        "优化：FlareSolverr 请求失败信息带上实际使用的 API 地址并提示确认服务可达，便于排查地址填错/服务未启动的问题"
+      ]
+    },
+    {
       "version": "v4.0.74",
       "date": "2026.10.28",
       "changes": [
