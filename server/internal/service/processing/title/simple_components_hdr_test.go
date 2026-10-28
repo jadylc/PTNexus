@@ -67,3 +67,18 @@ func componentValue(components []map[string]any, key string) string {
 	}
 	return ""
 }
+
+// TestBuildSimpleTitleComponentsPMTPPlatform 验证 Paramount+ 场景缩写 PMTP 被识别为片源平台，
+// 且不泄漏进"无法识别"（站点原始标题：Limitless.2015.Complete.PMTP.WEB-DL.1080p.H264.AAC-CMCTV）。
+func TestBuildSimpleTitleComponentsPMTPPlatform(t *testing.T) {
+	title := "Limitless.2015.Complete.PMTP.WEB-DL.1080p.H264.AAC-CMCTV"
+	components := BuildSimpleTitleComponents(title, "CMCTV")
+
+	if got := componentValue(components, "片源平台"); got != "PMTP" {
+		t.Fatalf("expected 片源平台=PMTP, got %q", got)
+	}
+	unrecognized := componentValue(components, "无法识别")
+	if strings.Contains(unrecognized, "PMTP") {
+		t.Fatalf("expected PMTP NOT in 无法识别, got %q", unrecognized)
+	}
+}
