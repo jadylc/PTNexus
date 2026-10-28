@@ -82,3 +82,38 @@ func TestBuildSimpleTitleComponentsPMTPPlatform(t *testing.T) {
 		t.Fatalf("expected PMTP NOT in 无法识别, got %q", unrecognized)
 	}
 }
+
+// TestBuildSimpleTitleComponentsHDTVRip 验证 HDTVRip 被识别为媒介 HDTV，
+// 且不再泄漏进"无法识别"。
+// 背景：\bHDTV\b 被后缀 Rip 的词边界挡住、\bTV[-\s]?RIP\b 又要求前面是词边界，
+// 两个正则都匹配不到 HDTVRip，导致媒介为空、token 落进无法识别。
+func TestBuildSimpleTitleComponentsHDTVRip(t *testing.T) {
+	title := "Yonimo Kimyouna Monogatari 23 Aki no Tokubetsuhen 2023 720p HDTVRip AAC 2.0 x264-TVBT"
+	components := BuildSimpleTitleComponents(title, "TVBT")
+
+	if got := componentValue(components, "媒介"); got != "HDTV" {
+		t.Fatalf("expected 媒介=HDTV, got %q", got)
+	}
+	unrecognized := componentValue(components, "无法识别")
+	if strings.Contains(strings.ToUpper(unrecognized), "HDTVRIP") {
+		t.Fatalf("expected HDTVRip NOT in 无法识别, got %q", unrecognized)
+	}
+}
+
+// TestBuildSimpleTitleComponentsHDTVRipVariants 覆盖连字符/空格写法。
+func TestBuildSimpleTitleComponentsHDTVRipVariants(t *testing.T) {
+	cases := []string{
+		"Show Name 2023 720p HDTV-Rip AAC x264-GRP",
+		"Show Name 2023 720p HDTV Rip AAC x264-GRP",
+	}
+	for _, title := range cases {
+		components := BuildSimpleTitleComponents(title, "GRP")
+		if got := componentValue(components, "媒介"); got != "HDTV" {
+			t.Fatalf("title %q: expected 媒介=HDTV, got %q", title, got)
+		}
+		unrecognized := componentValue(components, "无法识别")
+		if strings.Contains(strings.ToUpper(unrecognized), "HDTV") {
+			t.Fatalf("title %q: expected HDTV token NOT in 无法识别, got %q", title, unrecognized)
+		}
+	}
+}

@@ -40,6 +40,9 @@ var (
 	reTVRipToken    = regexp.MustCompile(`(?i)\bTV[-\s]?RIP\b`)
 	reDVDRipToken   = regexp.MustCompile(`(?i)\bDVD[-\s]?RIP\b`)
 	reDVDDiscToken  = regexp.MustCompile(`(?i)\bDVD(?:5|9)\b`)
+	// reHDTVRipToken 匹配 HDTVRip / HDTV-Rip / HDTV Rip（含 UHDTVRip 变体）。
+	// 单独的 \bHDTV\b 会被后缀 Rip 的词边界挡住，需要显式识别。
+	reHDTVRipToken = regexp.MustCompile(`(?i)\b(?:UHD)?HDTV[-\s]?RIP\b`)
 )
 
 var specialReleaseGroupSuffixes = []string{"mUHD-FRDS", "MNHD-FRDS", "￡cXcY-FRDS", "￡cXcY@FRDS", "DMG&VCB-Studio", "VCB-Studio"}
@@ -254,11 +257,11 @@ func extractMediumPythonish(title string) string {
 	upper := strings.ToUpper(title)
 	parts := make([]string, 0, 6)
 
-	if regexp.MustCompile(`(?i)\bUHDTV\b`).FindStringIndex(title) != nil {
+	if regexp.MustCompile(`(?i)\bUHDTV(?:[-\s]?RIP)?\b`).FindStringIndex(title) != nil {
 		parts = append(parts, "UHDTV")
 	}
 
-	if regexp.MustCompile(`(?i)\bHDTV\b`).FindStringIndex(title) != nil {
+	if regexp.MustCompile(`(?i)\bHDTV(?:[-\s]?RIP)?\b`).FindStringIndex(title) != nil {
 		parts = append(parts, "HDTV")
 	}
 
@@ -402,6 +405,10 @@ func extractMainTitleAndUnrecognized(titlePart string, values map[string]string)
 	if match := strings.TrimSpace(reBDRipToken.FindString(titlePart)); match != "" {
 		// BDRip 兼容变体（BDrip/BD-Rip/BD Rip）统一从“无法识别”清理集合中移除。
 		found = append(found, match, "BDRip", "BD-Rip", "BD Rip", "BDrip")
+	}
+	if match := strings.TrimSpace(reHDTVRipToken.FindString(titlePart)); match != "" {
+		// HDTVRip/UHDTVRip 变体：媒介值已归一化为 HDTV/UHDTV，原始 token 需按标题清理。
+		found = append(found, match, "HDTVRip", "HDTV-Rip", "HDTV Rip", "UHDTVRip", "UHDTV-Rip", "UHDTV Rip")
 	}
 	if v := strings.TrimSpace(values["媒介"]); v != "" {
 		found = append(found, mediumCleanupTags(v)...)
@@ -590,10 +597,20 @@ func mediumCleanupTags(medium string) []string {
 	}
 
 	switch {
-	case regexp.MustCompile(`(?i)\bUHDTV\b`).FindStringIndex(trimmed) != nil:
+	case regexp.MustCompile(`(?i)\bUHDTV(?:[-\s]?RIP)?\b`).FindStringIndex(trimmed) != nil:
 		appendTag("UHDTV")
-	case regexp.MustCompile(`(?i)\bHDTV\b`).FindStringIndex(trimmed) != nil:
+	case regexp.MustCompile(`(?i)\bHDTV(?:[-\s]?RIP)?\b`).FindStringIndex(trimmed) != nil:
 		appendTag("HDTV")
+	}
+
+	// HDTVRip/UHDTVRip 变体：值被归一化成了 HDTV/UHDTV，原始 token 仍需从"无法识别"里移除。
+	if reHDTVRipToken.FindStringIndex(trimmed) != nil {
+		appendTag("HDTVRip")
+		appendTag("HDTV-Rip")
+		appendTag("HDTV Rip")
+		appendTag("UHDTVRip")
+		appendTag("UHDTV-Rip")
+		appendTag("UHDTV Rip")
 	}
 
 	if regexp.MustCompile(`(?i)\bBlu[-\s]?ray\b`).FindStringIndex(trimmed) != nil {
