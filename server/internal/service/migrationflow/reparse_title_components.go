@@ -2,6 +2,7 @@ package migrationflow
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	extract "github.com/pt-nexus/server/internal/service/acquire/extract"
 	"github.com/pt-nexus/server/internal/service/crossseed"
 	processingshared "github.com/pt-nexus/server/internal/service/processing/shared"
+	processingtagging "github.com/pt-nexus/server/internal/service/processing/tagging"
 	processingtitle "github.com/pt-nexus/server/internal/service/processing/title"
 	"github.com/pt-nexus/server/internal/service/reversemapping"
 )
@@ -69,7 +71,7 @@ func (s *MigrateService) ReparseTitleComponents(payload map[string]any) (map[str
 	// 批量"仅错误行"改为行级判定（无法识别 OR 标准列值无效）：
 	// 此前用 SQL LIKE 只筛组件含"无法识别"的行，会漏掉列值无效的行
 	//（如 team=team.hdsky、audio_codec=2Audio），这些行重算后依然标红。
-	selectSQL := "SELECT hash, torrent_id, site_name, title, subtitle, name, mediainfo, title_components, type, medium, video_codec, audio_codec, resolution, team, source FROM seed_parameters"
+	selectSQL := "SELECT hash, torrent_id, site_name, title, subtitle, name, mediainfo, title_components, type, medium, video_codec, audio_codec, resolution, team, source, tags FROM seed_parameters"
 	where := make([]string, 0)
 	args := make([]any, 0)
 	if len(items) > 0 {
@@ -164,6 +166,15 @@ func (s *MigrateService) ReparseTitleComponents(payload map[string]any) (map[str
 			}
 		}
 
+		// 无效标签修复：tags 列中映射不到标准键的条目（如 tag.Atmos——Atmos 是
+		// 音频特性而非标签语义），能映射的替换、技术特性词移除，其余保留人工处理。
+		if fixedTags, tagsChanged := repairRowTags(row, rowSite, reverseMappings); tagsChanged {
+			encodedTags, err := json.Marshal(fixedTags)
+			if err == nil {
+				updates["tags"] = string(encodedTags)
+			}
+		}
+
 		// 解析结果与库中一致且无列值修复：内容没有变化，跳过写回（保护 updated_at 与人工状态）。
 		if strings.TrimSpace(string(encoded)) == storedComponents && fixedTitle == title && fixedSubtitle == subtitle && len(updates) == 0 {
 			skipped++
@@ -220,7 +231,106 @@ func reparseRowHasProblem(row map[string]any, reverseMappings map[string]any) bo
 			return true
 		}
 	}
+	// 无效标签（如 tag.Atmos）同样属于数据问题。
+	for _, tag := range parseRowTags(row) {
+		if crossseed.IsInvalidStandardValue("tags", tag, reverseMappings) {
+			return true
+		}
+	}
 	return false
+}
+
+// reTechTraitTagToken 匹配不属于标签语义的音频/视频/HDR 技术特性词。
+// 说明：这类值（如 tag.Atmos）是历史数据把技术特性误存为标签，标准映射里
+// 不存在对应键，应从 tags 中移除而非保留为无效标签。
+var reTechTraitTagToken = regexp.MustCompile(`(?i)^(?:atmos|dolby|vision|dovi|dv|hdr10\+|hdr|hlg|sdr|truehd|ddp|dd|aac|dts|flac|lpcm|pcm|ac3|opus|avc|hevc|x264|x265|h\.?26[45]|2160p|1080p|720p|web-?dl|webrip|bluray|remux)$`)
+
+// repairRowTags 修复行内无效标签：可映射的替换为标准键，技术特性词移除，其余保留。
+// 参数/返回：row 为 seed_parameters 行；siteCode 为站点标识；reverseMappings 为反向映射表；
+// 返回修复后的标签列表与是否发生变化。
+// 失败场景：不适用（解析失败或全部有效时原样返回）。
+// 副作用：无。
+func repairRowTags(row map[string]any, siteCode string, reverseMappings map[string]any) ([]string, bool) {
+	tags := parseRowTags(row)
+	if len(tags) == 0 {
+		return tags, false
+	}
+	changed := false
+	out := make([]string, 0, len(tags))
+	seen := map[string]struct{}{}
+	for _, tag := range tags {
+		trimmed := strings.TrimSpace(tag)
+		if trimmed == "" {
+			changed = true
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			changed = true
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		if !crossseed.IsInvalidStandardValue("tags", trimmed, reverseMappings) {
+			out = append(out, trimmed)
+			continue
+		}
+		// 尝试经站点/全局标签映射表转成标准键（去掉历史 tag. 前缀后按原始词映射）。
+		raw := strings.TrimSpace(strings.TrimPrefix(trimmed, "tag."))
+		if raw == "" {
+			changed = true
+			continue
+		}
+		mapped, _ := processingtagging.MapTagsToStandard([]string{raw}, siteCode)
+		replaced := false
+		for _, candidate := range mapped {
+			if !crossseed.IsInvalidStandardValue("tags", candidate, reverseMappings) {
+				if _, exists := seen[candidate]; exists {
+					replaced = true
+					break
+				}
+				seen[candidate] = struct{}{}
+				out = append(out, candidate)
+				replaced = true
+				break
+			}
+		}
+		if replaced {
+			changed = true
+			continue
+		}
+		// 映射不到且属于音频/视频/HDR 技术特性词：不是标签语义，移除。
+		if reTechTraitTagToken.MatchString(raw) {
+			changed = true
+			continue
+		}
+		// 其余无效标签保留，由人工在维护页处理。
+		out = append(out, trimmed)
+	}
+	if !changed {
+		return tags, false
+	}
+	return out, true
+}
+
+// parseRowTags 解析行内 tags 列（JSON 数组文本）。
+// 参数/返回：row 为 seed_parameters 行；返回标签列表（空/解析失败返回 nil）。
+// 失败场景：不适用。
+// 副作用：无。
+func parseRowTags(row map[string]any) []string {
+	raw := strings.TrimSpace(processingshared.ToString(row["tags"], ""))
+	if raw == "" {
+		return nil
+	}
+	var parsed []string
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(parsed))
+	for _, item := range parsed {
+		if trimmed := strings.TrimSpace(item); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
 
 // parseTitleComponentsJSON 解析标题组件 JSON 为通用切片。
