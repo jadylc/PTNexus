@@ -444,12 +444,25 @@ func extractMainTitleAndUnrecognized(titlePart string, values map[string]string)
 		if tag == "" {
 			continue
 		}
-		// 片源平台 token 可能包含非单词字符（例如 Apple TV+ / AMC+），这里用更稳健的边界规则移除。
+		// \b 是"单词字符与非单词字符的边界"：标签以非单词字符结尾时（如 HDR10+、
+		// WEB-DL、H.265），尾部 \b 在后面接 . 或空格等非单词字符时不成立，
+		// 导致标签移除失败、泄漏进"无法识别"。首尾任一侧为非单词字符的标签
+		// 统一改用与片源平台相同的显式边界规则。
+		needsRobustBoundary := false
+		first, last := rune(0), rune(0)
+		for _, r := range tag {
+			if first == 0 {
+				first = r
+			}
+			last = r
+		}
+		if first != 0 && (!isTechTagWordRune(first) || !isTechTagWordRune(last)) {
+			needsRobustBoundary = true
+		}
 		var compiled *regexp.Regexp
-		if strings.EqualFold(tag, strings.TrimSpace(values["片源平台"])) {
+		if needsRobustBoundary {
 			compiled = regexp.MustCompile(`(?i)(?:^|[^\p{L}\p{N}_])` + regexp.QuoteMeta(tag) + `(?:$|[^\p{L}\p{N}_])`)
 		} else {
-			// Go regexp (RE2) 不支持 lookahead，这里用 \b...\b 近似 Python 的 \b...(?!\w) 行为。
 			compiled = regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(tag) + `\b`)
 		}
 		cleaned = compiled.ReplaceAllString(cleaned, " ")
@@ -1140,6 +1153,14 @@ func isHDRTitleTokenBoundary(text string, start int, end int) bool {
 
 func isHDRTitleWordRune(r rune) bool {
 	return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r)
+}
+
+// isTechTagWordRune 判断字符是否属于正则 \b 语义下的"单词字符"。
+// 参数/返回：r 为待判断字符；返回是否为字母/数字/下划线。
+// 失败场景：不适用。
+// 副作用：无。
+func isTechTagWordRune(r rune) bool {
+	return isHDRTitleWordRune(r)
 }
 
 func extractBitDepthFromTitle(title string) string {
