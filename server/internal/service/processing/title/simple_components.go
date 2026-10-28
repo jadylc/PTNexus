@@ -444,6 +444,11 @@ func extractMainTitleAndUnrecognized(titlePart string, values map[string]string)
 	if idx := reResolutionTok.FindStringIndex(trimmed); idx != nil {
 		techStart = minInt(techStart, idx[0])
 	}
+	// 兜底扩展：尺寸写法（如 1920x1080）同样视为技术区起点，
+	// 否则尺寸出现在媒介前时会被留在主标题里。
+	if loc := reResolutionSizeForm.FindStringIndex(trimmed); loc != nil {
+		techStart = minInt(techStart, loc[0])
+	}
 	if techStart < 0 || techStart > len(trimmed) {
 		techStart = len(trimmed)
 	}
@@ -528,6 +533,8 @@ func extractMainTitleAndUnrecognized(titlePart string, values map[string]string)
 	// 技术区中的裸声道（如 "… x265 10bit 5.1 2Audios 组名" 编码未标注时）：
 	// 声道格式无歧义，纳入清理。
 	found = append(found, standaloneChannelTokens(techZone)...)
+	// 尺寸写法分辨率（如 "1920x1080"）：值已归一化为 1080p，原始尺寸 token 按技术区清理。
+	found = append(found, resolutionSizeTokens(techZone)...)
 
 	// 先移除长标签，避免短标签破坏长标签的结构（对齐 Python sorted(..., key=len, reverse=True)）。
 	sort.Slice(found, func(i, j int) bool { return len(found[i]) > len(found[j]) })
@@ -1057,14 +1064,31 @@ func extractQualityModifierFromTitle(title string) string {
 	}
 }
 
+// reResolutionSizeForm 匹配 "宽x高" 尺寸写法的分辨率（如 1920x1080、3840x2160）。
+var reResolutionSizeForm = regexp.MustCompile(`(?i)\b(\d{3,4})x(\d{3,4})\b`)
+
+// resolutionHeightToStandard 高度值到标准分辨率的映射（仅收录标准键能覆盖的高度）。
+var resolutionHeightToStandard = map[string]string{
+	"2160": "2160p",
+	"1080": "1080p",
+	"720":  "720p",
+	"480":  "480p",
+}
+
 func extractResolutionFromTitle(title string) string {
 	re := regexp.MustCompile(`(?i)\b(4320p|8k|2160p|4k|1080p|1080i|720p|480p)\b`)
 	match := strings.TrimSpace(re.FindString(title))
-	if match == "" {
-		return ""
+	if match != "" {
+		// 对齐 Python：保持标题中匹配到的原始分辨率 token（如 4K 保持 4K，不转换为 2160P）。
+		return match
 	}
-	// 对齐 Python：保持标题中匹配到的原始分辨率 token（如 4K 保持 4K，不转换为 2160P）。
-	return match
+	// 尺寸写法（如 "BDRIP 1920x1080 X264"）取高度映射到标准分辨率。
+	if m := reResolutionSizeForm.FindStringSubmatch(title); len(m) >= 3 {
+		if standard, ok := resolutionHeightToStandard[strings.ToLower(strings.TrimSpace(m[2]))]; ok {
+			return standard
+		}
+	}
+	return ""
 }
 
 func normalizeVideoCodecByMedium(values map[string]string, mediaInfo string) {
@@ -1768,6 +1792,16 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// resolutionSizeTokens 提取技术区中的尺寸写法分辨率 token（如 1920x1080）。
+// 参数/返回：techZone 为技术区文本；返回尺寸 token 列表。
+// 失败场景：不适用。
+// 副作用：无。
+// 说明：extractResolutionFromTitle 会把尺寸归一化为标准分辨率（如 1080p），
+// 但标题里的原始尺寸 token 需按原文清理，否则残留在无法识别中。
+func resolutionSizeTokens(techZone string) []string {
+	return reResolutionSizeForm.FindAllString(techZone, -1)
 }
 
 // findTechCandidateIndex 在标题（大写化）中查找技术候选 token 的词边界安全位置。
