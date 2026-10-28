@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"unicode"
 	"unicode/utf8"
 
@@ -431,8 +432,12 @@ func extractMainTitleAndUnrecognized(titlePart string, values map[string]string)
 		if cand == "" {
 			continue
 		}
-		if idx := strings.Index(upper, strings.ToUpper(cand)); idx >= 0 {
-			techStart = minInt(techStart, idx)
+		// 词边界查找：候选若出现在主标题词汇内部（如 Confidence 内含平台缩写 NF、
+		// Shou/House 内含布局缩写 HOU），无边界的 strings.Index 会把技术区起点
+		// 错切进主标题，导致主标题后半段整体落入"无法识别"。
+		// 用显式边界（非词字符或串首尾）匹配并取捕获组位置作为候选起点。
+		if loc := findTechCandidateIndex(upper, cand); loc >= 0 {
+			techStart = minInt(techStart, loc)
 		}
 	}
 	// 兜底：如果找到分辨率，仍然取其位置作为潜在切分点
@@ -516,6 +521,8 @@ func extractMainTitleAndUnrecognized(titlePart string, values map[string]string)
 	}
 	// 音频语言标记（如韩剧的 Kor、国语 Chi/曼德 Mand）：非标准组件，从无法识别中清理。
 	found = append(found, titleLanguageTokens(titlePart)...)
+	// 音频品牌词（Dolby 前缀、Audio 说明词）：从无法识别中清理。
+	found = append(found, titleBrandTokens(titlePart)...)
 	// 独立音轨数标记（如 "2Audio"，无编码关键字也可无歧义清理）。
 	found = append(found, standaloneAudioCountTokens(titlePart)...)
 	// 技术区中的裸声道（如 "… x265 10bit 5.1 2Audios 组名" 编码未标注时）：
@@ -665,6 +672,19 @@ func containsAlnumRune(s string) bool {
 		}
 	}
 	return false
+}
+
+// reTitleBrandToken 匹配标题中的音频品牌词（Dolby 前缀、Audio 说明词）。
+// 说明：Dolby Vision 是 HDR 提取的整词（不被这里命中）；独立的 Dolby/Audio
+// 是品牌说明词（如 "Dolby TrueHD Audio 5.1"），从无法识别中清理。
+var reTitleBrandToken = regexp.MustCompile(`(?i)\b(?:Dolby|Audio)\b`)
+
+// titleBrandTokens 提取标题中的音频品牌词，用于从无法识别中清理。
+// 参数/返回：titlePart 为标题技术段；返回品牌词列表。
+// 失败场景：不适用。
+// 副作用：无。
+func titleBrandTokens(titlePart string) []string {
+	return reTitleBrandToken.FindAllString(titlePart, -1)
 }
 
 // reTitleLanguageToken 匹配标题中的音频语言标记（如韩源 Kor、国语 Chi/Man、日语 Jpn）。
@@ -1247,6 +1267,10 @@ func extractVideoCodecFromTitle(title string) string {
 	}
 }
 
+// reVideoLayoutToken 匹配 3D 布局标记。必须用词边界——"HOU" 只有 3 个字符，
+// Contains 误匹配会把 SHOU/House/Hourou 等主标题词判成布局标记（曾导致主标题被从词中切断）。
+var reVideoLayoutToken = regexp.MustCompile(`(?i)\b(?:HSBS|HOU|HTAB|FSBS|FULLSB|H-SBS|H-OU)\b`)
+
 func extractVideoFormatFromTitle(title string) string {
 	upper := strings.ToUpper(title)
 	// 3D 布局标记（HSBS/HOU/半高宽等）与 3D 是同类信息，合并输出且全部纳入清理。
@@ -1254,10 +1278,8 @@ func extractVideoFormatFromTitle(title string) string {
 	if strings.Contains(upper, "3D") {
 		parts = append(parts, "3D")
 	}
-	for _, layout := range []string{"HSBS", "HOU", "HTAB", "FSBS", "FULLSB"} {
-		if strings.Contains(upper, layout) {
-			parts = append(parts, layout)
-		}
+	for _, layout := range reVideoLayoutToken.FindAllString(title, -1) {
+		parts = append(parts, strings.ToUpper(layout))
 	}
 	return strings.Join(parts, " ")
 }
@@ -1747,6 +1769,29 @@ func minInt(a, b int) int {
 	}
 	return b
 }
+
+// findTechCandidateIndex 在标题（大写化）中查找技术候选 token 的词边界安全位置。
+// 参数/返回：upper 为大写化标题；cand 为候选值；返回候选 token 的起始位置（未命中返回 -1）。
+// 失败场景：不适用。
+// 副作用：无。
+// 说明：用显式字符类边界（(?:^|[^\p{L}\p{N}_])token(?:$|[^\p{L}\p{N}_])）替代 \b——
+// token 首尾为非词字符（如 HDR10+ 的 +）时 \b 会失效；候选值集合有限，正则按值缓存。
+func findTechCandidateIndex(upper, cand string) int {
+	cached, ok := reTechCandidateIndexCache.Load(cand)
+	if !ok {
+		cached = regexp.MustCompile(`(?i)(?:^|[^\p{L}\p{N}_])(` + regexp.QuoteMeta(cand) + `)(?:$|[^\p{L}\p{N}_])`)
+		reTechCandidateIndexCache.Store(cand, cached)
+	}
+	re := cached.(*regexp.Regexp)
+	loc := re.FindStringSubmatchIndex(upper)
+	if loc == nil || len(loc) < 4 {
+		return -1
+	}
+	return loc[2]
+}
+
+// reTechCandidateIndexCache 缓存候选边界正则，避免每行每候选重复编译。
+var reTechCandidateIndexCache sync.Map
 
 func toStringSimple(value any, fallback string) string {
 	if value == nil {

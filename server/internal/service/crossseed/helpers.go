@@ -110,6 +110,31 @@ func isValidStandardValue(value string) bool {
 	return trimmed == "" || (strings.Contains(trimmed, ".") && !strings.HasPrefix(trimmed, ".") && !strings.HasSuffix(trimmed, "."))
 }
 
+// IsInvalidStandardValue 判断标准列值是否无效（缺省格式或反查映射缺失）。
+// 参数/返回：category 为列类别（type/medium/video_codec/audio_codec/resolution/team/source），
+// value 为列值，reverseMappings 为反向映射表；返回是否无效（空值视为有效，不判错）。
+// 失败场景：不适用。
+// 副作用：无。
+// 说明：供标题重算等跨服务场景复用，判定口径与列表"错误"分类一致。
+func IsInvalidStandardValue(category string, value string, reverseMappings map[string]any) bool {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return false
+	}
+	if !isValidStandardValue(trimmed) {
+		return true
+	}
+	return !isStandardValueMapped(reverseMappings, category, trimmed)
+}
+
+// ExtractUnrecognizedValue 返回标题组件中的"无法识别"值（供跨服务复用）。
+// 参数/返回：titleComponents 为标题组件切片；返回无法识别值（空串表示无）。
+// 失败场景：不适用。
+// 副作用：无。
+func ExtractUnrecognizedValue(titleComponents []any) string {
+	return extractUnrecognized(titleComponents)
+}
+
 func hasRestrictedStandardTag(tags []string) bool {
 	for _, raw := range tags {
 		switch strings.TrimSpace(raw) {
