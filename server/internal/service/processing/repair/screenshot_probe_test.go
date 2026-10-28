@@ -23,8 +23,9 @@ func TestImageProbeReferer(t *testing.T) {
 	cases := map[string]string{
 		"https://img108.pixhost.to/images/12/34/abc.png": "https://img108.pixhost.to/",
 		"http://i.example.com/a.jpg":                     "http://i.example.com/",
-		"//cdn.example.com/b.png":                        "",
+		"//cdn.example.com/b.png":                        "https://cdn.example.com/",
 		"":                                               "",
+		"not a url":                                      "",
 	}
 	for target, want := range cases {
 		if got := imageProbeReferer(target); got != want {
