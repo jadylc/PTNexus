@@ -1093,6 +1093,21 @@ const openProgressDialog = () => {
 const closeProgressDialog = () => {
   progressDialogVisible.value = false
   stopAutoRefresh()
+  // 用户确认查看完结果后再关闭弹窗，并同步任务监控与父视图数据
+  if (currentTaskId.value && !progress.value?.isRunning) {
+    emit('fetch-completed')
+  }
+}
+
+// showFetchFinishedNotice 在任务结束时给出明确的完成提示，但保持弹窗打开供用户查看结果。
+const showFetchFinishedNotice = () => {
+  const failedCount = progress.value?.failed || 0
+  const successCount = progress.value?.success || 0
+  if (failedCount > 0) {
+    ElMessage.warning(`批量获取已结束：成功 ${successCount} 个，失败 ${failedCount} 个，详情见结果列表`)
+  } else {
+    ElMessage.success(`批量获取已完成：成功 ${successCount} 个`)
+  }
 }
 
 const startAutoRefresh = () => {
@@ -1158,9 +1173,11 @@ const refreshProgress = async () => {
 
       updateBatchFetchMonitor()
 
-      // 如果任务从运行中变为已完成，触发完成事件
+      // 任务从运行中变为已完成：保留弹窗打开，让用户查看结果汇总；
+      // 自动关闭会让结果一闪而过，用户根本来不及看（用户此前反馈该问题）。
       if (wasRunning && !progress.value.isRunning) {
-        emit('fetch-completed')
+        stopAutoRefresh()
+        showFetchFinishedNotice()
       }
     } else {
       taskMonitorStore.markFailed(batchFetchMonitorKey.value, {

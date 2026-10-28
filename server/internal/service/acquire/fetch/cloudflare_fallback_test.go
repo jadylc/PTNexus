@@ -26,6 +26,38 @@ func TestIsCloudflareChallengeBody(t *testing.T) {
 	}
 }
 
+// TestHTTPStatusErrorCompactMessage 验证 HTTP 错误文本不再携带整页 HTML：
+// CHD 404 场景（GBK 乱码 HTML）此前把整页内容写进日志/前端/MySQL（Error 1366）。
+func TestHTTPStatusErrorCompactMessage(t *testing.T) {
+	raw := `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml"><head><meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<title>404页面</title></head><body><div class="error-page"><h3><strong>404</strong>您访问的页面不存在</h3></div></body></html>`
+	err := &httpStatusError{status: 404, body: []byte(raw)}
+	message := err.Error()
+
+	if !strings.Contains(message, "HTTP 404") {
+		t.Fatalf("expected status prefix, got %q", message)
+	}
+	if len(message) > 200 {
+		t.Fatalf("expected compact message, got %d chars", len(message))
+	}
+	if strings.Contains(message, "<!DOCTYPE") || strings.Contains(message, "<html") {
+		t.Fatalf("expected no raw HTML, got %q", message)
+	}
+	if !strings.Contains(message, "404页面") {
+		t.Fatalf("expected readable title in message, got %q", message)
+	}
+}
+
+func TestCompactHTTPErrorBodyNonHTML(t *testing.T) {
+	if got := compactHTTPErrorBody([]byte("plain text error")); got != "plain text error" {
+		t.Fatalf("expected passthrough for non-HTML, got %q", got)
+	}
+	if got := compactHTTPErrorBody(nil); got != "空响应" {
+		t.Fatalf("expected 空响应, got %q", got)
+	}
+}
+
 func TestMergeCookieStrings(t *testing.T) {
 	merged := mergeCookieStrings("uid=42; passhash=xyz", []flaresolverr.Cookie{
 		{Name: "cf_clearance", Value: "abc"},
