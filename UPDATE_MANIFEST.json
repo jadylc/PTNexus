@@ -2,38 +2,46 @@
   "schema": 2,
   "note": "repo-root metadata only; production updater must use release UPDATE_MANIFEST.json",
   "latest": {
-    "version": "v4.0.82",
+    "version": "v4.0.83",
     "artifacts": [
       {
         "os": "linux",
         "arch": "amd64",
-        "url": "https://github.com/jadylc/PTNexus/releases/download/v4.0.82/ptnexus-runtime-linux-amd64.tar.gz",
+        "url": "https://github.com/jadylc/PTNexus/releases/download/v4.0.83/ptnexus-runtime-linux-amd64.tar.gz",
         "sha256": "",
         "size": 11163781,
         "format": "tar.gz",
         "mirror_urls": [
-          "https://gitee.com/jadylc/PTNexus/releases/download/v4.0.82/ptnexus-runtime-linux-amd64.tar.gz",
-          "https://gh.ddlc.top/https://github.com/jadylc/PTNexus/releases/download/v4.0.82/ptnexus-runtime-linux-amd64.tar.gz",
-          "https://ghproxy.net/https://github.com/jadylc/PTNexus/releases/download/v4.0.82/ptnexus-runtime-linux-amd64.tar.gz"
+          "https://gitee.com/jadylc/PTNexus/releases/download/v4.0.83/ptnexus-runtime-linux-amd64.tar.gz",
+          "https://gh.ddlc.top/https://github.com/jadylc/PTNexus/releases/download/v4.0.83/ptnexus-runtime-linux-amd64.tar.gz",
+          "https://ghproxy.net/https://github.com/jadylc/PTNexus/releases/download/v4.0.83/ptnexus-runtime-linux-amd64.tar.gz"
         ]
       },
       {
         "os": "linux",
         "arch": "arm64",
-        "url": "https://github.com/jadylc/PTNexus/releases/download/v4.0.82/ptnexus-runtime-linux-arm64.tar.gz",
+        "url": "https://github.com/jadylc/PTNexus/releases/download/v4.0.83/ptnexus-runtime-linux-arm64.tar.gz",
         "sha256": "",
         "size": 10104449,
         "format": "tar.gz",
         "mirror_urls": [
-          "https://gitee.com/jadylc/PTNexus/releases/download/v4.0.82/ptnexus-runtime-linux-arm64.tar.gz",
-          "https://gh.ddlc.top/https://github.com/jadylc/PTNexus/releases/download/v4.0.82/ptnexus-runtime-linux-arm64.tar.gz",
-          "https://ghproxy.net/https://github.com/jadylc/PTNexus/releases/download/v4.0.82/ptnexus-runtime-linux-arm64.tar.gz"
+          "https://gitee.com/jadylc/PTNexus/releases/download/v4.0.83/ptnexus-runtime-linux-arm64.tar.gz",
+          "https://gh.ddlc.top/https://github.com/jadylc/PTNexus/releases/download/v4.0.83/ptnexus-runtime-linux-arm64.tar.gz",
+          "https://ghproxy.net/https://github.com/jadylc/PTNexus/releases/download/v4.0.83/ptnexus-runtime-linux-arm64.tar.gz"
         ]
       }
     ],
     "date": "2026.10.28"
   },
   "history": [
+    {
+      "version": "v4.0.83",
+      "date": "2026.10.28",
+      "changes": [
+        "新增：维护列表页标题重算支持勾选范围——勾选条目后按钮变为「重算选中 (N)」只处理勾选行，未勾选时仅重算含「无法识别」问题的行；解析结果与库中一致时跳过写回，正确数据与人工修改过的行不受影响",
+        "修复：HDR10plus（无加号变体写法）未识别——现归一化为 HDR10+，DV+HDR10plus 组合正确输出 DoVi HDR10+，且不再泄漏进无法识别"
+      ]
+    },
     {
       "version": "v4.0.82",
       "date": "2026.10.28",
