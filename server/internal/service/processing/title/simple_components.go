@@ -720,14 +720,14 @@ func standaloneAudioCountTokens(titlePart string) []string {
 	return out
 }
 
-// reStandaloneChannelToken 匹配裸声道 token（如 "5.1"、"7.1.4"）。
-var reStandaloneChannelToken = regexp.MustCompile(`\d{1,2}\.\d(?:\.\d+)?`)
+// reStandaloneChannelToken 匹配裸声道 token：小数声道（5.1/7.1.4）与 NCH 形式（6CH）。
+var reStandaloneChannelToken = regexp.MustCompile(`\d{1,2}\.\d(?:\.\d+)?|\d{1,2}CH`)
 
-// standaloneChannelTokens 在技术区上扫描裸声道 token（如 "… x265 10bit 5.1 2Audios"）。
-// 参数/返回：techZone 为技术区文本；返回声道 token 列表。
+// standaloneChannelTokens 在技术区上扫描裸声道 token。
+// 参数/返回：techZone 为技术区文本；返回声道 token 列表（原样，如 "6CH"）。
 // 失败场景：不适用。
 // 副作用：无。
-// 说明：声道格式（X.Y / X.Y.Z）无歧义。注意不能用 reTechSplit 分词扫描——
+// 说明：声道格式（X.Y / X.Y.Z / NCH）无歧义。注意不能用 reTechSplit 分词扫描——
 // 其分隔符含点号，会把 "5.1" 拆成 "5" 与 "1"（这正是无法识别出现 "1 5" 残片的根因）。
 // 这里直接在原文上裸匹配并用手工边界检查保证 token 完整。
 func standaloneChannelTokens(techZone string) []string {
@@ -1699,6 +1699,14 @@ func extractAudioFromTitle(title string) string {
 		channelMatch := channelRe.FindStringSubmatch(title[searchStart:])
 		if len(channelMatch) >= 2 {
 			parts = append(parts, channelMatch[1])
+		}
+	}
+	// NCH 形式声道（如 "6CH"）：数字+CH 后缀，常见于 WEBRip/WEB-DL 发布名
+	nchRe := regexp.MustCompile(`(?i)\b(\d{1,2})CH\b`)
+	if searchStart < len(title) {
+		nchMatch := nchRe.FindStringSubmatch(title[searchStart:])
+		if len(nchMatch) >= 2 {
+			parts = append(parts, nchMatch[1]+"CH")
 		}
 	}
 	if strings.Contains(upper, "ATMOS") {
