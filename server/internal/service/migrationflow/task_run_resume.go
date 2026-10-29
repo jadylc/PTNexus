@@ -227,6 +227,7 @@ func (s *MigrateService) resumePublishBatch(run repository.TaskRun, payload map[
 // resumeBatchFetch 继续抓取剩余种子。
 func (s *MigrateService) resumeBatchFetch(run repository.TaskRun, payload map[string]any, targets []string) {
 	sourcePriority := processingshared.ToStringSlice(payload["source_priority"])
+	excludedSites := processingshared.ToStringSlice(payload["excluded_sites"])
 	rows, err := s.repo.ListTorrentsByNames(targets)
 	if err != nil {
 		for _, name := range targets {
@@ -236,7 +237,7 @@ func (s *MigrateService) resumeBatchFetch(run repository.TaskRun, payload map[st
 		return
 	}
 
-	acquirefetch.RunBatchFetch(targets, sourcePriority, rows, acquirefetch.BatchFetchRunnerDeps{
+	acquirefetch.RunBatchFetch(targets, sourcePriority, excludedSites, rows, acquirefetch.BatchFetchRunnerDeps{
 		FetchAndStore: s.FetchAndStore,
 		OnResult: func(success bool, result map[string]any) {
 			name := strings.TrimSpace(processingshared.ToString(result["name"], ""))

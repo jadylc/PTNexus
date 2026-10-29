@@ -18,10 +18,11 @@ type BatchFetchRunnerDeps struct {
 }
 
 // RunBatchFetch 按种子名称列表执行批量抓取流程。
-// 参数/返回：torrentNames 为待抓取名称，sourcePriority 为站点优先级，rows 为 torrents 查询结果，deps 为流程回调依赖。
+// 参数/返回：torrentNames 为待抓取名称，sourcePriority 为站点优先级，excludedSites 为屏蔽站点（不参与拉取），
+// rows 为 torrents 查询结果，deps 为流程回调依赖。
 // 失败场景：单项抓取失败会记录失败结果并继续下一项，不中断整体任务；deps.ShouldCancel 返回 true 时停止处理剩余种子。
 // 副作用：会通过 FetchAndStore 触发抓取写库，并通过 OnResult 回调持续上报每项结果。
-func RunBatchFetch(torrentNames []string, sourcePriority []string, rows []map[string]any, deps BatchFetchRunnerDeps) {
+func RunBatchFetch(torrentNames []string, sourcePriority []string, excludedSites []string, rows []map[string]any, deps BatchFetchRunnerDeps) {
 	byName := map[string][]map[string]any{}
 	for _, row := range rows {
 		name := strings.TrimSpace(toStringAny(row["name"], ""))
@@ -54,7 +55,7 @@ func RunBatchFetch(torrentNames []string, sourcePriority []string, rows []map[st
 			continue
 		}
 
-		sourceSite, torrentID, matched := selectSourceByPriority(entries, sourcePriority)
+		sourceSite, torrentID, matched := selectSourceByPriority(entries, sourcePriority, excludedSites)
 		if !matched {
 			result["status"] = "failed"
 			result["reason"] = "未找到可用源站点或详情ID"
@@ -108,7 +109,7 @@ func RunBatchFetch(torrentNames []string, sourcePriority []string, rows []map[st
 	}
 }
 
-func selectSourceByPriority(entries []map[string]any, sourcePriority []string) (string, string, bool) {
+func selectSourceByPriority(entries []map[string]any, sourcePriority []string, excludedSites []string) (string, string, bool) {
 	sourceBySite := map[string]string{}
 	for _, row := range entries {
 		sites := splitSiteList(toStringAny(row["sites"], ""))
@@ -119,6 +120,10 @@ func selectSourceByPriority(entries []map[string]any, sourcePriority []string) (
 		details := toStringAny(row["details"], "")
 		rowHash := toStringAny(row["hash"], "")
 		for _, site := range sites {
+			// 屏蔽列表中的站点不参与拉取
+			if isSiteExcluded(site, excludedSites) {
+				continue
+			}
 			torrentID := resolveSiteTorrentID(siteIDs, site, details, rowHash)
 			if torrentID == "" {
 				continue
@@ -141,6 +146,19 @@ func selectSourceByPriority(entries []map[string]any, sourcePriority []string) (
 		return site, torrentID, true
 	}
 	return "", "", false
+}
+
+// isSiteExcluded 判断站点是否在屏蔽列表中（大小写不敏感）。
+// 参数/返回：site 为站点标识；excludedSites 为屏蔽列表；返回是否被屏蔽。
+// 失败场景：不适用。
+// 副作用：无。
+func isSiteExcluded(site string, excludedSites []string) bool {
+	for _, excluded := range excludedSites {
+		if strings.EqualFold(strings.TrimSpace(site), strings.TrimSpace(excluded)) {
+			return true
+		}
+	}
+	return false
 }
 
 // splitSiteList 将 torrents.sites 列（逗号分隔）拆分为站点标识列表。

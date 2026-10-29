@@ -209,6 +209,29 @@
             <el-checkbox label="无可用源站点">无可用源站点</el-checkbox>
           </el-checkbox-group>
 
+          <el-divider content-position="left">源站点过滤</el-divider>
+          <p style="font-size: 12px; color: #909399; margin: 4px 0 8px">
+            勾选要包含/排除的具体源站点（基于种子已有站点数据）
+          </p>
+          <el-checkbox-group v-model="tempFilters.existSiteNames">
+            <el-checkbox
+              v-for="site in siteStatuses"
+              :key="'exist-' + site.name"
+              :label="site.name"
+            >
+              必须存在: {{ site.name }}
+            </el-checkbox>
+          </el-checkbox-group>
+          <el-checkbox-group v-model="tempFilters.notExistSiteNames" style="margin-top: 8px">
+            <el-checkbox
+              v-for="site in siteStatuses"
+              :key="'not-' + site.name"
+              :label="site.name"
+            >
+              必须排除: {{ site.name }}
+            </el-checkbox>
+          </el-checkbox-group>
+
           <el-divider content-position="left">状态</el-divider>
           <el-checkbox-group v-model="tempFilters.states">
             <el-checkbox v-for="state in uniqueStates" :key="state" :label="state">{{
@@ -301,6 +324,25 @@
             <div class="priority-tip" style="margin-top: 10px; font-size: 12px; color: #909399">
               拖拽调整优先级顺序，系统将按此顺序查找可用的源站点。
             </div>
+          </div>
+
+          <el-divider content-position="left">屏蔽源站点</el-divider>
+          <el-alert type="warning" show-icon :closable="false" style="margin-bottom: 12px">
+            <template #title>
+              勾选的站点将被排除，不参与批量获取（优先级列表中也会自动跳过）
+            </template>
+          </el-alert>
+          <el-checkbox-group v-model="excludedSites">
+            <el-checkbox
+              v-for="site in siteStatuses"
+              :key="'excluded-' + site.name"
+              :label="site.name"
+            >
+              {{ site.name }}
+            </el-checkbox>
+          </el-checkbox-group>
+          <div v-if="excludedSites.length > 0" style="margin-top: 8px; font-size: 12px; color: #909399">
+            已屏蔽 {{ excludedSites.length }} 个源站点
           </div>
         </div>
         <div class="priority-settings-footer">
@@ -520,6 +562,8 @@ const priorityLoading = ref<boolean>(false)
 const prioritySaving = ref<boolean>(false)
 const sourceSitesOrder = ref<SiteStatus[]>([])
 const draggedIndex = ref<number | null>(null)
+// 屏蔽源站点：拉进来的站点不参与批量获取
+const excludedSites = ref<string[]>([])
 
 const pathTreeRef = ref<InstanceType<typeof ElTree> | null>(null)
 const pathTreeData = ref<PathNode[]>([])
@@ -541,6 +585,8 @@ const activeFilters = ref({
   states: [] as string[],
   downloaderIds: [] as string[],
   sourceSiteAvailability: [] as string[],
+  existSiteNames: [] as string[],
+  notExistSiteNames: [] as string[],
 })
 const tempFilters = ref({ ...activeFilters.value })
 
@@ -616,6 +662,14 @@ const currentFilterText = computed(() => {
     filterTexts.push(`源站点: ${filters.sourceSiteAvailability.length}`)
   }
 
+  if (filters.existSiteNames && filters.existSiteNames.length > 0) {
+    filterTexts.push(`必须存在: ${filters.existSiteNames.length}`)
+  }
+
+  if (filters.notExistSiteNames && filters.notExistSiteNames.length > 0) {
+    filterTexts.push(`必须排除: ${filters.notExistSiteNames.length}`)
+  }
+
   if (filters.paths && filters.paths.length > 0) {
     filterTexts.push(`路径: ${filters.paths.length}`)
   }
@@ -637,7 +691,9 @@ const hasActiveFilters = computed(() => {
     (filters.sourceSiteAvailability && filters.sourceSiteAvailability.length > 0) ||
     (filters.paths && filters.paths.length > 0) ||
     (filters.states && filters.states.length > 0) ||
-    (filters.downloaderIds && filters.downloaderIds.length > 0)
+    (filters.downloaderIds && filters.downloaderIds.length > 0) ||
+    (filters.existSiteNames && filters.existSiteNames.length > 0) ||
+    (filters.notExistSiteNames && filters.notExistSiteNames.length > 0)
   )
 })
 
@@ -705,6 +761,8 @@ const fetchData = async () => {
       state_filters: JSON.stringify(activeFilters.value.states),
       downloader_filters: JSON.stringify(activeFilters.value.downloaderIds),
       source_availability_filters: JSON.stringify(activeFilters.value.sourceSiteAvailability),
+      existSiteNames: JSON.stringify(activeFilters.value.existSiteNames),
+      notExistSiteNames: JSON.stringify(activeFilters.value.notExistSiteNames),
       exclude_existing: 'true', // 排除已存在于 seed_parameters 表的种子
       only_completed: 'true', // 只返回下载进度达到100%的种子
       include_metadata: 'false',
@@ -837,6 +895,8 @@ const clearFilters = () => {
     states: [],
     downloaderIds: [],
     sourceSiteAvailability: [],
+    existSiteNames: [],
+    notExistSiteNames: [],
   }
   nameSearch.value = ''
   currentPage.value = 1
@@ -896,6 +956,8 @@ const loadFiltersFromConfig = async () => {
         states: [] as string[],
         downloaderIds: [] as string[],
         sourceSiteAvailability: [] as string[],
+        existSiteNames: [] as string[],
+        notExistSiteNames: [] as string[],
       }
       activeFilters.value = { ...defaultFilters, ...result.data }
     }
@@ -963,6 +1025,8 @@ const loadPrioritySettings = async () => {
     const configResponse = await axios.get('/api/config/source_priority')
     const configResult = configResponse.data
     const savedPriority = configResult.success ? configResult.data || [] : []
+    const savedExcluded = configResult.success ? configResult.excludedSites || [] : []
+    excludedSites.value = savedExcluded
 
     // 构建有序的站点列表：首先按保存的优先级排序，然后添加其他站点
     const orderedSites: SiteStatus[] = []
@@ -999,6 +1063,7 @@ const savePrioritySettings = async () => {
 
     const response = await axios.post('/api/config/source_priority', {
       source_priority: sourcePriority,
+      excludedSites: excludedSites.value,
     })
 
     if (response.data.success) {
@@ -1050,6 +1115,7 @@ const startBatchFetch = async () => {
 
     const response = await axios.post('/api/migrate/batch_fetch_seed_data', {
       torrentNames,
+      excludedSites: excludedSites.value,
     })
 
     const result = response.data

@@ -97,6 +97,7 @@ func TestRunBatchFetchUsesRealSiteID(t *testing.T) {
 	RunBatchFetch(
 		[]string{"Carrie.S01.2160p.AMZN.WEB-DL.DDP.5.1.Atmos.HDR10+.H.265-CHDWEB"},
 		[]string{"彩虹岛"},
+		nil,
 		rows,
 		BatchFetchRunnerDeps{
 			FetchAndStore: func(payload map[string]any) (map[string]any, int) {
@@ -128,7 +129,7 @@ func TestSelectSourceByPriorityUsesSiteIDs(t *testing.T) {
 			},
 		},
 	}
-	site, torrentID, matched := selectSourceByPriority(entries, []string{"彩虹岛"})
+	site, torrentID, matched := selectSourceByPriority(entries, []string{"彩虹岛"}, nil)
 	if !matched {
 		t.Fatalf("expected match")
 	}
@@ -145,7 +146,7 @@ func TestSelectSourceByPrioritySkipsUnknownIDs(t *testing.T) {
 			"details": "",
 		},
 	}
-	if _, _, matched := selectSourceByPriority(entries, []string{"彩虹岛"}); matched {
+	if _, _, matched := selectSourceByPriority(entries, []string{"彩虹岛"}, nil); matched {
 		t.Fatalf("expected no match when no usable id is available")
 	}
 }
@@ -168,6 +169,7 @@ func TestRunBatchFetchInfohashResolvesBySearch(t *testing.T) {
 	RunBatchFetch(
 		[]string{"Carrie.S01.2160p.AMZN.WEB-DL.DDP.5.1.Atmos.HDR10+.H.265-CHDWEB"},
 		[]string{"彩虹岛"},
+		nil,
 		rows,
 		BatchFetchRunnerDeps{
 			FetchAndStore: func(payload map[string]any) (map[string]any, int) {
@@ -200,7 +202,7 @@ func TestSelectSourceByPriorityHandlesMultiSiteRow(t *testing.T) {
 			},
 		},
 	}
-	site, torrentID, matched := selectSourceByPriority(entries, []string{"彩虹岛"})
+	site, torrentID, matched := selectSourceByPriority(entries, []string{"彩虹岛"}, nil)
 	if !matched {
 		t.Fatalf("expected match for 彩虹岛 in multi-site row")
 	}

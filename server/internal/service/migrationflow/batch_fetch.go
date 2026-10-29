@@ -8,7 +8,7 @@ import (
 	processingshared "github.com/pt-nexus/server/internal/service/processing/shared"
 )
 
-func (s *MigrateService) StartBatchFetch(torrentNames []string, sourcePriority []string) (map[string]any, int) {
+func (s *MigrateService) StartBatchFetch(torrentNames []string, sourcePriority []string, excludedSites []string) (map[string]any, int) {
 	if len(torrentNames) == 0 {
 		return map[string]any{"success": false, "message": "错误：种子名称列表不能为空"}, 400
 	}
@@ -19,15 +19,20 @@ func (s *MigrateService) StartBatchFetch(torrentNames []string, sourcePriority [
 	if len(sourcePriority) == 0 {
 		return map[string]any{"success": false, "message": "错误：请先在设置中配置源站点优先级"}, 400
 	}
+	// 未显式传入屏蔽列表时，回退到配置中的 source_priority_excluded
+	if len(excludedSites) == 0 {
+		configured := s.cfg.Get()
+		excludedSites = processingshared.ToStringSlice(configured["source_priority_excluded"])
+	}
 	taskID := s.newID("fetch")
 	s.batchFetchState.Start(taskID, len(torrentNames))
 	// 逐条落库，使重启后可以只重跑未完成的部分（抓取本身可重复执行，覆盖即可）。
-	s.taskRunStart(taskID, repository.TaskRunKindBatchFetch, taskRunJSON(map[string]any{"source_priority": sourcePriority}), 1, torrentNames)
-	go s.runBatchFetch(taskID, torrentNames, sourcePriority)
+	s.taskRunStart(taskID, repository.TaskRunKindBatchFetch, taskRunJSON(map[string]any{"source_priority": sourcePriority, "excluded_sites": excludedSites}), 1, torrentNames)
+	go s.runBatchFetch(taskID, torrentNames, sourcePriority, excludedSites)
 	return map[string]any{"success": true, "task_id": taskID, "message": "批量获取任务已启动"}, 200
 }
 
-func (s *MigrateService) runBatchFetch(taskID string, torrentNames []string, sourcePriority []string) {
+func (s *MigrateService) runBatchFetch(taskID string, torrentNames []string, sourcePriority []string, excludedSites []string) {
 	rows, err := s.repo.ListTorrentsByNames(torrentNames)
 	if err != nil {
 		for _, name := range torrentNames {
@@ -44,7 +49,7 @@ func (s *MigrateService) runBatchFetch(taskID string, torrentNames []string, sou
 		return
 	}
 
-	acquirefetch.RunBatchFetch(torrentNames, sourcePriority, rows, acquirefetch.BatchFetchRunnerDeps{
+	acquirefetch.RunBatchFetch(torrentNames, sourcePriority, excludedSites, rows, acquirefetch.BatchFetchRunnerDeps{
 		FetchAndStore: s.FetchAndStore,
 		OnResult: func(success bool, result map[string]any) {
 			s.batchFetchState.MarkResult(taskID, success, result)

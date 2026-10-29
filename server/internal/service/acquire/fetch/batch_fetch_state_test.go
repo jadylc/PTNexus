@@ -57,7 +57,7 @@ func TestRunBatchFetchStopsOnCancel(t *testing.T) {
 	emitted := 0
 	visited := 0
 
-	RunBatchFetch(names, []string{"hdsky"}, nil, BatchFetchRunnerDeps{
+	RunBatchFetch(names, []string{"hdsky"}, nil, nil, BatchFetchRunnerDeps{
 		OnResult: func(bool, map[string]any) { emitted++ },
 		Sleep:    func(time.Duration) {},
 		ShouldCancel: func() bool {

@@ -16,7 +16,11 @@ func NewConfigHandler(settings *service.SettingsService) *ConfigHandler {
 }
 
 func (h *ConfigHandler) GetSourcePriority(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": h.settings.GetSourcePriority()})
+	c.JSON(http.StatusOK, gin.H{
+		"success":       true,
+		"data":          h.settings.GetSourcePriority(),
+		"excludedSites": h.settings.GetSourcePriorityExcluded(),
+	})
 }
 
 func (h *ConfigHandler) SaveSourcePriority(c *gin.Context) {
@@ -37,6 +41,13 @@ func (h *ConfigHandler) SaveSourcePriority(c *gin.Context) {
 	if err := h.settings.SaveSourcePriority(rawPriority); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
 		return
+	}
+	// 兼容同时提交 excludedSites（屏蔽源站点）的前端
+	if raw, exists := payload["excludedSites"]; exists {
+		parsed, ok := raw.([]any)
+		if ok {
+			_ = h.settings.SaveSourcePriorityExcluded(parsed)
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "源站点优先级配置已保存"})
 }

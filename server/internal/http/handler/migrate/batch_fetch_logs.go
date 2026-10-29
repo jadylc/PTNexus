@@ -12,12 +12,13 @@ func (h *Handler) BatchFetchSeedData(c *gin.Context) {
 	payload := struct {
 		TorrentNames   []string `json:"torrentNames"`
 		SourcePriority []string `json:"sourcePriority"`
+		ExcludedSites  []string `json:"excludedSites"`
 	}{}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "请求体格式错误"})
 		return
 	}
-	result, status := h.service.StartBatchFetch(payload.TorrentNames, payload.SourcePriority)
+	result, status := h.service.StartBatchFetch(payload.TorrentNames, payload.SourcePriority, payload.ExcludedSites)
 	c.JSON(status, result)
 }
 

@@ -83,6 +83,22 @@ func (s *SettingsService) SaveSourcePriority(items []any) error {
 	return s.cfg.Save(cfg)
 }
 
+func (s *SettingsService) GetSourcePriorityExcluded() []any {
+	cfg := s.cfg.Get()
+	return toSlice(cfg["source_priority_excluded"])
+}
+
+func (s *SettingsService) SaveSourcePriorityExcluded(items []any) error {
+	for _, item := range items {
+		if _, ok := item.(string); !ok {
+			return fmt.Errorf("屏蔽源站点数组中的元素必须是字符串")
+		}
+	}
+	cfg := s.cfg.Get()
+	cfg["source_priority_excluded"] = items
+	return s.cfg.Save(cfg)
+}
+
 func (s *SettingsService) GetBatchFetchFilters() map[string]any {
 	defaults := map[string]any{"paths": []any{}, "states": []any{}, "downloaderIds": []any{}}
 	cfg := s.cfg.Get()
