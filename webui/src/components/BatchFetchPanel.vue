@@ -211,24 +211,24 @@
 
           <el-divider content-position="left">源站点过滤</el-divider>
           <p style="font-size: 12px; color: #909399; margin: 4px 0 8px">
-            勾选要包含/排除的具体源站点（基于种子已有站点数据）
+            勾选要包含/排除的具体源站点（仅显示当前支持的源站点）
           </p>
           <el-checkbox-group v-model="tempFilters.existSiteNames">
             <el-checkbox
-              v-for="site in siteStatuses"
+              v-for="site in supportedSiteStatuses"
               :key="'exist-' + site.name"
               :label="site.name"
             >
-              必须存在: {{ site.name }}
+              {{ site.name }}
             </el-checkbox>
           </el-checkbox-group>
           <el-checkbox-group v-model="tempFilters.notExistSiteNames" style="margin-top: 8px">
             <el-checkbox
-              v-for="site in siteStatuses"
+              v-for="site in supportedSiteStatuses"
               :key="'not-' + site.name"
               :label="site.name"
             >
-              必须排除: {{ site.name }}
+              {{ site.name }}
             </el-checkbox>
           </el-checkbox-group>
 
@@ -302,7 +302,7 @@
             <p style="color: #606266; font-size: 14px; margin-bottom: 10px; font-weight: 600">
               源站点优先级顺序：
             </p>
-            <div class="priority-list" v-loading="priorityLoading">
+            <div class="priority-list" v-loading="priorityLoading" @dragover.prevent @drop="handlePriorityContainerDrop">
               <el-tag
                 v-for="(site, index) in sourceSitesOrder"
                 :key="site.name"
@@ -326,23 +326,33 @@
             </div>
           </div>
 
-          <el-divider content-position="left">屏蔽源站点</el-divider>
+          <el-divider content-position="left">禁用区域</el-divider>
           <el-alert type="warning" show-icon :closable="false" style="margin-bottom: 12px">
             <template #title>
-              勾选的站点将被排除，不参与批量获取（优先级列表中也会自动跳过）
+              将优先级队列中的站点拖到此处即可禁用，不参与批量获取；拖回上方可恢复
             </template>
           </el-alert>
-          <el-checkbox-group v-model="excludedSites">
-            <el-checkbox
-              v-for="site in siteStatuses"
+          <div
+            class="excluded-zone"
+            @dragover.prevent
+            @drop="handleDropToExcluded"
+          >
+            <el-tag
+              v-for="(site, index) in excludedSiteList"
               :key="'excluded-' + site.name"
-              :label="site.name"
+              type="danger"
+              size="large"
+              draggable="true"
+              @dragstart="handleExcludedDragStart(index)"
+              @dragover.prevent
+              @drop="handleDropFromExcluded(index)"
+              style="margin: 5px; cursor: move; user-select: none"
             >
               {{ site.name }}
-            </el-checkbox>
-          </el-checkbox-group>
-          <div v-if="excludedSites.length > 0" style="margin-top: 8px; font-size: 12px; color: #909399">
-            已屏蔽 {{ excludedSites.length }} 个源站点
+            </el-tag>
+            <span v-if="excludedSiteList.length === 0" style="color: #909399; margin-left: 10px">
+              暂无禁用站点（从上方拖拽到此处可禁用）
+            </span>
           </div>
         </div>
         <div class="priority-settings-footer">
@@ -698,6 +708,11 @@ const hasActiveFilters = computed(() => {
 })
 
 const siteStatuses = ref<SiteStatus[]>([])
+
+// 仅显示当前支持的源站点（有 cookie 且为源站点）
+const supportedSiteStatuses = computed(() =>
+  siteStatuses.value.filter((s) => s.is_source && s.has_cookie),
+)
 
 const loadSiteStatuses = async () => {
   try {
@@ -1098,6 +1113,50 @@ const handleDrop = (dropIndex: number) => {
   sourceSitesOrder.value.splice(dropIndex, 0, draggedItem)
 
   draggedIndex.value = null
+}
+
+// 禁用区域拖拽逻辑
+const excludedDragIndex = ref<number | null>(null)
+
+// excludedSiteList：从 excludedSites 名称列表还原 SiteStatus 对象列表
+const excludedSiteList = computed(() =>
+  excludedSites.value
+    .map((name) => siteStatuses.value.find((s) => s.name === name))
+    .filter((s): s is SiteStatus => s !== undefined),
+)
+
+// 优先级队列容器 drop：从禁用区域拖回时插入到末尾
+const handlePriorityContainerDrop = () => {
+  if (excludedDragIndex.value === null) return
+  const excludedItem = excludedSiteList.value[excludedDragIndex.value]
+  if (excludedItem) {
+    excludedSites.value = excludedSites.value.filter((n) => n !== excludedItem.name)
+    sourceSitesOrder.value.push(excludedItem)
+  }
+  excludedDragIndex.value = null
+}
+
+// 禁用区域容器 drop：从优先级队列拖入时禁用
+const handleDropToExcluded = () => {
+  if (draggedIndex.value === null) return
+  const draggedItem = sourceSitesOrder.value[draggedIndex.value]
+  sourceSitesOrder.value.splice(draggedIndex.value, 1)
+  excludedSites.value.push(draggedItem.name)
+  draggedIndex.value = null
+}
+
+// 禁用区域内标签拖拽开始（用于拖回优先级队列）
+const handleExcludedDragStart = (index: number) => {
+  excludedDragIndex.value = index
+}
+
+// 禁用区域内标签 drop（拖到另一个禁用标签位置 = 仅重排）
+const handleDropFromExcluded = (dropIndex: number) => {
+  if (excludedDragIndex.value === null || excludedDragIndex.value === dropIndex) return
+  const draggedName = excludedSites.value[excludedDragIndex.value]
+  excludedSites.value.splice(excludedDragIndex.value, 1)
+  excludedSites.value.splice(dropIndex, 0, draggedName)
+  excludedDragIndex.value = null
 }
 
 const startBatchFetch = async () => {
@@ -1564,6 +1623,14 @@ watch(nameSearch, () => {
 .priority-list:hover {
   border-color: #409eff;
   background-color: #ecf5ff;
+}
+
+.excluded-zone {
+  min-height: 60px;
+  padding: 10px;
+  border: 2px dashed #f56c6c;
+  border-radius: 6px;
+  background-color: #fef0f0;
 }
 
 .available-sites {
