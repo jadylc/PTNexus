@@ -203,9 +203,9 @@
             />
           </div>
 
-          <el-divider content-position="left">源站点过滤</el-divider>
+          <el-divider content-position="left">源站点过滤（白名单）</el-divider>
           <p style="font-size: 12px; color: #909399; margin: 4px 0 8px">
-            白名单（必须存在）：只显示在该站点有数据的种子
+            勾选要包含的源站点：只显示在该站点有数据的种子
           </p>
           <el-checkbox-group v-model="tempFilters.existSiteNames">
             <el-checkbox
@@ -217,17 +217,8 @@
             </el-checkbox>
           </el-checkbox-group>
           <p style="font-size: 12px; color: #909399; margin: 8px 0 4px">
-            黑名单（必须排除）：隐藏在该站点有数据的种子
+            黑名单（禁用站点）在「设置优先级」弹窗中配置
           </p>
-          <el-checkbox-group v-model="tempFilters.notExistSiteNames">
-            <el-checkbox
-              v-for="site in supportedSiteStatuses"
-              :key="'not-' + site.name"
-              :label="site.name"
-            >
-              {{ site.name }}
-            </el-checkbox>
-          </el-checkbox-group>
 
           <el-divider content-position="left">状态</el-divider>
           <el-checkbox-group v-model="tempFilters.states">
@@ -593,7 +584,6 @@ const activeFilters = ref({
   downloaderIds: [] as string[],
   sourceSiteAvailability: [] as string[],
   existSiteNames: [] as string[],
-  notExistSiteNames: [] as string[],
 })
 const tempFilters = ref({ ...activeFilters.value })
 
@@ -670,11 +660,7 @@ const currentFilterText = computed(() => {
   }
 
   if (filters.existSiteNames && filters.existSiteNames.length > 0) {
-    filterTexts.push(`必须存在: ${filters.existSiteNames.length}`)
-  }
-
-  if (filters.notExistSiteNames && filters.notExistSiteNames.length > 0) {
-    filterTexts.push(`必须排除: ${filters.notExistSiteNames.length}`)
+    filterTexts.push(`白名单: ${filters.existSiteNames.length}`)
   }
 
   if (filters.paths && filters.paths.length > 0) {
@@ -699,8 +685,7 @@ const hasActiveFilters = computed(() => {
     (filters.paths && filters.paths.length > 0) ||
     (filters.states && filters.states.length > 0) ||
     (filters.downloaderIds && filters.downloaderIds.length > 0) ||
-    (filters.existSiteNames && filters.existSiteNames.length > 0) ||
-    (filters.notExistSiteNames && filters.notExistSiteNames.length > 0)
+    (filters.existSiteNames && filters.existSiteNames.length > 0)
   )
 })
 
@@ -774,7 +759,6 @@ const fetchData = async () => {
       downloader_filters: JSON.stringify(activeFilters.value.downloaderIds),
       source_availability_filters: JSON.stringify(activeFilters.value.sourceSiteAvailability),
       existSiteNames: JSON.stringify(activeFilters.value.existSiteNames),
-      notExistSiteNames: JSON.stringify(activeFilters.value.notExistSiteNames),
       exclude_existing: 'true', // 排除已存在于 seed_parameters 表的种子
       only_completed: 'true', // 只返回下载进度达到100%的种子
       include_metadata: 'false',
@@ -797,7 +781,7 @@ const fetchData = async () => {
         downloader_ids?: string[]
       }
       const items: TorrentApiItem[] = Array.isArray(result.data) ? (result.data as TorrentApiItem[]) : []
-      tableData.value = items.map((item) => ({
+      const mapped: Torrent[] = items.map((item) => ({
         name: item.name,
         save_path: item.save_path,
         size: item.size,
@@ -806,7 +790,9 @@ const fetchData = async () => {
         sites: item.sites || {},
         downloader_ids: item.downloader_ids || [],
       }))
-      total.value = result.total
+      // 过滤掉所有站点都被禁用的种子（优先级弹窗中禁用了全部站点）
+      tableData.value = mapped.filter((t) => hasAnyUsableSite(t.sites))
+      total.value = tableData.value.length
 
       // 兼容旧接口：metadata-only 请求失败或旧版本后端未返回状态时，从当前页兜底提取。
       if (uniqueStates.value.length === 0 && !activeFilters.value.states.length) {
@@ -908,7 +894,6 @@ const clearFilters = () => {
     downloaderIds: [],
     sourceSiteAvailability: [],
     existSiteNames: [],
-    notExistSiteNames: [],
   }
   nameSearch.value = ''
   currentPage.value = 1
@@ -969,7 +954,6 @@ const loadFiltersFromConfig = async () => {
         downloaderIds: [] as string[],
         sourceSiteAvailability: [] as string[],
         existSiteNames: [] as string[],
-        notExistSiteNames: [] as string[],
       }
       activeFilters.value = { ...defaultFilters, ...result.data }
     }
@@ -989,9 +973,14 @@ const handleSelectionChange = (selection: Torrent[]) => {
   selectedRows.value = selection
 }
 
+// getSourceSites：过滤出可用的源站点（有 cookie + migration 1/3），
+// 同时排除已在优先级弹窗中禁用的站点（列表中不展示禁用站点的标签）
 const getSourceSites = (sites: Record<string, SiteData>) => {
   const sourceSites: Record<string, SiteData> = {}
   for (const [siteName, siteData] of Object.entries(sites || {})) {
+    if (excludedSites.value.includes(siteName)) {
+      continue
+    }
     if (
       (siteData.migration === 1 || siteData.migration === 3) &&
       siteStatuses.value.find((s) => s.name === siteName)?.has_cookie
@@ -1000,6 +989,13 @@ const getSourceSites = (sites: Record<string, SiteData>) => {
     }
   }
   return sourceSites
+}
+
+// hasAnyUsableSite：判断种子是否还有至少一个未被禁用的可用源站点
+// 所有站点都被禁用时返回 false（种子从列表隐藏）
+const hasAnyUsableSite = (sites: Record<string, SiteData>) => {
+  const sourceSites = getSourceSites(sites)
+  return Object.keys(sourceSites).length > 0
 }
 
 const openBatchFetchDialog = () => {
