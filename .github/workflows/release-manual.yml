@@ -70,7 +70,7 @@ jobs:
             echo "GITEE_TOKEN 未配置，跳过同步"
             exit 0
           fi
-          git remote add gitee https://oauth2:${GITEE_TOKEN}@gitee.com/jadylc/PTNexus.git 2>/dev/null || true
+          git remote set-url gitee https://oauth2:${GITEE_TOKEN}@gitee.com/jadylc/PTNexus.git 2>/dev/null || git remote add gitee https://oauth2:${GITEE_TOKEN}@gitee.com/jadylc/PTNexus.git
           git push gitee HEAD:go --force
           git push gitee --tags --force
 
