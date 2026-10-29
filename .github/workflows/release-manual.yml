@@ -871,7 +871,6 @@ jobs:
   release_assets:
     needs:
       - meta
-      - sync_to_gitee
       - runtime
       - desktop_windows
       - proxy
@@ -880,7 +879,6 @@ jobs:
         always() &&
         needs.meta.outputs.run_release_assets == 'true' &&
         needs.meta.result == 'success' &&
-        (needs.sync_to_gitee.result == 'success' || needs.sync_to_gitee.result == 'skipped') &&
         (needs.runtime.result == 'success' || needs.runtime.result == 'skipped') &&
         (needs.desktop_windows.result == 'success' || needs.desktop_windows.result == 'skipped') &&
         (needs.proxy.result == 'success' || needs.proxy.result == 'skipped')
