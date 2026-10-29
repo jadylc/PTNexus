@@ -1376,7 +1376,8 @@ watch(nameSearch, () => {
 :deep(.filter-card .el-card__body) {
   padding: 0;
   flex: 1;
-  overflow-y: auto;
+  /* 滚动交给 .filter-card-body，避免与卡片体形成双滚动条 */
+  overflow: hidden;
 }
 
 .filter-card-body {
@@ -1401,8 +1402,10 @@ watch(nameSearch, () => {
 }
 
 .batch-fetch-card {
+  /* 明确宽度：此前只有 max-width，窄屏下卡片被内容压缩，种子表格最后一列被挤出可视区 */
+  width: 90vw;
+  max-width: 1280px;
   padding: 10px;
-  max-width: 95vw;
   max-height: 90vh;
   display: flex;
   flex-direction: column;
@@ -1411,7 +1414,8 @@ watch(nameSearch, () => {
 :deep(.batch-fetch-card .el-card__body) {
   padding: 20px;
   flex: 1;
-  overflow-y: auto;
+  /* 滚动只交给内层 .batch-fetch-content：两层都设 overflow 会出现双滚动条 */
+  overflow: hidden;
   display: flex;
   flex-direction: column;
 }
@@ -1515,7 +1519,8 @@ watch(nameSearch, () => {
 
 :deep(.progress-card .el-card__body) {
   flex: 1;
-  overflow-y: auto;
+  /* 滚动交给 .progress-content，避免与卡片体形成双滚动条 */
+  overflow: hidden;
   display: flex;
   flex-direction: column;
 }
@@ -1547,6 +1552,14 @@ watch(nameSearch, () => {
 }
 
 @media (max-width: 768px) {
+  /* 窄屏：卡片占满可视宽度；表格保持横向滚动以免列被压缩 */
+  .batch-fetch-card,
+  .progress-card,
+  .filter-card {
+    width: 100%;
+    max-width: 100vw;
+  }
+
   .search-and-controls {
     gap: 10px;
   }
