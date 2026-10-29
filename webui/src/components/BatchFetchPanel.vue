@@ -203,15 +203,9 @@
             />
           </div>
 
-          <el-divider content-position="left">源站点</el-divider>
-          <el-checkbox-group v-model="tempFilters.sourceSiteAvailability">
-            <el-checkbox label="存在源站点">存在源站点</el-checkbox>
-            <el-checkbox label="无可用源站点">无可用源站点</el-checkbox>
-          </el-checkbox-group>
-
           <el-divider content-position="left">源站点过滤</el-divider>
           <p style="font-size: 12px; color: #909399; margin: 4px 0 8px">
-            勾选要包含/排除的具体源站点（仅显示当前支持的源站点）
+            白名单（必须存在）：只显示在该站点有数据的种子
           </p>
           <el-checkbox-group v-model="tempFilters.existSiteNames">
             <el-checkbox
@@ -222,7 +216,10 @@
               {{ site.name }}
             </el-checkbox>
           </el-checkbox-group>
-          <el-checkbox-group v-model="tempFilters.notExistSiteNames" style="margin-top: 8px">
+          <p style="font-size: 12px; color: #909399; margin: 8px 0 4px">
+            黑名单（必须排除）：隐藏在该站点有数据的种子
+          </p>
+          <el-checkbox-group v-model="tempFilters.notExistSiteNames">
             <el-checkbox
               v-for="site in supportedSiteStatuses"
               :key="'not-' + site.name"
@@ -1029,9 +1026,10 @@ const closePrioritySettingsDialog = () => {
 const loadPrioritySettings = async () => {
   priorityLoading.value = true
   try {
-    // 加载所有源站点状态
+    // 加载所有源站点状态（同步写入 siteStatuses，供 excludedSiteList 计算属性使用）
     const sitesResponse = await axios.get('/api/sites/status')
     const allSites = sitesResponse.data
+    siteStatuses.value = allSites
 
     // 过滤出有 cookie 的源站点
     const availableSites = allSites.filter((s: SiteStatus) => s.is_source && s.has_cookie)
