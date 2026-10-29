@@ -91,7 +91,29 @@ func resolveTorrentIDBySearch(baseURL, cookie, passkey, torrentName, expectedHas
 		logx.Warnf(sourceDownloadLogModule, "按infohash验证候选未命中 err=%v", verifyErr)
 	}
 
-	return "", fmt.Errorf("搜索命中 %d 个候选且无法唯一定位（精确名称匹配与 infohash 验证均未命中）", len(candidates))
+	return "", fmt.Errorf("搜索命中 %d 个候选且无法唯一定位（精确名称匹配与 infohash 验证均未命中；候选预览: %s）", len(candidates), candidatePreview(candidates))
+}
+
+// candidatePreview 生成候选列表的简短预览（最多前 3 个，用于错误诊断）。
+// 参数/返回：candidates 为候选列表；返回形如 "#593793(名称…)" 的预览文本。
+// 失败场景：不适用。
+// 副作用：无。
+func candidatePreview(candidates []searchCandidate) string {
+	preview := make([]string, 0, 3)
+	for i, candidate := range candidates {
+		if i >= 3 {
+			break
+		}
+		label := candidate.title
+		if label == "" {
+			label = candidate.text
+		}
+		if len(label) > 24 {
+			label = label[:24] + "…"
+		}
+		preview = append(preview, fmt.Sprintf("#%s(%s)", candidate.id, label))
+	}
+	return strings.Join(preview, ", ")
 }
 
 // collectSearchCandidates 从搜索结果页解析候选行（按 id 去重，保留首个出现的 title/文本）。
@@ -139,7 +161,9 @@ func normalizeSearchName(raw string) string {
 // 参数/返回：baseURL 为站点根地址；cookie 为登录态；passkey 为下载密钥；
 // ids 为候选数字 ID 列表；expectedHash 为期望 infohash；返回命中的候选 ID。
 // 失败场景：所有候选下载/解析失败或均不匹配时返回 error。
-// 副作用：对每个候选发起一次种子文件下载请求（上限 8 个）。
+// 副作用：对每个候选发起一次种子文件下载请求（上限 24 个，避免无界）。
+// 说明：候选种子文件很小，逐个验证是准确定位的最可靠手段——上限过低会造成
+// 命中种子排在后面时被漏判（曾出现 13 个候选只验证前 8 个的假阴性）。
 func verifyCandidatesByInfohash(baseURL, cookie, passkey string, ids []string, expectedHash string) (string, error) {
 	expected := strings.ToLower(strings.TrimSpace(expectedHash))
 	if expected == "" {
@@ -149,13 +173,14 @@ func verifyCandidatesByInfohash(baseURL, cookie, passkey string, ids []string, e
 		return "", fmt.Errorf("没有可验证的候选")
 	}
 
-	const maxVerify = 8
-	if len(ids) > maxVerify {
-		ids = ids[:maxVerify]
+	const maxVerify = 24
+	verified := ids
+	if len(verified) > maxVerify {
+		verified = verified[:maxVerify]
 	}
 
 	trimmedPasskey := strings.TrimSpace(passkey)
-	for _, id := range ids {
+	for _, id := range verified {
 		id = strings.TrimSpace(id)
 		if id == "" {
 			continue
