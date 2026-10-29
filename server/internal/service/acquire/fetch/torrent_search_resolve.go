@@ -37,11 +37,18 @@ type searchCandidate struct {
 // 失败场景：缺少 base_url/种子名、搜索请求失败（含 Cloudflare 挑战）、结果为空、
 // 无法唯一匹配且逐候选验证未命中时返回 error。
 // 副作用：发起一次 torrents.php 搜索请求；精确匹配失败且候选有限时逐个下载候选种子验证。
-// 说明：IYUU 对部分站点（如彩虹岛/CHDBits、我堡/OurBits）返回的 torrent_id 是 infohash，
-// 拼出的 details.php?id=<hash> 并非有效详情页。定位策略分三级：
+// 说明：IYUU 对部分站点（如彩虹岛/CHDBits、我堡/OurBits、家园/HDHome）返回的
+// torrent_id 是 infohash，拼出的 details.php?id=<hash> 并非有效详情页。
+// 定位策略分三级：
 //  1. 精确匹配：候选的 title 属性或链接文本与种子名一致；
 //  2. 唯一候选：搜索只返回一条时直接采用；
 //  3. infohash 验证：逐个下载候选种子文件并计算 infohash，与期望值一致者即为目标。
+//
+// 搜索词形态（家园 HDHome 实测）：下载器种子名是"中文资源名.年份.分辨率.语言.字幕￡组名"
+// 的点号分隔串，而站点标题是"英文名 年份 媒介 编码-组名"的空格分隔串（中文名在副标题）。
+// 整串搜索必然落空。故搜索词拆成空格分隔多词（NexusPHP 空格=AND 分词，与用户手动
+// 搜索"千钧一发 CMCT"的行为一致）；多词 AND 仍无结果时从尾部逐词缩减重试
+// （剔除发布者这类标题中不存在的词）；最后回退整串（兼容标题与种子名一致的站点）。
 func resolveTorrentIDBySearch(baseURL, cookie, passkey, torrentName, expectedHash string) (string, error) {
 	normalizedBase := normalizeSiteBaseURL(baseURL)
 	if strings.TrimSpace(normalizedBase) == "" {
@@ -52,29 +59,62 @@ func resolveTorrentIDBySearch(baseURL, cookie, passkey, torrentName, expectedHas
 		return "", fmt.Errorf("缺少用于搜索的种子名")
 	}
 
-	query := neturl.Values{}
-	query.Set("search", name)
-	query.Set("search_area", "0")
-	query.Set("search_mode", "0")
-	query.Set("incldead", "1")
-	searchURL := strings.TrimRight(normalizedBase, "/") + "/torrents.php?" + query.Encode()
+	terms := searchTerms(name)
 
-	// 搜索词进日志（URL 的 query 会被脱敏），便于诊断"所有种子都返回同样候选"这类系统性问题。
-	logx.Infof(sourceDownloadLogModule, "按名称搜索定位站点种子ID search_url=%s search_name=%s", redactURLQuery(searchURL), truncateForLog(name, 80))
-	// fetchPageWithCookie 内部走 fetchBinarySmart：命中 CF 挑战会经 FlareSolverr 求解，
-	// 求解得到的 Cookie/UA 在本轮搜索内已由重试逻辑使用。
-	html, err := fetchPageWithCookie(searchURL, cookie, 45*time.Second)
+	// 按给定词集合执行一次搜索并解析候选。
+	searchByTerms := func(wordList []string) ([]searchCandidate, error) {
+		if len(wordList) == 0 {
+			return nil, nil
+		}
+		query := neturl.Values{}
+		query.Set("search", strings.Join(wordList, " "))
+		query.Set("search_area", "0")
+		query.Set("search_mode", "0")
+		query.Set("incldead", "1")
+		searchURL := strings.TrimRight(normalizedBase, "/") + "/torrents.php?" + query.Encode()
+		// fetchPageWithCookie 内部走 fetchBinarySmart：命中 CF 挑战会经 FlareSolverr 求解，
+		// 求解得到的 Cookie/UA 在本轮搜索内已由重试逻辑使用。
+		pageHTML, err := fetchPageWithCookie(searchURL, cookie, 45*time.Second)
+		if err != nil {
+			return nil, fmt.Errorf("搜索请求失败: %w", err)
+		}
+		candidates := collectSearchCandidates(pageHTML)
+		logx.Infof(sourceDownloadLogModule, "按名称搜索定位站点种子ID 词数=%d 词集=%s 候选=%d", len(wordList), truncateForLog(strings.Join(wordList, " "), 80), len(candidates))
+		if len(candidates) == 0 {
+			// 候选为空时必须知道拿到的是什么页面：登录页（cookie 失效）/ CF 挑战页 /
+			// 搜索词确实无结果三种情况的处理完全不同，此处打印页面特征。
+			logx.Warnf(sourceDownloadLogModule, "搜索候选为空，页面特征: %s", describeSearchPage(pageHTML))
+		}
+		return candidates, nil
+	}
+
+	candidates, err := searchByTerms(terms)
 	if err != nil {
-		return "", fmt.Errorf("搜索请求失败: %w", err)
+		return "", err
 	}
-	// 记录页面回显的搜索词（NexusPHP 搜索结果页通常回显）：确认搜索词真的生效，
-	// 而不是拿到了默认列表/侧栏。找不到回显时提示，供日志判别。
-	if echoed := extractSearchEcho(html); echoed != "" {
-		logx.Debugf(sourceDownloadLogModule, "搜索页回显关键词 echo=%s", truncateForLog(echoed, 80))
+	if len(candidates) == 0 {
+		// 逐词尾部缩减重试：最末词常是发布者/组名后缀（标题中不存在），
+		// 缩减到能命中为止（如 呆呆 移除后 6 词即命中家园案例）。
+		for shrink := len(terms) - 1; shrink >= 1; shrink-- {
+			trimmed := terms[:shrink]
+			logx.Warnf(sourceDownloadLogModule, "分词搜索无结果，缩减为 %d 词重试: %s", shrink, truncateForLog(strings.Join(trimmed, " "), 80))
+			candidates, err = searchByTerms(trimmed)
+			if err != nil {
+				return "", err
+			}
+			if len(candidates) > 0 {
+				break
+			}
+		}
 	}
-
-	candidates := collectSearchCandidates(html)
-	logx.Infof(sourceDownloadLogModule, "搜索候选解析完成 candidate_count=%d preview=%s", len(candidates), candidatePreview(candidates))
+	if len(candidates) == 0 {
+		// 整串回退：兼容站点标题与下载器种子名一致的站点（历史行为）。
+		logx.Warnf(sourceDownloadLogModule, "分词搜索均无结果，回退整串搜索")
+		candidates, err = searchByTerms([]string{name})
+		if err != nil {
+			return "", err
+		}
+	}
 	if len(candidates) == 0 {
 		return "", fmt.Errorf("搜索结果为空")
 	}
@@ -106,6 +146,8 @@ func resolveTorrentIDBySearch(baseURL, cookie, passkey, torrentName, expectedHas
 	return "", fmt.Errorf("搜索命中 %d 个候选且无法唯一定位（精确名称匹配与 infohash 验证均未命中；候选预览: %s）", len(candidates), candidatePreview(candidates))
 }
 
+// reTermSep 种子名拆词分隔符：点号/连字符/下划线/空白/全角货币符与常见标点。
+
 // reSearchEchoInput 匹配搜索结果页回显的搜索关键词输入框（NexusPHP 标准结构）。
 var reSearchEchoInput = regexp.MustCompile(`(?is)<input[^>]*name=["']search["'][^>]*value=["']([^"']*)["']`)
 
@@ -131,6 +173,65 @@ func truncateForLog(text string, limit int) string {
 	}
 	runes := []rune(trimmed)
 	return string(runes[:limit]) + "…"
+}
+
+// rePageTitleSnippet 匹配页面 <title>（诊断用）。
+var rePageTitleSnippet = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
+
+// describeSearchPage 生成搜索结果页的诊断特征描述（用于候选为空时的日志判别）。
+// 参数/返回：html 为搜索页内容；返回形如 "CF挑战页(title=...)" 的特征文本。
+// 失败场景：不适用。
+// 副作用：无。
+// 说明：候选为空时最需要区分——拿到登录页（cookie 失效）、CF 挑战页（防护拦截）
+// 还是搜索真的无结果（种子名与站点发布名差异）。三类的处理完全不同。
+func describeSearchPage(html string) string {
+	lower := strings.ToLower(html)
+	title := ""
+	if match := rePageTitleSnippet.FindStringSubmatch(html); len(match) >= 2 {
+		title = strings.TrimSpace(match[1])
+		if len([]rune(title)) > 60 {
+			title = string([]rune(title)[:60]) + "…"
+		}
+	}
+
+	switch {
+	case strings.Contains(lower, "just a moment") || strings.Contains(lower, "cf-chl") || strings.Contains(lower, "challenge_platform"):
+		return "疑似Cloudflare挑战页"
+	case strings.Contains(lower, "challenge_external_return") || strings.Contains(lower, "_cf_chl"):
+		return "疑似Cloudflare挑战页(external)"
+	case strings.Contains(lower, "logout.php") && strings.Contains(lower, "userdetails.php") && !strings.Contains(lower, "torrents.php\""):
+		return "疑似登录页"
+	case strings.Contains(lower, "details.php"):
+		return "含详情页链接但未匹配到候选模式"
+	case strings.Contains(lower, "torrenttable") || strings.Contains(lower, "<table"):
+		return "含结果表格标记但无详情链接"
+	case title != "":
+		return "无详情链接, title=" + title
+	default:
+		return "页面内容为空或极短"
+	}
+}
+
+// reTermSep 种子名拆词分隔符：点号/连字符/下划线/空白/全角货币符与常见标点。
+// 说明：下载器种子名常是"中文名.年份.分辨率.语言.字幕￡组名"的点号分隔串，
+// 而 NexusPHP 搜索按空格分词做 AND —— 点号串必须拆开才能命中站点标题/副标题。
+var reTermSep = regexp.MustCompile(`[.\-_\s￡$¥€￥＋+·、，,]+`)
+
+// searchTerms 把种子名拆成多词（NexusPHP 空格 = AND 分词）。
+// 参数/返回：name 为完整种子名；返回词列表（空词剔除）。
+// 失败场景：不适用。
+// 副作用：无。
+func searchTerms(name string) []string {
+	parts := reTermSep.Split(strings.TrimSpace(name), -1)
+	terms := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		terms = append(terms, trimmed)
+	}
+	return terms
 }
 
 // candidatePreview 生成候选列表的简短预览（最多前 3 个，用于错误诊断）。
