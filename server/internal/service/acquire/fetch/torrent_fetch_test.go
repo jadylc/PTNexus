@@ -113,13 +113,12 @@ func TestDownloadTorrentForSourceNumericID(t *testing.T) {
 // TestDownloadTorrentForSourceInfohashResolvedBySearch 完整复现彩虹岛故障场景：
 // IYUU 存的 torrent_id 是 infohash，details 为空——传入种子名后按名称搜索 torrents.php
 // 定位数字 ID，再走详情页/下载流程。
-// 搜索词为拆词后的空格分隔词集（NexusPHP AND 分词语义）。
+// 搜索词降级链第1级为整串搜索（标题=种子名的站点直接命中）。
 func TestDownloadTorrentForSourceInfohashResolvedBySearch(t *testing.T) {
 	t.Setenv("PTNEXUS_DATA_DIR", t.TempDir())
 
 	infohash := "42293da64df095a71380aa0ab3a8a77d8b22ca08"
 	torrentName := "Carrie.S01.2160p.AMZN.WEB-DL.DDP.5.1.Atmos.HDR10+.H.265-CHDWEB"
-	expectedSearch := "Carrie S01 2160p AMZN WEB DL DDP 5 1 Atmos HDR10+ H 265 CHDWEB"
 	torrentBody := []byte("d8:announce40:http://tracker.example/announcee")
 
 	searchCalled := false
@@ -127,8 +126,9 @@ func TestDownloadTorrentForSourceInfohashResolvedBySearch(t *testing.T) {
 		switch r.URL.Path {
 		case "/torrents.php":
 			searchCalled = true
-			if r.URL.Query().Get("search") != expectedSearch {
-				t.Errorf("expected search by split terms, got %q", r.URL.Query().Get("search"))
+			// 第1级整串搜索应直接命中标题=种子名的场景
+			if r.URL.Query().Get("search") != torrentName {
+				t.Errorf("expected search by full torrent name, got %q", r.URL.Query().Get("search"))
 			}
 			_, _ = w.Write([]byte(`<table class="torrents"><tr>
 				<td><a href="details.php?id=593793&amp;hit=1">` + torrentName + `</a></td>

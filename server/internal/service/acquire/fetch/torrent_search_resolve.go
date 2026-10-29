@@ -44,11 +44,15 @@ type searchCandidate struct {
 //  2. 唯一候选：搜索只返回一条时直接采用；
 //  3. infohash 验证：逐个下载候选种子文件并计算 infohash，与期望值一致者即为目标。
 //
-// 搜索词形态（家园 HDHome 实测）：下载器种子名是"中文资源名.年份.分辨率.语言.字幕￡组名"
-// 的点号分隔串，而站点标题是"英文名 年份 媒介 编码-组名"的空格分隔串（中文名在副标题）。
-// 整串搜索必然落空。故搜索词拆成空格分隔多词（NexusPHP 空格=AND 分词，与用户手动
-// 搜索"千钧一发 CMCT"的行为一致）；多词 AND 仍无结果时从尾部逐词缩减重试
-// （剔除发布者这类标题中不存在的词）；最后回退整串（兼容标题与种子名一致的站点）。
+// 搜索词降级策略（从强到弱）：
+//  1. 整串搜索（原逻辑）：标题=种子名的站点直接命中，无回归风险。
+//  2. 拆词多词 AND：种子名是"中文名.年份.分辨率.语言.字幕￡组名"的点号串，
+//     站点标题是"英文名 年份 媒介 编码-组名"的空格串（中文名在副标题），
+//     整串必然落空。拆成空格分隔多词后每个词在标题/副标题都能命中
+//     （NexusPHP 搜索覆盖副标题，与用户手动搜"千钧一发 CMCT"行为一致）。
+//  3. 最次——只用名字搜 / 名字+发布组：拆词仍无结果时退化为
+//     仅搜资源名主词（如"千钧一发"）或名字+发布组（如"千钧一发 CMCT呆呆"）。
+//     候选可能多，由 infohash 验证兜底。
 func resolveTorrentIDBySearch(baseURL, cookie, passkey, torrentName, expectedHash string) (string, error) {
 	normalizedBase := normalizeSiteBaseURL(baseURL)
 	if strings.TrimSpace(normalizedBase) == "" {
@@ -58,8 +62,6 @@ func resolveTorrentIDBySearch(baseURL, cookie, passkey, torrentName, expectedHas
 	if name == "" {
 		return "", fmt.Errorf("缺少用于搜索的种子名")
 	}
-
-	terms := searchTerms(name)
 
 	// 按给定词集合执行一次搜索并解析候选。
 	searchByTerms := func(wordList []string) ([]searchCandidate, error) {
@@ -88,33 +90,48 @@ func resolveTorrentIDBySearch(baseURL, cookie, passkey, torrentName, expectedHas
 		return candidates, nil
 	}
 
-	candidates, err := searchByTerms(terms)
+	// 第1级：整串搜索（原逻辑）——标题=种子名的站点直接命中
+	candidates, err := searchByTerms([]string{name})
 	if err != nil {
 		return "", err
 	}
+
+	// 第2级：拆词多词 AND——标题被改的站点（如家园"千钧一发"→"Gattaca"）
 	if len(candidates) == 0 {
-		// 逐词尾部缩减重试：最末词常是发布者/组名后缀（标题中不存在），
-		// 缩减到能命中为止（如 呆呆 移除后 6 词即命中家园案例）。
-		for shrink := len(terms) - 1; shrink >= 1; shrink-- {
-			trimmed := terms[:shrink]
-			logx.Warnf(sourceDownloadLogModule, "分词搜索无结果，缩减为 %d 词重试: %s", shrink, truncateForLog(strings.Join(trimmed, " "), 80))
-			candidates, err = searchByTerms(trimmed)
+		terms := searchTerms(name)
+		if len(terms) > 1 {
+			logx.Warnf(sourceDownloadLogModule, "整串搜索无结果，降级为拆词多词AND搜索")
+			candidates, err = searchByTerms(terms)
 			if err != nil {
 				return "", err
 			}
-			if len(candidates) > 0 {
-				break
+		}
+	}
+
+	// 第3级：最次——只用名字搜 / 名字+发布组
+	if len(candidates) == 0 {
+		terms := searchTerms(name)
+		if len(terms) > 0 {
+			namePart := terms[0]
+			logx.Warnf(sourceDownloadLogModule, "拆词搜索无结果，降级为只用名字搜: %s", truncateForLog(namePart, 80))
+			candidates, err = searchByTerms([]string{namePart})
+			if err != nil {
+				return "", err
+			}
+			if len(candidates) == 0 && len(terms) > 1 {
+				// 名字+发布组：首词+末词（发布组/组名）
+				group := terms[len(terms)-1]
+				if group != namePart {
+					logx.Warnf(sourceDownloadLogModule, "只用名字无结果，降级为名字+发布组: %s", truncateForLog(namePart+" "+group, 80))
+					candidates, err = searchByTerms([]string{namePart, group})
+					if err != nil {
+						return "", err
+					}
+				}
 			}
 		}
 	}
-	if len(candidates) == 0 {
-		// 整串回退：兼容站点标题与下载器种子名一致的站点（历史行为）。
-		logx.Warnf(sourceDownloadLogModule, "分词搜索均无结果，回退整串搜索")
-		candidates, err = searchByTerms([]string{name})
-		if err != nil {
-			return "", err
-		}
-	}
+
 	if len(candidates) == 0 {
 		return "", fmt.Errorf("搜索结果为空")
 	}

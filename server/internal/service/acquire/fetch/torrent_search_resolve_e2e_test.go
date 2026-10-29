@@ -32,19 +32,36 @@ func infoHashOf(info []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// TestResolveSearchHdHomeShrinkTerms 家园（HDHome）实测案例：
+// TestResolveSearchHdHomeDegradation 家园（HDHome）实测场景的降级链：
 // 种子名"千钧一发.1997.1080p.国英双语.中英字幕￡CMCT呆呆"，站点标题
-// "Gattaca 1997 BluRay 1080p x264 AC3 2Audios-CMCT"（无发布者词"呆呆"，中文名在副标题）。
-// 拆词多词 AND 搜索应命中，逐词缩减（去掉"呆呆"）后唯一候选锁定。
-func TestResolveSearchHdHomeShrinkTerms(t *testing.T) {
+// "Gattaca 1997 BluRay 1080p x264 AC3 2Audios-CMCT"（中文名在副标题，
+// 发布者词"呆呆"不在标题中）。
+//
+// 降级链：
+//  1. 整串搜索 → 标题无此串 → 0
+//  2. 拆词多词 AND → 含"呆呆"（标题中不存在）→ AND 全词必须命中 → 0
+//  3. 只用名字搜"千钧一发" → 副标题命中 → 唯一候选锁定
+func TestResolveSearchHdHomeDegradation(t *testing.T) {
 	wantedInfo := bencodeInfo("Gattaca")
 	wantedHash := infoHashOf(wantedInfo)
+
+	// 模拟 NexusPHP AND 搜索：搜索词的每个词都要出现在标题或副标题中
+	title := "Gattaca 1997 BluRay 1080p x264 AC3 2Audios-CMCT"
+	subtitle := "戛塔卡/加蒂卡/太空梦/自然人/千钧一发(台)/变种异煞(港) | 国英双语中英字幕"
+	searchable := title + " " + subtitle
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/torrents.php":
 			search := r.URL.Query().Get("search")
-			if strings.Contains(search, "呆呆") {
+			allPresent := true
+			for _, term := range strings.Fields(search) {
+				if !strings.Contains(searchable, term) {
+					allPresent = false
+					break
+				}
+			}
+			if !allPresent {
 				fmt.Fprint(w, `<html><body><table class="torrents" id="torrenttable"></table></body></html>`)
 				return
 			}
@@ -62,7 +79,7 @@ func TestResolveSearchHdHomeShrinkTerms(t *testing.T) {
 
 	got, err := resolveTorrentIDBySearch(server.URL, "uid=1", "pk", "千钧一发.1997.1080p.国英双语.中英字幕￡CMCT呆呆", wantedHash)
 	if err != nil {
-		t.Fatalf("expected search to resolve id, got error: %v", err)
+		t.Fatalf("expected degradation chain to resolve id, got error: %v", err)
 	}
 	if got != "888888" {
 		t.Fatalf("expected id 888888, got %q", got)
@@ -106,8 +123,8 @@ func TestResolveSearchMultiCandidatesByInfohash(t *testing.T) {
 	}
 }
 
-// TestSearchTermsSplit 拆词函数：点号/全角￡等分隔，空词剔除。
-// 注意 CMCT呆呆 无分隔符，整体是一个词——站点标题不含发布者词时由尾部缩减剔除。
+// TestSearchTermsSplit 拆词函数：点号/全角￡/连字符等分隔，空词剔除。
+// 注意 CMCT呆呆 无分隔符，整体是一个词。
 func TestSearchTermsSplit(t *testing.T) {
 	got := searchTerms("千钧一发.1997.1080p.国英双语.中英字幕￡CMCT呆呆")
 	want := []string{"千钧一发", "1997", "1080p", "国英双语", "中英字幕", "CMCT呆呆"}
