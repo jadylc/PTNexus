@@ -54,15 +54,22 @@ func resolveTorrentIDBySearch(baseURL, cookie, passkey, torrentName, expectedHas
 	query.Set("incldead", "1")
 	searchURL := strings.TrimRight(normalizedBase, "/") + "/torrents.php?" + query.Encode()
 
-	logx.Infof(sourceDownloadLogModule, "按名称搜索定位站点种子ID search_url=%s", redactURLQuery(searchURL))
+	// 搜索词进日志（URL 的 query 会被脱敏），便于诊断"所有种子都返回同样候选"这类系统性问题。
+	logx.Infof(sourceDownloadLogModule, "按名称搜索定位站点种子ID search_url=%s search_name=%s", redactURLQuery(searchURL), truncateForLog(name, 80))
 	// fetchPageWithCookie 内部走 fetchBinarySmart：命中 CF 挑战会经 FlareSolverr 求解，
 	// 求解得到的 Cookie/UA 在本轮搜索内已由重试逻辑使用。
 	html, err := fetchPageWithCookie(searchURL, cookie, 45*time.Second)
 	if err != nil {
 		return "", fmt.Errorf("搜索请求失败: %w", err)
 	}
+	// 记录页面回显的搜索词（NexusPHP 搜索结果页通常回显）：确认搜索词真的生效，
+	// 而不是拿到了默认列表/侧栏。找不到回显时提示，供日志判别。
+	if echoed := extractSearchEcho(html); echoed != "" {
+		logx.Debugf(sourceDownloadLogModule, "搜索页回显关键词 echo=%s", truncateForLog(echoed, 80))
+	}
 
 	candidates := collectSearchCandidates(html)
+	logx.Infof(sourceDownloadLogModule, "搜索候选解析完成 candidate_count=%d preview=%s", len(candidates), candidatePreview(candidates))
 	if len(candidates) == 0 {
 		return "", fmt.Errorf("搜索结果为空")
 	}
@@ -94,6 +101,33 @@ func resolveTorrentIDBySearch(baseURL, cookie, passkey, torrentName, expectedHas
 	return "", fmt.Errorf("搜索命中 %d 个候选且无法唯一定位（精确名称匹配与 infohash 验证均未命中；候选预览: %s）", len(candidates), candidatePreview(candidates))
 }
 
+// reSearchEchoInput 匹配搜索结果页回显的搜索关键词输入框（NexusPHP 标准结构）。
+var reSearchEchoInput = regexp.MustCompile(`(?is)<input[^>]*name=["']search["'][^>]*value=["']([^"']*)["']`)
+
+// extractSearchEcho 提取页面回显的搜索关键词。
+// 参数/返回：html 为页面内容；返回回显的搜索词（无输入框或为空时返回空串）。
+// 失败场景：不适用。
+// 副作用：无。
+func extractSearchEcho(html string) string {
+	if match := reSearchEchoInput.FindStringSubmatch(html); len(match) >= 2 {
+		return strings.TrimSpace(match[1])
+	}
+	return ""
+}
+
+// truncateForLog 截断文本用于日志输出。
+// 参数/返回：text 为原文；limit 为最大长度；返回截断后的文本。
+// 失败场景：不适用。
+// 副作用：无。
+func truncateForLog(text string, limit int) string {
+	trimmed := strings.TrimSpace(text)
+	if limit <= 0 || len([]rune(trimmed)) <= limit {
+		return trimmed
+	}
+	runes := []rune(trimmed)
+	return string(runes[:limit]) + "…"
+}
+
 // candidatePreview 生成候选列表的简短预览（最多前 3 个，用于错误诊断）。
 // 参数/返回：candidates 为候选列表；返回形如 "#593793(名称…)" 的预览文本。
 // 失败场景：不适用。
@@ -120,6 +154,8 @@ func candidatePreview(candidates []searchCandidate) string {
 // 参数/返回：html 为 torrents.php 页面内容；返回候选列表。
 // 失败场景：不适用。
 // 副作用：无。
+// 说明：全页解析（行为与历史版本一致）；候选解析范围的收窄需基于真实页面
+// 结构验证后再做，避免基于猜测改动解析行为。
 func collectSearchCandidates(html string) []searchCandidate {
 	matches := reSearchDetailLink.FindAllStringSubmatch(html, -1)
 	seen := map[string]struct{}{}
