@@ -108,6 +108,20 @@ func resolveTorrentIDBySearch(baseURL, cookie, passkey, torrentName, expectedHas
 		}
 	}
 	if len(candidates) == 0 {
+		// 技术词子集降级：尾部缩减只能产生"前缀子集"，当不匹配的词在词集中间
+		//（如中文词在标题中不存在）时永远删不掉。改为只保留技术 token
+		//（不含 CJK 的词：年份/分辨率/编码/组名等——这些才是标题里的词），
+		// 中文资源名在标题中通常不存在。多出的候选由 infohash 验证兜底。
+		techTerms := nonCJKTerms(terms)
+		if len(techTerms) >= 2 && !equalStringSlices(techTerms, terms) {
+			logx.Warnf(sourceDownloadLogModule, "前缀缩减无结果，降级为技术词子集重试: %s", truncateForLog(strings.Join(techTerms, " "), 80))
+			candidates, err = searchByTerms(techTerms)
+			if err != nil {
+				return "", err
+			}
+		}
+	}
+	if len(candidates) == 0 {
 		// 整串回退：兼容站点标题与下载器种子名一致的站点（历史行为）。
 		logx.Warnf(sourceDownloadLogModule, "分词搜索均无结果，回退整串搜索")
 		candidates, err = searchByTerms([]string{name})
@@ -233,6 +247,59 @@ func searchTerms(name string) []string {
 		terms = append(terms, trimmed)
 	}
 	return terms
+}
+
+// containsCJKText 判断字符串是否含 CJK（中日韩）字符。
+// 参数/返回：s 为待判断文本；返回是否含 CJK。
+// 失败场景：不适用。
+// 副作用：无。
+// 说明：用于区分技术 token（年份/分辨率/编码/组名——不含 CJK）与
+// 中文资源名/语言说明词（含 CJK）。降级策略中中文词在标题里通常不存在，
+// 可整批移除。
+func containsCJKText(s string) bool {
+	for _, r := range s {
+		if (r >= 0x4E00 && r <= 0x9FFF) || // CJK 统一表意文字
+			(r >= 0x3400 && r <= 0x4DBF) || // CJK 扩展A
+			(r >= 0xF900 && r <= 0xFAFF) || // CJK 兼容表意
+			(r >= 0x3000 && r <= 0x303F) || // CJK 标点
+			(r >= 0xFF00 && r <= 0xFFEF) { // 全角字符
+			return true
+		}
+	}
+	return false
+}
+
+// nonCJKTerms 过滤出不含 CJK 字符的词（年份/分辨率/编码/组名等技术 token）。
+// 参数/返回：terms 为词列表；返回仅含技术词的子集（若全部含 CJK 则返回原词列表）。
+// 失败场景：不适用。
+// 副作用：无。
+func nonCJKTerms(terms []string) []string {
+	out := make([]string, 0, len(terms))
+	for _, term := range terms {
+		if !containsCJKText(term) {
+			out = append(out, term)
+		}
+	}
+	if len(out) == 0 {
+		return terms
+	}
+	return out
+}
+
+// equalStringSlices 判断两个字符串切片是否内容相同。
+// 参数/返回：a/b 为词列表；返回是否一致。
+// 失败场景：不适用。
+// 副作用：无。
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // candidatePreview 生成候选列表的简短预览（最多前 3 个，用于错误诊断）。
