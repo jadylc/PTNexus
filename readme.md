@@ -256,6 +256,11 @@ wget -O - https://github.com/jadylc/PTNexus/releases/latest/download/install-pt-
 
 # 更新日志
 
+### v4.0.93（2026.10.29）
+
+- 修复：批量获取筛选弹窗去掉重复的「源站点」区（存在/无可用），只保留白名单（必须存在）+黑名单（必须排除）两组站点勾选
+- 修复：源站点优先级弹窗拖拽到禁用区域后列表不刷新——loadPrioritySettings 未将站点数据写入 siteStatuses，导致 excludedSiteList 计算属性解析不到
+
 ### v4.0.92（2026.10.29）
 
 - 优化：批量获取筛选弹窗的源站点过滤只显示当前支持的源站点（有 cookie 且为源站点），去掉「必须存在:」/「必须排除:」前缀
