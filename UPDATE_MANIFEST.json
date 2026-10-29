@@ -2,38 +2,47 @@
   "schema": 2,
   "note": "repo-root metadata only; production updater must use release UPDATE_MANIFEST.json",
   "latest": {
-    "version": "v4.0.88",
+    "version": "v4.0.89",
     "artifacts": [
       {
         "os": "linux",
         "arch": "amd64",
-        "url": "https://github.com/jadylc/PTNexus/releases/download/v4.0.88/ptnexus-runtime-linux-amd64.tar.gz",
+        "url": "https://github.com/jadylc/PTNexus/releases/download/v4.0.89/ptnexus-runtime-linux-amd64.tar.gz",
         "sha256": "",
         "size": 11163781,
         "format": "tar.gz",
         "mirror_urls": [
-          "https://gitee.com/jadylc/PTNexus/releases/download/v4.0.88/ptnexus-runtime-linux-amd64.tar.gz",
-          "https://gh.ddlc.top/https://github.com/jadylc/PTNexus/releases/download/v4.0.88/ptnexus-runtime-linux-amd64.tar.gz",
-          "https://ghproxy.net/https://github.com/jadylc/PTNexus/releases/download/v4.0.88/ptnexus-runtime-linux-amd64.tar.gz"
+          "https://gitee.com/jadylc/PTNexus/releases/download/v4.0.89/ptnexus-runtime-linux-amd64.tar.gz",
+          "https://gh.ddlc.top/https://github.com/jadylc/PTNexus/releases/download/v4.0.89/ptnexus-runtime-linux-amd64.tar.gz",
+          "https://ghproxy.net/https://github.com/jadylc/PTNexus/releases/download/v4.0.89/ptnexus-runtime-linux-amd64.tar.gz"
         ]
       },
       {
         "os": "linux",
         "arch": "arm64",
-        "url": "https://github.com/jadylc/PTNexus/releases/download/v4.0.88/ptnexus-runtime-linux-arm64.tar.gz",
+        "url": "https://github.com/jadylc/PTNexus/releases/download/v4.0.89/ptnexus-runtime-linux-arm64.tar.gz",
         "sha256": "",
         "size": 10104449,
         "format": "tar.gz",
         "mirror_urls": [
-          "https://gitee.com/jadylc/PTNexus/releases/download/v4.0.88/ptnexus-runtime-linux-arm64.tar.gz",
-          "https://gh.ddlc.top/https://github.com/jadylc/PTNexus/releases/download/v4.0.88/ptnexus-runtime-linux-arm64.tar.gz",
-          "https://ghproxy.net/https://github.com/jadylc/PTNexus/releases/download/v4.0.88/ptnexus-runtime-linux-arm64.tar.gz"
+          "https://gitee.com/jadylc/PTNexus/releases/download/v4.0.89/ptnexus-runtime-linux-arm64.tar.gz",
+          "https://gh.ddlc.top/https://github.com/jadylc/PTNexus/releases/download/v4.0.89/ptnexus-runtime-linux-arm64.tar.gz",
+          "https://ghproxy.net/https://github.com/jadylc/PTNexus/releases/download/v4.0.89/ptnexus-runtime-linux-arm64.tar.gz"
         ]
       }
     ],
     "date": "2026.10.29"
   },
   "history": [
+    {
+      "version": "v4.0.89",
+      "date": "2026.10.29",
+      "changes": [
+        "重构：种子搜索定位降级链改为原逻辑优先——第1级整串搜索（标题=种子名的站点直接命中，零回归风险），第2级降级为拆词多词 AND（标题被改的站点如家园，中文名在副标题、每个词都能命中），第3级最次只用名字搜；不再使用尾部缩减等删词策略",
+        "修复：月月（keepfrds）主副标题互倒判定放宽——此前要求信息条含竖线分隔符，月月用斜杠/全角括号分隔导致漏判，中文信息条被解析出「版本/简繁韩字幕」残片；改为以「副标题本身像发布名」为准",
+        "修复：批量获取弹窗宽度过窄导致最后一列被挤出——显式设置宽度（90vw/最大1280px），同时消除卡片体与内容区两层 overflow 形成的双滚动条"
+      ]
+    },
     {
       "version": "v4.0.88",
       "date": "2026.10.29",
