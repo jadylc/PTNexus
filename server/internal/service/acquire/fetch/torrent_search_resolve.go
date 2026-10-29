@@ -13,7 +13,12 @@ import (
 // reSearchDetailLink 匹配种子列表行中的详情页链接：捕获完整属性串、数字 id 与链接文本。
 // 说明：NexusPHP 列表页的完整种子名常放在 <a title="..."> 属性里，可见文本可能被截断
 // 或因搜索关键词高亮混入内部标签，因此需要同时提取属性串中的 title 与内部文本。
-var reSearchDetailLink = regexp.MustCompile(`(?is)<a([^>]*href=["'][^"']*details\.php\?id=(\d+)[^"']*["'][^>]*)>(.*?)</a>`)
+// reSearchDetailLink 匹配种子列表行中的详情页链接：捕获完整属性串、数字 id 与链接文本。
+// 说明：① href 前缀收紧为（可选路径/站点前缀+斜杠）——否则 userdetails.php 等链接
+// 会因包含 "details.php?id=" 子串被误抓为候选（OurBits 实测复现）；
+// ② NexusPHP 列表页的完整种子名常放在 <a title="..."> 属性里，可见文本可能被截断
+// 或因搜索关键词高亮混入内部标签，因此需要同时提取属性串中的 title 与内部文本。
+var reSearchDetailLink = regexp.MustCompile(`(?is)<a([^>]*href=["'](?:[^"']*/)?details\.php\?id=(\d+)[^"']*["'][^>]*)>(.*?)</a>`)
 
 // reTitleAttr 从属性串中提取 title="..." 的值。
 var reTitleAttr = regexp.MustCompile(`(?is)title=["']([^"']*)["']`)
@@ -150,14 +155,25 @@ func candidatePreview(candidates []searchCandidate) string {
 	return strings.Join(preview, ", ")
 }
 
+// reTorrentsTableStart 匹配 NexusPHP 搜索结果表格的起始标记（<table class="torrents">）。
+var reTorrentsTableStart = regexp.MustCompile(`(?is)<table[^>]*(?:class=["'][^"']*torrents[^"']*["']|id=["']torrenttable["'])[^>]*>`)
+
 // collectSearchCandidates 从搜索结果页解析候选行（按 id 去重，保留首个出现的 title/文本）。
 // 参数/返回：html 为 torrents.php 页面内容；返回候选列表。
 // 失败场景：不适用。
 // 副作用：无。
-// 说明：全页解析（行为与历史版本一致）；候选解析范围的收窄需基于真实页面
-// 结构验证后再做，避免基于猜测改动解析行为。
+// 说明：候选解析从 <table class="torrents"> 结果表格开始截取（OurBits 实测页面：
+// 表格前的"热门海报"区块带 10 个全站固定 details 链接、用户信息区带 userdetails
+// 链接，全页扫描会把它们误计入候选，表现为"每次搜索都多出同一批候选"且
+// infohash 验证名额被固定链接占据导致真实目标漏验）。搜索结果表格内部存在
+// 嵌套表格，因此只设起点不设终点（表格后的分页/页脚不含详情链接）；
+// 找不到表格标记时回退全页解析（兼容非标准结构）。
 func collectSearchCandidates(html string) []searchCandidate {
-	matches := reSearchDetailLink.FindAllStringSubmatch(html, -1)
+	scoped := html
+	if loc := reTorrentsTableStart.FindStringIndex(html); loc != nil {
+		scoped = html[loc[0]:]
+	}
+	matches := reSearchDetailLink.FindAllStringSubmatch(scoped, -1)
 	seen := map[string]struct{}{}
 	candidates := make([]searchCandidate, 0, len(matches))
 	for _, match := range matches {
