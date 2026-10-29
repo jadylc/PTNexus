@@ -215,7 +215,8 @@ func describeSearchPage(html string) string {
 // reTermSep 种子名拆词分隔符：点号/连字符/下划线/空白/全角货币符与常见标点。
 // 说明：下载器种子名常是"中文名.年份.分辨率.语言.字幕￡组名"的点号分隔串，
 // 而 NexusPHP 搜索按空格分词做 AND —— 点号串必须拆开才能命中站点标题/副标题。
-var reTermSep = regexp.MustCompile(`[.\-_\s￡$¥€￥＋+·、，,]+`)
+// 注意不拆 "+"：HDR10+/DoVi+ 这类技术标记保留完整 token 更准确。
+var reTermSep = regexp.MustCompile(`[.\-_\s￡$¥€￥·、，,]+`)
 
 // searchTerms 把种子名拆成多词（NexusPHP 空格 = AND 分词）。
 // 参数/返回：name 为完整种子名；返回词列表（空词剔除）。
