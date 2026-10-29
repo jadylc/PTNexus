@@ -909,22 +909,24 @@ func cleanTopTitleText(rawHTML string) string {
 // 参数/返回：mainTitle/subtitle 为提取到的主副标题；返回纠正后的主副标题。
 // 失败场景：不适用。
 // 副作用：无。
-// 说明：HHWEB/岛组风格站点将"中文名 | 集数 | 分辨率 | 类型 | 导演 | 主演"信息条
-// 放在主标题位、英文发布名放在副标题。不交换会导致标题组件把英文发布名
-// 与信息条碎片一起判进"无法识别"。
+// 说明：站点将"中文名/别名 分辨率 版本 语言 字幕"这类信息条放在主标题位、
+// 西文发布名放在副标题（月月、HHWEB/岛组等风格）。不交换会导致标题组件
+// 去啃中文信息条，把"版本/简繁韩字幕"等残片判进"无法识别"。
+// 判定以"副标题本身像发布名"为准（含分辨率/媒介/编码等技术标记），
+// 而不是信息条的某种分隔符——信息条可能用 |、/ 或全角括号，分隔符不可靠。
 func NormalizeSiteDualTitle(mainTitle, subtitle string) (string, string) {
 	main := strings.TrimSpace(mainTitle)
 	sub := strings.TrimSpace(subtitle)
 	if main == "" || sub == "" {
 		return main, sub
 	}
-	if !strings.Contains(main, " | ") && !strings.Contains(main, "｜") {
+	if !containsCJKText(main) || containsCJKText(sub) {
 		return main, sub
 	}
-	if containsCJKText(main) && !containsCJKText(sub) {
-		return sub, main
+	if !reReleaseNameLike.MatchString(sub) {
+		return main, sub
 	}
-	return main, sub
+	return sub, main
 }
 
 // reReleaseNameLike 判断是否为西文发布名行：无汉字，且包含分辨率或常见技术标记。
