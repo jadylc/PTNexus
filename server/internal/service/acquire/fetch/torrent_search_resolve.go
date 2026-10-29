@@ -50,9 +50,10 @@ type searchCandidate struct {
 //     站点标题是"英文名 年份 媒介 编码-组名"的空格串（中文名在副标题），
 //     整串必然落空。拆成空格分隔多词后每个词在标题/副标题都能命中
 //     （NexusPHP 搜索覆盖副标题，与用户手动搜"千钧一发 CMCT"行为一致）。
-//  3. 最次——只用名字搜 / 名字+发布组：拆词仍无结果时退化为
-//     仅搜资源名主词（如"千钧一发"）或名字+发布组（如"千钧一发 CMCT呆呆"）。
-//     候选可能多，由 infohash 验证兜底。
+//  3. 最次——只用名字搜：拆词仍无结果时，退化为仅搜资源名主词
+//     （如"千钧一发"）。候选可能多，由 infohash 验证兜底。
+//     注意：不再尝试"名字+发布组"——AND 语义下每个词都必须命中，
+//     名字单独搜不到时加发布组只会增加约束，不可能命中。
 func resolveTorrentIDBySearch(baseURL, cookie, passkey, torrentName, expectedHash string) (string, error) {
 	normalizedBase := normalizeSiteBaseURL(baseURL)
 	if strings.TrimSpace(normalizedBase) == "" {
@@ -108,7 +109,9 @@ func resolveTorrentIDBySearch(baseURL, cookie, passkey, torrentName, expectedHas
 		}
 	}
 
-	// 第3级：最次——只用名字搜 / 名字+发布组
+	// 第3级：最次——只用名字搜。
+	// 注意：不再尝试"名字+发布组"——AND 语义下每个词都必须命中，
+	// 名字单独搜不到时加上发布组只会增加约束，不可能命中。
 	if len(candidates) == 0 {
 		terms := searchTerms(name)
 		if len(terms) > 0 {
@@ -117,17 +120,6 @@ func resolveTorrentIDBySearch(baseURL, cookie, passkey, torrentName, expectedHas
 			candidates, err = searchByTerms([]string{namePart})
 			if err != nil {
 				return "", err
-			}
-			if len(candidates) == 0 && len(terms) > 1 {
-				// 名字+发布组：首词+末词（发布组/组名）
-				group := terms[len(terms)-1]
-				if group != namePart {
-					logx.Warnf(sourceDownloadLogModule, "只用名字无结果，降级为名字+发布组: %s", truncateForLog(namePart+" "+group, 80))
-					candidates, err = searchByTerms([]string{namePart, group})
-					if err != nil {
-						return "", err
-					}
-				}
 			}
 		}
 	}
