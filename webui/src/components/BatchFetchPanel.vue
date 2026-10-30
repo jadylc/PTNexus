@@ -694,10 +694,16 @@ const hasActiveFilters = computed(() => {
 
 const siteStatuses = ref<SiteStatus[]>([])
 
-// 仅显示当前支持的源站点（有 cookie 且为源站点）
-const supportedSiteStatuses = computed(() =>
-  siteStatuses.value.filter((s) => s.is_source && s.has_cookie),
-)
+// 仅显示当前支持的源站点（有 cookie 且为源站点），去重避免重复出现
+const supportedSiteStatuses = computed(() => {
+  const seen = new Set<string>()
+  return siteStatuses.value.filter((s) => {
+    if (!s.is_source || !s.has_cookie) return false
+    if (seen.has(s.name)) return false
+    seen.add(s.name)
+    return true
+  })
+})
 
 const loadSiteStatuses = async () => {
   try {
@@ -1081,6 +1087,8 @@ const savePrioritySettings = async () => {
     if (response.data.success) {
       ElMessage.success('源站点优先级配置已保存')
       closePrioritySettingsDialog()
+      // 保存后刷新列表：禁用站点后种子的站点标签会变化，全禁用的种子会被过滤
+      fetchData()
     } else {
       throw new Error(response.data.message || '保存失败')
     }
@@ -1525,9 +1533,10 @@ watch(nameSearch, () => {
 }
 
 .batch-fetch-card {
-  /* 明确宽度：此前只有 max-width，窄屏下卡片被内容压缩，种子表格最后一列被挤出可视区 */
+  /* 明确宽度：max-width 需容纳所有列宽（55+400+110+200+100+100+120+300=1385+padding），
+     此前 1280px 太小导致内部横向滚动条 */
   width: 95vw;
-  max-width: 1400px;
+  max-width: 1600px;
   padding: 10px;
   max-height: 90vh;
   display: flex;
