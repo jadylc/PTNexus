@@ -1408,6 +1408,11 @@ onMounted(async () => {
   await Promise.all([auxiliaryDataPromise, fetchData()])
 })
 
+// excludedSites 变化时自动刷新列表（禁用站点后标签和种子过滤立即生效）
+watch(excludedSites, () => {
+  tableData.value = tableData.value.filter((t) => hasAnyUsableSite(t.sites))
+}, { deep: true })
+
 onUnmounted(() => {
   stopAutoRefresh()
   if (searchFetchTimer.value) {
