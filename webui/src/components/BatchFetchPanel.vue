@@ -1087,8 +1087,9 @@ const savePrioritySettings = async () => {
     if (response.data.success) {
       ElMessage.success('源站点优先级配置已保存')
       closePrioritySettingsDialog()
-      // 保存后刷新列表：禁用站点后种子的站点标签会变化，全禁用的种子会被过滤
-      fetchData()
+      // 保存后立即刷新列表：禁用站点只影响前端过滤（getSourceSites/hasAnyUsableSite），
+      // 不需要重新请求 API，直接重新过滤当前 tableData 即可立即生效
+      tableData.value = tableData.value.filter((t) => hasAnyUsableSite(t.sites))
     } else {
       throw new Error(response.data.message || '保存失败')
     }
