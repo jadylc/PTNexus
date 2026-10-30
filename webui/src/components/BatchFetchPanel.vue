@@ -295,7 +295,7 @@
             </p>
             <div class="priority-list" v-loading="priorityLoading" @dragover.prevent @drop="handlePriorityContainerDrop">
               <el-tag
-                v-for="(site, index) in sourceSitesOrder"
+                v-for="(site, index) in tempSourceSitesOrder"
                 :key="site.name"
                 :type="getSitePriorityType(index)"
                 size="large"
@@ -307,7 +307,7 @@
               >
                 {{ index + 1 }}. {{ site.name }}
               </el-tag>
-              <span v-if="sourceSitesOrder.length === 0" style="color: #909399; margin-left: 10px">
+              <span v-if="tempSourceSitesOrder.length === 0" style="color: #909399; margin-left: 10px">
                 未配置源站点优先级
               </span>
             </div>
@@ -329,7 +329,7 @@
             @drop="handleDropToExcluded"
           >
             <el-tag
-              v-for="(site, index) in excludedSiteList"
+              v-for="(site, index) in tempExcludedSiteList"
               :key="'excluded-' + site.name"
               type="danger"
               size="large"
@@ -341,7 +341,7 @@
             >
               {{ site.name }}
             </el-tag>
-            <span v-if="excludedSiteList.length === 0" style="color: #909399; margin-left: 10px">
+            <span v-if="tempExcludedSiteList.length === 0" style="color: #909399; margin-left: 10px">
               暂无禁用站点（从上方拖拽到此处可禁用）
             </span>
           </div>
@@ -565,6 +565,10 @@ const sourceSitesOrder = ref<SiteStatus[]>([])
 const draggedIndex = ref<number | null>(null)
 // 屏蔽源站点：拉进来的站点不参与批量获取
 const excludedSites = ref<string[]>([])
+// 优先级弹窗内的临时禁用列表（拖拽操作改这个，保存后才同步到 excludedSites）
+const tempExcludedSites = ref<string[]>([])
+// 优先级弹窗内的临时优先级列表（拖拽重排改这个，保存后才同步到 sourceSitesOrder）
+const tempSourceSitesOrder = ref<SiteStatus[]>([])
 
 const pathTreeRef = ref<InstanceType<typeof ElTree> | null>(null)
 const pathTreeData = ref<PathNode[]>([])
@@ -1047,7 +1051,9 @@ const loadPrioritySettings = async () => {
     const savedExcluded: string[] = configResult.success
       ? ([...new Set(configResult.excludedSites || [])] as string[])
       : []
+    // 加载到临时变量（拖拽操作改临时变量，保存后才同步到 excludedSites/sourceSitesOrder）
     excludedSites.value = savedExcluded
+    tempExcludedSites.value = [...savedExcluded]
 
     // 构建有序的站点列表：首先按保存的优先级排序，然后添加其他站点
     // 注意：跳过已禁用的站点（禁用站点不参与优先级队列）
@@ -1072,7 +1078,8 @@ const loadPrioritySettings = async () => {
       }
     })
 
-    sourceSitesOrder.value = orderedSites
+    // 加载到临时优先级列表
+    tempSourceSitesOrder.value = orderedSites
   } catch (error: unknown) {
     ElMessage.error(getErrorMessage(error) || '加载配置失败')
   } finally {
@@ -1083,18 +1090,20 @@ const loadPrioritySettings = async () => {
 const savePrioritySettings = async () => {
   prioritySaving.value = true
   try {
-    const sourcePriority = sourceSitesOrder.value.map((site) => site.name)
+    const sourcePriority = tempSourceSitesOrder.value.map((site) => site.name)
 
     const response = await axios.post('/api/config/source_priority', {
       source_priority: sourcePriority,
-      excludedSites: excludedSites.value,
+      excludedSites: tempExcludedSites.value,
     })
 
     if (response.data.success) {
       ElMessage.success('源站点优先级配置已保存')
+      // 确认后才同步到真实状态
+      excludedSites.value = [...tempExcludedSites.value]
+      sourceSitesOrder.value = [...tempSourceSitesOrder.value]
       closePrioritySettingsDialog()
-      // 保存后立即刷新列表：禁用站点只影响前端过滤（getSourceSites/hasAnyUsableSite），
-      // 不需要重新请求 API，直接重新过滤当前 tableData 即可立即生效
+      // 禁用站点只影响前端过滤，直接重新过滤 tableData 立即生效
       tableData.value = tableData.value.filter((t) => hasAnyUsableSite(t.sites))
     } else {
       throw new Error(response.data.message || '保存失败')
@@ -1120,9 +1129,9 @@ const handleDragStart = (index: number) => {
 const handleDrop = (dropIndex: number) => {
   if (draggedIndex.value === null) return
 
-  const draggedItem = sourceSitesOrder.value[draggedIndex.value]
-  sourceSitesOrder.value.splice(draggedIndex.value, 1)
-  sourceSitesOrder.value.splice(dropIndex, 0, draggedItem)
+  const draggedItem = tempSourceSitesOrder.value[draggedIndex.value]
+  tempSourceSitesOrder.value.splice(draggedIndex.value, 1)
+  tempSourceSitesOrder.value.splice(dropIndex, 0, draggedItem)
 
   draggedIndex.value = null
 }
@@ -1130,9 +1139,9 @@ const handleDrop = (dropIndex: number) => {
 // 禁用区域拖拽逻辑
 const excludedDragIndex = ref<number | null>(null)
 
-// excludedSiteList：从 excludedSites 名称列表还原 SiteStatus 对象列表
-const excludedSiteList = computed(() =>
-  excludedSites.value
+// tempExcludedSiteList：从临时禁用列表还原 SiteStatus 对象列表
+const tempExcludedSiteList = computed(() =>
+  tempExcludedSites.value
     .map((name) => siteStatuses.value.find((s) => s.name === name))
     .filter((s): s is SiteStatus => s !== undefined),
 )
@@ -1140,11 +1149,11 @@ const excludedSiteList = computed(() =>
 // 优先级队列容器 drop：从禁用区域拖回时插入到末尾（去重防止重复出现）
 const handlePriorityContainerDrop = () => {
   if (excludedDragIndex.value === null) return
-  const excludedItem = excludedSiteList.value[excludedDragIndex.value]
+  const excludedItem = tempExcludedSiteList.value[excludedDragIndex.value]
   if (excludedItem) {
-    excludedSites.value = excludedSites.value.filter((n) => n !== excludedItem.name)
-    if (!sourceSitesOrder.value.some((s) => s.name === excludedItem.name)) {
-      sourceSitesOrder.value.push(excludedItem)
+    tempExcludedSites.value = tempExcludedSites.value.filter((n) => n !== excludedItem.name)
+    if (!tempSourceSitesOrder.value.some((s) => s.name === excludedItem.name)) {
+      tempSourceSitesOrder.value.push(excludedItem)
     }
   }
   excludedDragIndex.value = null
@@ -1153,10 +1162,10 @@ const handlePriorityContainerDrop = () => {
 // 禁用区域容器 drop：从优先级队列拖入时禁用（去重防止重复出现）
 const handleDropToExcluded = () => {
   if (draggedIndex.value === null) return
-  const draggedItem = sourceSitesOrder.value[draggedIndex.value]
-  sourceSitesOrder.value.splice(draggedIndex.value, 1)
-  if (!excludedSites.value.includes(draggedItem.name)) {
-    excludedSites.value.push(draggedItem.name)
+  const draggedItem = tempSourceSitesOrder.value[draggedIndex.value]
+  tempSourceSitesOrder.value.splice(draggedIndex.value, 1)
+  if (!tempExcludedSites.value.includes(draggedItem.name)) {
+    tempExcludedSites.value.push(draggedItem.name)
   }
   draggedIndex.value = null
 }
@@ -1169,9 +1178,9 @@ const handleExcludedDragStart = (index: number) => {
 // 禁用区域内标签 drop（拖到另一个禁用标签位置 = 仅重排）
 const handleDropFromExcluded = (dropIndex: number) => {
   if (excludedDragIndex.value === null || excludedDragIndex.value === dropIndex) return
-  const draggedName = excludedSites.value[excludedDragIndex.value]
-  excludedSites.value.splice(excludedDragIndex.value, 1)
-  excludedSites.value.splice(dropIndex, 0, draggedName)
+  const draggedName = tempExcludedSites.value[excludedDragIndex.value]
+  tempExcludedSites.value.splice(excludedDragIndex.value, 1)
+  tempExcludedSites.value.splice(dropIndex, 0, draggedName)
   excludedDragIndex.value = null
 }
 
@@ -1417,11 +1426,6 @@ onMounted(async () => {
   await loadFiltersFromConfig()
   await Promise.all([auxiliaryDataPromise, fetchData()])
 })
-
-// excludedSites 变化时自动刷新列表（禁用站点后标签和种子过滤立即生效）
-watch(excludedSites, () => {
-  tableData.value = tableData.value.filter((t) => hasAnyUsableSite(t.sites))
-}, { deep: true })
 
 onUnmounted(() => {
   stopAutoRefresh()
