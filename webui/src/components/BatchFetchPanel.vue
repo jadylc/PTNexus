@@ -98,7 +98,7 @@
     <!-- 种子列表表格 -->
     <div class="table-container">
       <el-table
-        :data="tableData"
+        :data="filteredTableData"
         v-loading="loading"
         border
         style="width: 100%"
@@ -816,9 +816,9 @@ const fetchData = async () => {
         sites: item.sites || {},
         downloader_ids: item.downloader_ids || [],
       }))
-      // 过滤掉所有站点都被禁用的种子（优先级弹窗中禁用了全部站点）
-      tableData.value = mapped.filter((t) => hasAnyUsableSite(t.sites))
-      total.value = tableData.value.length
+      // 全禁用种子的隐藏由 filteredTableData 计算属性在渲染层完成
+      tableData.value = mapped
+      total.value = result.total
 
       // 兼容旧接口：metadata-only 请求失败或旧版本后端未返回状态时，从当前页兜底提取。
       if (uniqueStates.value.length === 0 && !activeFilters.value.states.length) {
@@ -1024,6 +1024,12 @@ const hasAnyUsableSite = (sites: Record<string, SiteData>) => {
   return Object.keys(sourceSites).length > 0
 }
 
+// filteredTableData：渲染层响应式过滤——禁用站点一变，列表自动更新
+// （比"保存后一次性 filter"可靠：不依赖调用时机，任何路径改 excludedSites 都生效）
+const filteredTableData = computed(() =>
+  tableData.value.filter((t) => hasAnyUsableSite(t.sites)),
+)
+
 const openBatchFetchDialog = () => {
   if (selectedRows.value.length === 0) {
     ElMessage.warning('请先选择要获取数据的种子')
@@ -1112,12 +1118,10 @@ const savePrioritySettings = async () => {
 
     if (response.data.success) {
       ElMessage.success('源站点优先级配置已保存')
-      // 确认后才同步到真实状态
+      // 确认后才同步到真实状态（filteredTableData 计算属性自动刷新列表）
       excludedSites.value = [...tempExcludedSites.value]
       sourceSitesOrder.value = [...tempSourceSitesOrder.value]
       closePrioritySettingsDialog()
-      // 禁用站点只影响前端过滤，直接重新过滤 tableData 立即生效
-      tableData.value = tableData.value.filter((t) => hasAnyUsableSite(t.sites))
     } else {
       throw new Error(response.data.message || '保存失败')
     }

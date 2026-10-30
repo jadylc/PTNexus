@@ -256,6 +256,10 @@ wget -O - https://github.com/jadylc/PTNexus/releases/latest/download/install-pt-
 
 # 更新日志
 
+### v4.1.1（2026.10.30）
+
+- 修复：禁用唯一源站点后种子仍留在列表——列表过滤改为渲染层响应式计算（filteredTableData），禁用站点一变列表立即更新，不再依赖保存后的手动过滤调用
+
 ### v4.1.0（2026.10.30）
 
 - 修复：弹窗宽度改用内联 style（width/max-width 直接写在 el-card 上，优先级高于任何样式表覆盖）
