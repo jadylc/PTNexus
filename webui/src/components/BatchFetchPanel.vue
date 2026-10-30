@@ -152,7 +152,7 @@
           align="center"
           header-align="center"
         ></el-table-column>
-        <el-table-column label="已有源站点" min-width="200" header-align="center">
+        <el-table-column label="已有源站点" min-width="300" header-align="center">
           <template #default="scope">
             <el-tag
               v-for="(siteData, siteName) in getSourceSites(scope.row.sites)"
@@ -203,9 +203,15 @@
             />
           </div>
 
+          <el-divider content-position="left">源站点</el-divider>
+          <el-checkbox-group v-model="tempFilters.sourceSiteAvailability">
+            <el-checkbox label="存在源站点">存在源站点</el-checkbox>
+            <el-checkbox label="无可用源站点">无可用源站点</el-checkbox>
+          </el-checkbox-group>
+
           <el-divider content-position="left">源站点过滤（白名单）</el-divider>
           <p style="font-size: 12px; color: #909399; margin: 4px 0 8px">
-            勾选要包含的源站点：只显示在该站点有数据的种子
+            勾选要包含的源站点：只显示在该站点有数据的种子（黑名单在「设置优先级」弹窗中配置）
           </p>
           <el-checkbox-group v-model="tempFilters.existSiteNames">
             <el-checkbox
@@ -216,9 +222,6 @@
               {{ site.name }}
             </el-checkbox>
           </el-checkbox-group>
-          <p style="font-size: 12px; color: #909399; margin: 8px 0 4px">
-            黑名单（禁用站点）在「设置优先级」弹窗中配置
-          </p>
 
           <el-divider content-position="left">状态</el-divider>
           <el-checkbox-group v-model="tempFilters.states">
@@ -1479,8 +1482,9 @@ watch(nameSearch, () => {
 }
 
 .filter-card {
-  width: 600px;
-  max-width: 95vw;
+  /* 加宽：站点复选框一行显示全（此前 600px 站点列显示不全） */
+  width: 90vw;
+  max-width: 900px;
   max-height: 90vh;
   display: flex;
   flex-direction: column;
@@ -1522,8 +1526,8 @@ watch(nameSearch, () => {
 
 .batch-fetch-card {
   /* 明确宽度：此前只有 max-width，窄屏下卡片被内容压缩，种子表格最后一列被挤出可视区 */
-  width: 90vw;
-  max-width: 1280px;
+  width: 95vw;
+  max-width: 1400px;
   padding: 10px;
   max-height: 90vh;
   display: flex;
