@@ -1043,15 +1043,21 @@ const loadPrioritySettings = async () => {
     const configResponse = await axios.get('/api/config/source_priority')
     const configResult = configResponse.data
     const savedPriority = configResult.success ? configResult.data || [] : []
-    const savedExcluded = configResult.success ? configResult.excludedSites || [] : []
+    // 禁用列表去重
+    const savedExcluded: string[] = configResult.success
+      ? ([...new Set(configResult.excludedSites || [])] as string[])
+      : []
     excludedSites.value = savedExcluded
 
     // 构建有序的站点列表：首先按保存的优先级排序，然后添加其他站点
+    // 注意：跳过已禁用的站点（禁用站点不参与优先级队列）
+    const excludedSet = new Set(savedExcluded)
     const orderedSites: SiteStatus[] = []
     const usedSites = new Set<string>()
 
     // 先添加按优先级排序的站点
     savedPriority.forEach((siteName: string) => {
+      if (excludedSet.has(siteName)) return
       const site = availableSites.find((s: SiteStatus) => s.name === siteName)
       if (site && !usedSites.has(site.name)) {
         orderedSites.push(site)
@@ -1059,9 +1065,9 @@ const loadPrioritySettings = async () => {
       }
     })
 
-    // 添加剩余的站点，按原始顺序
+    // 添加剩余的站点，按原始顺序（跳过已禁用的站点）
     availableSites.forEach((site: SiteStatus) => {
-      if (!usedSites.has(site.name)) {
+      if (!usedSites.has(site.name) && !excludedSet.has(site.name)) {
         orderedSites.push(site)
       }
     })
@@ -1131,23 +1137,27 @@ const excludedSiteList = computed(() =>
     .filter((s): s is SiteStatus => s !== undefined),
 )
 
-// 优先级队列容器 drop：从禁用区域拖回时插入到末尾
+// 优先级队列容器 drop：从禁用区域拖回时插入到末尾（去重防止重复出现）
 const handlePriorityContainerDrop = () => {
   if (excludedDragIndex.value === null) return
   const excludedItem = excludedSiteList.value[excludedDragIndex.value]
   if (excludedItem) {
     excludedSites.value = excludedSites.value.filter((n) => n !== excludedItem.name)
-    sourceSitesOrder.value.push(excludedItem)
+    if (!sourceSitesOrder.value.some((s) => s.name === excludedItem.name)) {
+      sourceSitesOrder.value.push(excludedItem)
+    }
   }
   excludedDragIndex.value = null
 }
 
-// 禁用区域容器 drop：从优先级队列拖入时禁用
+// 禁用区域容器 drop：从优先级队列拖入时禁用（去重防止重复出现）
 const handleDropToExcluded = () => {
   if (draggedIndex.value === null) return
   const draggedItem = sourceSitesOrder.value[draggedIndex.value]
   sourceSitesOrder.value.splice(draggedIndex.value, 1)
-  excludedSites.value.push(draggedItem.name)
+  if (!excludedSites.value.includes(draggedItem.name)) {
+    excludedSites.value.push(draggedItem.name)
+  }
   draggedIndex.value = null
 }
 
