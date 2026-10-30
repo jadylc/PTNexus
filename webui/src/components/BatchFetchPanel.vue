@@ -142,7 +142,7 @@
           header-align="center"
         >
           <template #default="scope">
-            {{ Object.keys(scope.row.sites || {}).length }}
+            {{ Object.keys(getSourceSites(scope.row.sites)).length }}
           </template>
         </el-table-column>
         <el-table-column
@@ -180,7 +180,10 @@
       class="filter-overlay"
       @click.self="filterDialogVisible = false"
     >
-      <el-card class="filter-card">
+      <el-card
+        class="filter-card"
+        style="width: 90vw; max-width: 900px"
+      >
         <template #header>
           <div class="filter-card-header">
             <span>筛选选项</span>
@@ -250,7 +253,11 @@
 
     <!-- 批量获取配置弹窗 -->
     <div v-if="batchFetchDialogVisible" class="modal-overlay">
-      <el-card class="batch-fetch-card" shadow="always">
+      <el-card
+        class="batch-fetch-card"
+        style="width: 95vw; max-width: 1600px"
+        shadow="always"
+      >
         <template #header>
           <div class="modal-header">
             <span>批量获取种子数据</span>

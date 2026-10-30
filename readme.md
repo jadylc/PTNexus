@@ -256,6 +256,11 @@ wget -O - https://github.com/jadylc/PTNexus/releases/latest/download/install-pt-
 
 # 更新日志
 
+### v4.1.0（2026.10.30）
+
+- 修复：弹窗宽度改用内联 style（width/max-width 直接写在 el-card 上，优先级高于任何样式表覆盖）
+- 修复：列表「站点数」列改用过滤后的源站点数量（与「已有源站点」标签一致，禁用站点不计入）
+
 ### v4.0.99（2026.10.30）
 
 - 修复：批量获取弹窗和筛选弹窗宽度加 !important 防止被覆盖（此前宽度设置未实际生效）
