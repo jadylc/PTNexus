@@ -713,6 +713,12 @@ const loadSiteStatuses = async () => {
   try {
     const response = await axios.get('/api/sites/status', { timeout: AUXILIARY_DATA_TIMEOUT_MS })
     siteStatuses.value = response.data
+    // 同步加载禁用站点列表（面板挂载时就加载，不依赖优先级弹窗是否打开过）
+    const configResponse = await axios.get('/api/config/source_priority', { timeout: AUXILIARY_DATA_TIMEOUT_MS })
+    const configResult = configResponse.data
+    if (configResult.success && configResult.excludedSites) {
+      excludedSites.value = [...new Set(configResult.excludedSites)] as string[]
+    }
   } catch (error: unknown) {
     console.error('加载站点状态失败:', error)
   }
@@ -1511,8 +1517,8 @@ watch(nameSearch, () => {
 
 .filter-card {
   /* 加宽：站点复选框一行显示全（此前 600px 站点列显示不全） */
-  width: 90vw;
-  max-width: 900px;
+  width: 90vw !important;
+  max-width: 900px !important;
   max-height: 90vh;
   display: flex;
   flex-direction: column;
@@ -1553,10 +1559,9 @@ watch(nameSearch, () => {
 }
 
 .batch-fetch-card {
-  /* 明确宽度：max-width 需容纳所有列宽（55+400+110+200+100+100+120+300=1385+padding），
-     此前 1280px 太小导致内部横向滚动条 */
-  width: 95vw;
-  max-width: 1600px;
+  /* !important 防止 Element Plus 或其他样式覆盖宽度 */
+  width: 95vw !important;
+  max-width: 1600px !important;
   padding: 10px;
   max-height: 90vh;
   display: flex;
