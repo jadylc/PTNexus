@@ -152,7 +152,7 @@
           align="center"
           header-align="center"
         ></el-table-column>
-        <el-table-column label="已有源站点" min-width="300" header-align="center">
+        <el-table-column label="已有源站点" min-width="340" header-align="center">
           <template #default="scope">
             <el-tag
               v-for="(siteData, siteName) in getSourceSites(scope.row.sites)"
@@ -1044,7 +1044,7 @@ const closePrioritySettingsDialog = () => {
 const loadPrioritySettings = async () => {
   priorityLoading.value = true
   try {
-    // 加载所有源站点状态（同步写入 siteStatuses，供 excludedSiteList 计算属性使用）
+    // 加载所有源站点状态（同步写入 siteStatuses，供 tempExcludedSiteList 计算属性使用）
     const sitesResponse = await axios.get('/api/sites/status')
     const allSites = sitesResponse.data
     siteStatuses.value = allSites
@@ -1425,14 +1425,11 @@ const shortenPath = (path: string, maxLength: number = 50) => {
 }
 
 onMounted(async () => {
-  // 下载器、站点状态和筛选元数据不依赖已保存的弹窗筛选，先发起请求以缩短首屏等待。
-  const auxiliaryDataPromise = Promise.all([
-    fetchDownloadersList(),
-    loadSiteStatuses(),
-    fetchAllPaths(),
-  ])
+  // 站点状态和禁用列表必须先于 fetchData 完成——
+  // 否则 fetchData 发请求时 excludedSites 还是空的，首屏会出现应被过滤的种子
+  await Promise.all([fetchDownloadersList(), loadSiteStatuses(), fetchAllPaths()])
   await loadFiltersFromConfig()
-  await Promise.all([auxiliaryDataPromise, fetchData()])
+  await fetchData()
 })
 
 onUnmounted(() => {

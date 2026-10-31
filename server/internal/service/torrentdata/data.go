@@ -237,8 +237,13 @@ func (s *TorrentDataService) GetData(ctx context.Context, params TorrentsDataPar
 // 参数/返回：params 为列表参数；返回 true 时只需读取当前页 name+size 分组的明细。
 // 失败场景：无；依赖站点明细或聚合数值的筛选/排序会返回 false 并走兼容路径。
 // 副作用：无。
+// 说明：ExcludedSourceSites（优先级弹窗禁用站点）依赖行级站点明细判断
+// "所有源站点都被禁用"，不能在数据库层预分页，否则禁用过滤失效。
 func canPrePaginateTorrentGroups(params TorrentsDataParams) bool {
 	if len(params.SourceAvailabilityFilters) > 0 || len(params.ExistSiteNames) > 0 || len(params.NotExistSiteNames) > 0 {
+		return false
+	}
+	if len(params.ExcludedSourceSites) > 0 {
 		return false
 	}
 	sortProp := strings.TrimSpace(params.SortProp)
