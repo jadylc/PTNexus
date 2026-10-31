@@ -115,7 +115,7 @@
         <el-table-column
           prop="name"
           label="种子名称"
-          min-width="280"
+          min-width="400"
           show-overflow-tooltip
           header-align="center"
         ></el-table-column>
@@ -124,7 +124,7 @@
             {{ formatBytes(scope.row.size) }}
           </template>
         </el-table-column>
-        <el-table-column prop="save_path" label="保存路径" width="150" header-align="center">
+        <el-table-column prop="save_path" label="保存路径" width="90" header-align="center">
           <template #default="scope">
             <div
               :title="scope.row.save_path"
@@ -152,7 +152,7 @@
           align="center"
           header-align="center"
         ></el-table-column>
-        <el-table-column label="已有源站点" min-width="220" header-align="center">
+        <el-table-column label="已有源站点" min-width="300" header-align="center">
           <template #default="scope">
             <el-tag
               v-for="(siteData, siteName) in getSourceSites(scope.row.sites)"
