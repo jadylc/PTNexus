@@ -36,6 +36,7 @@ func (h *TorrentDataHandler) Data(c *gin.Context) {
 		SourceAvailabilityFilters: stringSliceQuery(c, "source_availability_filters"),
 		ExistSiteNames:            stringSliceQuery(c, "existSiteNames"),
 		NotExistSiteNames:         stringSliceQuery(c, "notExistSiteNames"),
+		ExcludedSourceSites:       stringSliceQuery(c, "exclude_source_sites"),
 		NameSearch:                c.Query("nameSearch"),
 		SortProp:                  c.Query("sortProp"),
 		SortOrder:                 c.Query("sortOrder"),

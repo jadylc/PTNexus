@@ -80,6 +80,28 @@ func (s *TorrentDataService) applyFilters(data []map[string]any, params Torrents
 		}
 	}
 
+	// 优先级弹窗禁用站点：禁用站点不计入可用源站点，所有源站点都被禁用的种子直接排除。
+	// （后端过滤保证 total 分页正确；前端 getSourceSites 同口径展示标签。）
+	if len(params.ExcludedSourceSites) > 0 {
+		excluded := toStringSet(params.ExcludedSourceSites)
+		filtered = filterData(filtered, func(item map[string]any) bool {
+			sitesMap, _ := item["sites"].(map[string]any)
+			for siteName := range sitesMap {
+				if _, isExcluded := excluded[siteName]; isExcluded {
+					continue
+				}
+				cfg, ok := siteConfigMap[siteName]
+				if !ok {
+					continue
+				}
+				if isAvailableBatchFetchSourceSite(siteName, cfg) {
+					return true
+				}
+			}
+			return false
+		})
+	}
+
 	if len(params.ExistSiteNames) > 0 {
 		required := toStringSet(params.ExistSiteNames)
 		filtered = filterData(filtered, func(item map[string]any) bool {

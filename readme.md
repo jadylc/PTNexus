@@ -256,6 +256,11 @@ wget -O - https://github.com/jadylc/PTNexus/releases/latest/download/install-pt-
 
 # 更新日志
 
+### v4.1.2（2026.10.30）
+
+- 修复：禁用站点过滤移到后端（exclude_source_sites 参数）——total 分页正确，不再出现前端偷删行导致条数不对的问题；保存优先级后列表自动刷新
+- 优化：批量获取表格列宽压缩（总宽 1285→945px），无需横向滚动即可看全所有列
+
 ### v4.1.1（2026.10.30）
 
 - 修复：禁用唯一源站点后种子仍留在列表——列表过滤改为渲染层响应式计算（filteredTableData），禁用站点一变列表立即更新，不再依赖保存后的手动过滤调用

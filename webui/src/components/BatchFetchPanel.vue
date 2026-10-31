@@ -98,7 +98,7 @@
     <!-- 种子列表表格 -->
     <div class="table-container">
       <el-table
-        :data="filteredTableData"
+        :data="tableData"
         v-loading="loading"
         border
         style="width: 100%"
@@ -108,23 +108,23 @@
       >
         <el-table-column
           type="selection"
-          width="55"
+          width="45"
           align="center"
           header-align="center"
         ></el-table-column>
         <el-table-column
           prop="name"
           label="种子名称"
-          min-width="400"
+          min-width="280"
           show-overflow-tooltip
           header-align="center"
         ></el-table-column>
-        <el-table-column prop="size" label="大小" width="110" align="center" header-align="center">
+        <el-table-column prop="size" label="大小" width="90" align="center" header-align="center">
           <template #default="scope">
             {{ formatBytes(scope.row.size) }}
           </template>
         </el-table-column>
-        <el-table-column prop="save_path" label="保存路径" width="200" header-align="center">
+        <el-table-column prop="save_path" label="保存路径" width="150" header-align="center">
           <template #default="scope">
             <div
               :title="scope.row.save_path"
@@ -137,7 +137,7 @@
         <el-table-column
           prop="site_count"
           label="站点数"
-          width="100"
+          width="70"
           align="center"
           header-align="center"
         >
@@ -148,11 +148,11 @@
         <el-table-column
           prop="state"
           label="状态"
-          width="120"
+          width="90"
           align="center"
           header-align="center"
         ></el-table-column>
-        <el-table-column label="已有源站点" min-width="300" header-align="center">
+        <el-table-column label="已有源站点" min-width="220" header-align="center">
           <template #default="scope">
             <el-tag
               v-for="(siteData, siteName) in getSourceSites(scope.row.sites)"
@@ -785,6 +785,7 @@ const fetchData = async () => {
       downloader_filters: JSON.stringify(activeFilters.value.downloaderIds),
       source_availability_filters: JSON.stringify(activeFilters.value.sourceSiteAvailability),
       existSiteNames: JSON.stringify(activeFilters.value.existSiteNames),
+      exclude_source_sites: JSON.stringify(excludedSites.value),
       exclude_existing: 'true', // 排除已存在于 seed_parameters 表的种子
       only_completed: 'true', // 只返回下载进度达到100%的种子
       include_metadata: 'false',
@@ -816,7 +817,7 @@ const fetchData = async () => {
         sites: item.sites || {},
         downloader_ids: item.downloader_ids || [],
       }))
-      // 全禁用种子的隐藏由 filteredTableData 计算属性在渲染层完成
+      // 全禁用种子的隐藏由后端过滤（exclude_source_sites），total 分页一致
       tableData.value = mapped
       total.value = result.total
 
@@ -1017,18 +1018,7 @@ const getSourceSites = (sites: Record<string, SiteData>) => {
   return sourceSites
 }
 
-// hasAnyUsableSite：判断种子是否还有至少一个未被禁用的可用源站点
-// 所有站点都被禁用时返回 false（种子从列表隐藏）
-const hasAnyUsableSite = (sites: Record<string, SiteData>) => {
-  const sourceSites = getSourceSites(sites)
-  return Object.keys(sourceSites).length > 0
-}
-
-// filteredTableData：渲染层响应式过滤——禁用站点一变，列表自动更新
-// （比"保存后一次性 filter"可靠：不依赖调用时机，任何路径改 excludedSites 都生效）
-const filteredTableData = computed(() =>
-  tableData.value.filter((t) => hasAnyUsableSite(t.sites)),
-)
+// 全禁用种子的过滤由后端完成（exclude_source_sites 参数），保证 total 分页一致
 
 const openBatchFetchDialog = () => {
   if (selectedRows.value.length === 0) {
@@ -1118,10 +1108,11 @@ const savePrioritySettings = async () => {
 
     if (response.data.success) {
       ElMessage.success('源站点优先级配置已保存')
-      // 确认后才同步到真实状态（filteredTableData 计算属性自动刷新列表）
+      // 确认后才同步到真实状态，并重新拉取列表（后端按新的禁用列表过滤，total 分页一致）
       excludedSites.value = [...tempExcludedSites.value]
       sourceSitesOrder.value = [...tempSourceSitesOrder.value]
       closePrioritySettingsDialog()
+      fetchData()
     } else {
       throw new Error(response.data.message || '保存失败')
     }

@@ -17,13 +17,16 @@ type TorrentsDataParams struct {
 	SourceAvailabilityFilters []string
 	ExistSiteNames            []string
 	NotExistSiteNames         []string
-	NameSearch                string
-	SortProp                  string
-	SortOrder                 string
-	ExcludeExisting           bool
-	OnlyCompleted             bool
-	SkipMetadata              bool
-	MetadataOnly              bool
+	// ExcludedSourceSites 优先级弹窗中禁用的源站点：这些站点不计入可用源站点，
+	// 所有源站点都被禁用的种子直接从列表排除（与前端 getSourceSites 口径一致）。
+	ExcludedSourceSites []string
+	NameSearch          string
+	SortProp            string
+	SortOrder           string
+	ExcludeExisting     bool
+	OnlyCompleted       bool
+	SkipMetadata        bool
+	MetadataOnly        bool
 }
 
 type siteSummary struct {
