@@ -1,9 +1,11 @@
 package fetch
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
+	"github.com/pt-nexus/server/internal/platform/logx"
 	processingshared "github.com/pt-nexus/server/internal/service/processing/shared"
 )
 
@@ -55,8 +57,11 @@ func RunBatchFetch(torrentNames []string, sourcePriority []string, excludedSites
 			continue
 		}
 
-		sourceSite, torrentID, matched := selectSourceByPriority(entries, sourcePriority, excludedSites)
-		if !matched {
+		// 按优先级顺序生成候选站点列表，逐个尝试抓取：
+		// 高优站点失败（CF 挑战、网络错误、详情页 404 等）自动切换下一个站点，
+		// 直到某个站点成功；全部失败才报错（附各站点失败原因）。
+		candidates := selectSourceCandidatesByPriority(entries, sourcePriority, excludedSites)
+		if len(candidates) == 0 {
 			result["status"] = "failed"
 			result["reason"] = "未找到可用源站点或详情ID"
 			result["attempted_sites"] = len(entries)
@@ -69,28 +74,46 @@ func RunBatchFetch(torrentNames []string, sourcePriority []string, excludedSites
 		if deps.FetchAndStore == nil {
 			result["status"] = "failed"
 			result["reason"] = "内部错误：FetchAndStore 回调未配置"
-			result["source_site"] = sourceSite
-			result["torrent_id"] = torrentID
 			emit(false, result)
 			continue
 		}
 
-		fetchResult, status := deps.FetchAndStore(map[string]any{
-			"sourceSite":           sourceSite,
-			"searchTerm":           torrentID,
-			"torrentName":          name,
-			"savePath":             savePath,
-			"downloaderId":         downloaderID,
-			"screenshotReviewMode": processingshared.ScreenshotReviewModeBackground,
-		})
-		if status != 200 || !isSuccessResult(fetchResult) {
+		attemptFailures := make([]string, 0, len(candidates))
+		var succeededSite, succeededID string
+		var fetchResult map[string]any
+		successStatus := 0
+		for _, candidate := range candidates {
+			if deps.ShouldCancel != nil && deps.ShouldCancel() {
+				return
+			}
+			attemptResult, attemptStatus := deps.FetchAndStore(map[string]any{
+				"sourceSite":           candidate.site,
+				"searchTerm":           candidate.torrentID,
+				"torrentName":          name,
+				"savePath":             savePath,
+				"downloaderId":         downloaderID,
+				"screenshotReviewMode": processingshared.ScreenshotReviewModeBackground,
+			})
+			if attemptStatus == 200 && isSuccessResult(attemptResult) {
+				succeededSite = candidate.site
+				succeededID = candidate.torrentID
+				fetchResult = attemptResult
+				successStatus = attemptStatus
+				break
+			}
+			reason := toStringAny(attemptResult["message"], "抓取失败")
+			attemptFailures = append(attemptFailures, fmt.Sprintf("%s: %s", candidate.site, reason))
+			logx.Warnf("迁移-种子下载", "源站点抓取失败，尝试下一个候选 source_site=%s torrent_name=%s err=%s", candidate.site, name, reason)
+		}
+
+		if len(attemptFailures) == len(candidates) {
 			result["status"] = "failed"
-			result["reason"] = toStringAny(fetchResult["message"], "抓取失败")
-			result["source_site"] = sourceSite
-			result["torrent_id"] = torrentID
+			result["reason"] = "所有候选源站点均抓取失败: " + strings.Join(attemptFailures, "; ")
+			result["attempted_sites"] = len(candidates)
 			emit(false, result)
 			continue
 		}
+		_ = successStatus
 
 		screenshotReviewStatus := processingshared.NormalizeScreenshotReviewStatus(toStringAny(fetchResult["screenshot_review_status"], processingshared.ScreenshotReviewStatusNone))
 		if processingshared.NeedsScreenshotManualReview(screenshotReviewStatus) {
@@ -100,8 +123,8 @@ func RunBatchFetch(torrentNames []string, sourcePriority []string, excludedSites
 			result["status"] = "success"
 			result["message"] = "抓取成功"
 		}
-		result["source_site"] = sourceSite
-		result["torrent_id"] = torrentID
+		result["source_site"] = succeededSite
+		result["torrent_id"] = succeededID
 		result["task_id"] = toStringAny(fetchResult["task_id"], "")
 		result["screenshot_review_status"] = screenshotReviewStatus
 		emit(true, result)
@@ -109,8 +132,21 @@ func RunBatchFetch(torrentNames []string, sourcePriority []string, excludedSites
 	}
 }
 
-func selectSourceByPriority(entries []map[string]any, sourcePriority []string, excludedSites []string) (string, string, bool) {
+// sourceCandidate 表示一个可尝试的源站点候选（站点标识 + 站点内部 torrent_id）。
+type sourceCandidate struct {
+	site      string
+	torrentID string
+}
+
+// selectSourceCandidatesByPriority 按优先级顺序生成候选源站点列表。
+// 参数/返回：entries 为同名种子的 torrents 行；sourcePriority 为站点优先级；
+// excludedSites 为屏蔽站点；返回按优先级排序的候选列表（无优先级匹配时按站点出现顺序兜底）。
+// 失败场景：无可尝试站点时返回空列表。
+// 副作用：无。
+// 说明：调用方对候选逐个尝试抓取，一个成功即停——高优站点失败自动切换后续站点。
+func selectSourceCandidatesByPriority(entries []map[string]any, sourcePriority []string, excludedSites []string) []sourceCandidate {
 	sourceBySite := map[string]string{}
+	order := make([]string, 0, 4)
 	for _, row := range entries {
 		sites := splitSiteList(toStringAny(row["sites"], ""))
 		if len(sites) == 0 {
@@ -124,28 +160,44 @@ func selectSourceByPriority(entries []map[string]any, sourcePriority []string, e
 			if isSiteExcluded(site, excludedSites) {
 				continue
 			}
+			if _, exists := sourceBySite[site]; exists {
+				continue
+			}
 			torrentID := resolveSiteTorrentID(siteIDs, site, details, rowHash)
 			if torrentID == "" {
 				continue
 			}
 			sourceBySite[site] = torrentID
+			order = append(order, site)
 		}
 	}
 	if len(sourceBySite) == 0 {
-		return "", "", false
+		return nil
 	}
 
+	candidates := make([]sourceCandidate, 0, len(sourceBySite))
+	used := map[string]struct{}{}
+	// 先按优先级顺序排列
 	for _, preferred := range sourcePriority {
-		for site, torrentID := range sourceBySite {
+		for _, site := range order {
+			if _, usedOK := used[site]; usedOK {
+				continue
+			}
 			if strings.EqualFold(site, preferred) {
-				return site, torrentID, true
+				candidates = append(candidates, sourceCandidate{site: site, torrentID: sourceBySite[site]})
+				used[site] = struct{}{}
+				break
 			}
 		}
 	}
-	for site, torrentID := range sourceBySite {
-		return site, torrentID, true
+	// 兜底：优先级未覆盖的站点按出现顺序追加（仍可尝试）
+	for _, site := range order {
+		if _, usedOK := used[site]; !usedOK {
+			candidates = append(candidates, sourceCandidate{site: site, torrentID: sourceBySite[site]})
+			used[site] = struct{}{}
+		}
 	}
-	return "", "", false
+	return candidates
 }
 
 // isSiteExcluded 判断站点是否在屏蔽列表中（大小写不敏感）。

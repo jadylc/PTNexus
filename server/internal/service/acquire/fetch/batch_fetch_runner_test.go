@@ -129,12 +129,12 @@ func TestSelectSourceByPriorityUsesSiteIDs(t *testing.T) {
 			},
 		},
 	}
-	site, torrentID, matched := selectSourceByPriority(entries, []string{"彩虹岛"}, nil)
-	if !matched {
-		t.Fatalf("expected match")
+	candidates := selectSourceCandidatesByPriority(entries, []string{"彩虹岛"}, nil)
+	if len(candidates) == 0 {
+		t.Fatalf("expected candidates")
 	}
-	if site != "彩虹岛" || torrentID != "593793" {
-		t.Fatalf("expected 彩虹岛/593793, got %s/%s", site, torrentID)
+	if candidates[0].site != "彩虹岛" || candidates[0].torrentID != "593793" {
+		t.Fatalf("expected 彩虹岛/593793, got %s/%s", candidates[0].site, candidates[0].torrentID)
 	}
 }
 
@@ -146,8 +146,8 @@ func TestSelectSourceByPrioritySkipsUnknownIDs(t *testing.T) {
 			"details": "",
 		},
 	}
-	if _, _, matched := selectSourceByPriority(entries, []string{"彩虹岛"}, nil); matched {
-		t.Fatalf("expected no match when no usable id is available")
+	if candidates := selectSourceCandidatesByPriority(entries, []string{"彩虹岛"}, nil); len(candidates) != 0 {
+		t.Fatalf("expected no candidates when no usable id is available, got %v", candidates)
 	}
 }
 
@@ -202,12 +202,15 @@ func TestSelectSourceByPriorityHandlesMultiSiteRow(t *testing.T) {
 			},
 		},
 	}
-	site, torrentID, matched := selectSourceByPriority(entries, []string{"彩虹岛"}, nil)
-	if !matched {
-		t.Fatalf("expected match for 彩虹岛 in multi-site row")
+	candidates := selectSourceCandidatesByPriority(entries, []string{"彩虹岛"}, nil)
+	if len(candidates) == 0 {
+		t.Fatalf("expected candidates for 彩虹岛 in multi-site row")
 	}
-	if site != "彩虹岛" || torrentID != "593793" {
-		t.Fatalf("expected 彩虹岛/593793, got %s/%s", site, torrentID)
+	if candidates[0].site != "彩虹岛" || candidates[0].torrentID != "593793" {
+		t.Fatalf("expected 彩虹岛/593793 first, got %s/%s", candidates[0].site, candidates[0].torrentID)
+	}
+	if len(candidates) != 2 || candidates[1].site != "ssd" {
+		t.Fatalf("expected ssd as second fallback candidate, got %v", candidates)
 	}
 }
 
