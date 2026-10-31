@@ -10,75 +10,77 @@
       style="margin-bottom: 15px"
     ></el-alert>
 
-    <!-- 搜索和控制栏 -->
+    <!-- 搜索和控制栏：第一行筛选项，第二行条数/每页条数/页码，避免横向溢出产生外框滚动条 -->
     <div class="search-and-controls">
-      <el-input
-        v-model="nameSearch"
-        placeholder="搜索名称..."
-        clearable
-        class="search-input"
-        style="width: 300px; margin-right: 15px"
-      />
+      <div class="controls-row">
+        <el-input
+          v-model="nameSearch"
+          placeholder="搜索名称..."
+          clearable
+          class="search-input"
+          style="width: 300px; margin-right: 15px"
+        />
 
-      <!-- 筛选按钮 -->
-      <el-button type="primary" @click="openFilterDialog" plain style="margin-right: 15px">
-        筛选
-      </el-button>
-      <el-button
-        type="primary"
-        :icon="Refresh"
-        :loading="loading"
-        @click="handleRefreshListClick"
-        plain
-        style="margin-right: 15px"
-      >
-        刷新列表
-      </el-button>
-      <div
-        v-if="hasActiveFilters"
-        class="current-filters"
-        style="margin-right: 15px; display: flex; align-items: center"
-      >
-        <el-tag type="info" size="default" effect="plain">{{ currentFilterText }}</el-tag>
-        <el-button type="danger" link style="padding: 0; margin-left: 8px" @click="clearFilters"
-          >清除</el-button
+        <!-- 筛选按钮 -->
+        <el-button type="primary" @click="openFilterDialog" plain style="margin-right: 15px">
+          筛选
+        </el-button>
+        <el-button
+          type="primary"
+          :icon="Refresh"
+          :loading="loading"
+          @click="handleRefreshListClick"
+          plain
+          style="margin-right: 15px"
         >
+          刷新列表
+        </el-button>
+        <div
+          v-if="hasActiveFilters"
+          class="current-filters"
+          style="margin-right: 15px; display: flex; align-items: center"
+        >
+          <el-tag type="info" size="default" effect="plain">{{ currentFilterText }}</el-tag>
+          <el-button type="danger" link style="padding: 0; margin-left: 8px" @click="clearFilters"
+            >清除</el-button
+          >
+        </div>
+
+        <!-- 设置优先级按钮 -->
+        <el-button
+          type="warning"
+          @click="openPrioritySettingsDialog"
+          plain
+          style="margin-right: 15px"
+        >
+          <el-icon style="margin-right: 5px">
+            <Setting />
+          </el-icon>
+          设置优先级
+        </el-button>
+
+        <!-- 批量获取按钮 -->
+        <el-button
+          type="success"
+          @click="openBatchFetchDialog"
+          plain
+          style="margin-right: 15px"
+          :disabled="selectedRows.length === 0"
+        >
+          批量获取数据 ({{ selectedRows.length }})
+        </el-button>
+
+        <!-- 查看进度按钮 -->
+        <el-button
+          v-if="currentTaskId"
+          type="info"
+          @click="openProgressDialog"
+          plain
+          style="margin-right: 15px"
+        >
+          查看进度
+        </el-button>
       </div>
-
-      <!-- 设置优先级按钮 -->
-      <el-button
-        type="warning"
-        @click="openPrioritySettingsDialog"
-        plain
-        style="margin-right: 15px"
-      >
-        <el-icon style="margin-right: 5px">
-          <Setting />
-        </el-icon>
-        设置优先级
-      </el-button>
-
-      <!-- 批量获取按钮 -->
-      <el-button
-        type="success"
-        @click="openBatchFetchDialog"
-        plain
-        style="margin-right: 15px"
-        :disabled="selectedRows.length === 0"
-      >
-        批量获取数据 ({{ selectedRows.length }})
-      </el-button>
-
-      <!-- 查看进度按钮 -->
-      <el-button
-        v-if="currentTaskId"
-        type="info"
-        @click="openProgressDialog"
-        plain
-        style="margin-right: 15px"
-      >
-        查看进度
-      </el-button>
 
       <div class="pagination-controls" v-if="tableData.length > 0">
         <el-pagination
@@ -1468,16 +1470,24 @@ watch(nameSearch, () => {
 }
 
 .search-and-controls {
+  /* 两行布局：第一行筛选项按钮，第二行条数/每页条数/页码，避免单行溢出产生外框横向滚动条 */
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  gap: 8px;
   padding: 10px 15px;
   background-color: #ffffff;
   border-bottom: 1px solid #ebeef5;
   flex-shrink: 0;
 }
 
+.controls-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 0;
+}
+
 .pagination-controls {
-  flex: 1;
   display: flex;
   justify-content: flex-end;
 }
