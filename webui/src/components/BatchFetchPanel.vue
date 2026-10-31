@@ -115,7 +115,7 @@
         <el-table-column
           prop="name"
           label="种子名称"
-          min-width="400"
+          min-width="350"
           show-overflow-tooltip
           header-align="center"
         ></el-table-column>
@@ -152,7 +152,7 @@
           align="center"
           header-align="center"
         ></el-table-column>
-        <el-table-column label="已有源站点" min-width="340" header-align="center">
+        <el-table-column label="已有源站点" min-width="300" header-align="center">
           <template #default="scope">
             <el-tag
               v-for="(siteData, siteName) in getSourceSites(scope.row.sites)"
