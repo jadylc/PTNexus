@@ -818,6 +818,30 @@ func (s *MigrateService) executePublishQueueTask(cfg publishQueueConfig, taskRec
 		torrentID = strings.TrimSpace(processingshared.ToString(uploadData["torrent_id"], ctx.TorrentID))
 	}
 
+	// 兜底：ContextJSON 的 Name 可能缺失（入队时 lookup 未命中名称等）。
+	// torrent_id 为 infohash 时，抓取源站需要按种子名搜索定位数字 ID——名称缺失会直接失败。
+	// 依次从上传数据、下载器记录（torrents 表按 hash）补齐。
+	if strings.TrimSpace(ctx.Name) == "" {
+		if name := strings.TrimSpace(processingshared.ToString(uploadData["name"], "")); name != "" {
+			ctx.Name = name
+			logx.Warnf(publishQueueLogModule, "上下文缺失名称，已从上传数据补齐 name=%s", name)
+		}
+	}
+	if strings.TrimSpace(ctx.Name) == "" {
+		hash := strings.TrimSpace(firstNonEmptyString(ctx.Hash, torrentID))
+		if hash != "" {
+			if row, rowErr := s.repo.GetCurrentTorrentByHash(hash); rowErr == nil && len(row) > 0 {
+				if name := strings.TrimSpace(processingshared.ToString(row["name"], "")); name != "" {
+					ctx.Name = name
+					if strings.TrimSpace(ctx.Hash) == "" {
+						ctx.Hash = hash
+					}
+					logx.Warnf(publishQueueLogModule, "上下文缺失名称，已从下载器记录补齐 hash=%s name=%s", hash, name)
+				}
+			}
+		}
+	}
+
 	execTaskID := strings.TrimSpace(taskRecord.TaskID)
 	if execTaskID == "" {
 		execTaskID = fmt.Sprintf("queue-%d", taskID)
@@ -864,6 +888,7 @@ func (s *MigrateService) executePublishQueueTask(cfg publishQueueConfig, taskRec
 					TorrentID:           ctx.TorrentID,
 					SourceNickname:      ctx.SourceNickname,
 					SourceDetailURL:     ctx.SourceDetailURL,
+					TorrentName:         ctx.Name,
 				})
 			},
 			AddToDownloader:         s.AddToDownloader,

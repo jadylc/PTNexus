@@ -10,6 +10,8 @@ type ResolvePublishTorrentPathInput struct {
 	TorrentID           string
 	SourceNickname      string
 	SourceDetailURL     string
+	// TorrentName 为种子名（下载器内名称）——torrent_id 为 infohash 时按名搜索站点定位数字 ID 必需。
+	TorrentName string
 }
 
 // ResolvePublishTorrentPath 为发布阶段定位可用 torrent 文件路径。
@@ -44,7 +46,8 @@ func ResolvePublishTorrentPath(reader SiteInfoReader, input ResolvePublishTorren
 	if sourceErr != nil {
 		return ""
 	}
-	downloadedPath, _, _, dlErr := DownloadTorrentForSource(sourceInfo, sourceDetailURL)
+	// 带名字提示下载：torrent_id 为 infohash 时按种子名搜索站点定位数字 ID
+	downloadedPath, _, _, dlErr := DownloadTorrentForSourceWithHint(sourceInfo, sourceDetailURL, input.TorrentName)
 	if dlErr != nil {
 		return ""
 	}
