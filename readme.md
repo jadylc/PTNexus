@@ -256,6 +256,10 @@ wget -O - https://github.com/jadylc/PTNexus/releases/latest/download/install-pt-
 
 # 更新日志
 
+### v4.2.9（2026.11.02）
+
+- 诊断：批量自动检测「简介缺少关键字段」的失败原因附后端实际读到的正文长度与开头预览——用于定位与维护面板展示内容不一致的数据来源问题
+
 ### v4.2.8（2026.11.02）
 
 - 修复：批量自动检测不再被「截图待人工确认」拦截——存量 pending 状态的行按直接通过口径处理，通过时 pending 顺带清为 confirmed（否则发布预览仍会被 pending 拦截）

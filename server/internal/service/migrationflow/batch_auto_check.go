@@ -19,6 +19,20 @@ const batchAutoCheckLogModule = "迁移-批量自动检测"
 // 标准键格式 形如 xxx.yyy（字母/数字/下划线/横杠 + 点 + 字母/数字/下划线/加号/横杠）。
 var flexibleStandardValueRegex = regexp.MustCompile(`^[\p{L}\p{N}_-]+\.[\p{L}\p{N}_+-]+$`)
 
+// bodyPreview 取正文开头预览（换行折叠，用于诊断日志与失败原因）。
+// 参数/返回：body 为正文；limit 为最大字符数；返回单行预览文本。
+// 失败场景：不适用。
+// 副作用：无。
+func bodyPreview(body string, limit int) string {
+	preview := strings.Join(strings.Fields(body), " ")
+	runes := []rune(preview)
+	if limit > 0 && len(runes) > limit {
+		runes = runes[:limit]
+		preview = string(runes) + "…"
+	}
+	return preview
+}
+
 // batchCheckItemResult 单条种子的自动检测结果。
 type batchCheckItemResult struct {
 	TorrentID string   `json:"torrent_id"`
@@ -141,11 +155,16 @@ func (s *MigrateService) autoCheckOneSeed(torrentID, siteName string) batchCheck
 		result.Problems = append(result.Problems, "截图为空")
 	}
 
-	// 3. 简介正文完整性（片名/产地/简介）
+	// 3. 简介正文完整性（片名/产地/简介）；附正文长度与开头预览，便于诊断口径差异
 	if body != "" {
 		if completeness := processingrepair.CheckIntroBodyCompleteness(body); !completeness.IsComplete {
-			result.Problems = append(result.Problems, "简介缺少关键字段: "+strings.Join(completeness.MissingFields, "、"))
+			bodyPreview := bodyPreview(body, 60)
+			result.Problems = append(result.Problems,
+				fmt.Sprintf("简介缺少关键字段: %s（后端读到的正文 %d 字，开头: %s）",
+					strings.Join(completeness.MissingFields, "、"), len([]rune(body)), bodyPreview))
 		}
+	} else {
+		result.Problems = append(result.Problems, "简介正文为空（后端未读到 body）")
 	}
 
 	// 4. 标准参数（BuildStandardizedParams 重建，tags 是数组单独提取）
