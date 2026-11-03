@@ -19,6 +19,13 @@
   ],
   "history": [
     {
+      "version": "v4.3.1",
+      "date": "2026.11.02",
+      "changes": [
+        "修复：批量自动检测误报「简介为空」——误把 statement（声明，面板「海报与声明」页签的字段）当作简介判空；前端口径只检查 poster/screenshots/body 三项，已对齐移除 statement 检查，文案更正为「正文」"
+      ]
+    },
+    {
       "version": "v4.3.0",
       "date": "2026.11.03",
       "changes": [

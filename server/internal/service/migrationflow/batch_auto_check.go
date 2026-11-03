@@ -140,22 +140,21 @@ func (s *MigrateService) autoCheckOneSeed(torrentID, siteName string) batchCheck
 		result.Problems = append(result.Problems, "存在无法识别的标题内容: "+unrecognized)
 	}
 
-	// 2. 简介/海报/截图非空
-	statement := strings.TrimSpace(processingshared.ToString(normalized["statement"], ""))
+	// 2. 海报/截图/正文非空（对齐前端口径：poster/screenshots/body 三项，statement 不检查）
 	poster := strings.TrimSpace(processingshared.ToString(normalized["poster"], ""))
 	screenshots := strings.TrimSpace(processingshared.ToString(normalized["screenshots"], ""))
 	body := strings.TrimSpace(processingshared.ToString(normalized["body"], ""))
-	if statement == "" {
-		result.Problems = append(result.Problems, "简介为空")
-	}
 	if poster == "" {
 		result.Problems = append(result.Problems, "海报为空")
 	}
 	if screenshots == "" {
 		result.Problems = append(result.Problems, "截图为空")
 	}
+	if body == "" {
+		result.Problems = append(result.Problems, "正文为空")
+	}
 
-	// 3. 简介正文完整性（片名/产地/简介）；附正文长度与开头预览，便于诊断口径差异
+	// 3. 正文完整性（片名/产地/简介）；附正文长度与开头预览，便于诊断口径差异
 	if body != "" {
 		if completeness := processingrepair.CheckIntroBodyCompleteness(body); !completeness.IsComplete {
 			bodyPreview := bodyPreview(body, 60)
@@ -164,7 +163,7 @@ func (s *MigrateService) autoCheckOneSeed(torrentID, siteName string) batchCheck
 					strings.Join(completeness.MissingFields, "、"), len([]rune(body)), bodyPreview))
 		}
 	} else {
-		result.Problems = append(result.Problems, "简介正文为空（后端未读到 body）")
+		result.Problems = append(result.Problems, "正文为空（后端未读到 body）")
 	}
 
 	// 4. 标准参数（BuildStandardizedParams 重建，tags 是数组单独提取）

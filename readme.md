@@ -256,6 +256,10 @@ wget -O - https://github.com/jadylc/PTNexus/releases/latest/download/install-pt-
 
 # 更新日志
 
+### v4.3.1（2026.11.02）
+
+- 修复：批量自动检测误报「简介为空」——误把 statement（声明，面板「海报与声明」页签的字段）当作简介判空；前端口径只检查 poster/screenshots/body 三项，已对齐移除 statement 检查，文案更正为「正文」
+
 ### v4.3.0（2026.11.03）
 
 - 优化：「重新获取截图」提示文案与实际行为对齐——仅存在字幕流但未能确认为中文字幕时才生成候选截图供手动选择；未检测到字幕流直接按字幕流直出生成正式截图
