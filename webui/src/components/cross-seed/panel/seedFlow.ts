@@ -544,36 +544,34 @@ export function createSeedFlow(deps: SeedFlowDeps): SeedFlowApi {
     await nextTick()
     if (options.monitorKey && options.monitorTitle) {
       updateFetchTaskStage(options.monitorKey, options.taskIdValue, {
-        message: `${options.monitorTitle}：正在校验截图有效性`,
-        progressText: '正在逐张检查截图链接',
+        message: `${options.monitorTitle}：维护表单已就绪`,
+        progressText: '表单可编辑；截图有效性在后台校验',
         routeTarget: monitorRouteTarget,
       })
     }
-    const screenshotValidationResult = await checkScreenshotValidity(({ index, totalCount, url }) => {
+    // 截图有效性校验改为后台异步执行：不再阻塞表单加载与「修改完成」按钮。
+    // 图床响应慢时逐张 <img> 校验会卡住整个页面数分钟，而后端入库前已做过并发校验，
+    // 前端这轮只是补充检查——发现失效图时非阻塞提示即可。
+    void checkScreenshotValidity(({ index, totalCount, url }) => {
       if (!options.monitorKey || !options.monitorTitle) return
       updateFetchTaskStage(options.monitorKey, options.taskIdValue, {
-        message: `${options.monitorTitle}：正在校验截图有效性`,
+        message: `${options.monitorTitle}：后台校验截图有效性`,
         progressText: `正在校验第 ${index}/${totalCount} 张截图（${formatScreenshotUrlForMessage(url)}）`,
         routeTarget: monitorRouteTarget,
       })
-    })
-    if (!screenshotValidationResult.allValid) {
-      const validationMessage =
-        screenshotValidationResult.detailMessage || '截图校验失败，请手动修复或重新获取截图。'
-      if (options.monitorKey && options.monitorTitle) {
-        updateFetchTaskStage(options.monitorKey, options.taskIdValue, {
-          message: `${options.monitorTitle}：截图校验异常`,
-          progressText: validationMessage,
-          routeTarget: monitorRouteTarget,
+    }).then((screenshotValidationResult) => {
+      screenshotValid.value = screenshotValidationResult.allValid
+      if (!screenshotValidationResult.allValid) {
+        const validationMessage =
+          screenshotValidationResult.detailMessage || '截图校验失败，请手动修复或重新获取截图。'
+        ElNotification.warning({
+          title: '截图校验异常',
+          message: `${validationMessage}。请手动修复或重新获取截图。`,
+          duration: 10000,
+          showClose: true,
         })
       }
-      ElNotification.warning({
-        title: '截图校验异常',
-        message: `${validationMessage}。维护表单已继续加载，请手动修复或重新获取截图。`,
-        duration: 0,
-        showClose: true,
-      })
-    }
+    })
     if (options.screenshotPreviewRequired) {
       if (options.monitorKey && options.monitorTitle) {
         updateFetchTaskStage(options.monitorKey, options.taskIdValue, {
@@ -584,7 +582,12 @@ export function createSeedFlow(deps: SeedFlowDeps): SeedFlowApi {
       }
       await openFetchedScreenshotPreview()
     }
-    return screenshotValidationResult
+    // 截图校验已改为后台异步，这里返回占位结果（screenshotValid 会在后台校验完成后更新）
+    return {
+      allValid: true,
+      checkedCount: 0,
+      totalCount: 0,
+    }
   }
 
   const buildFetchStorePayload = (
@@ -1010,14 +1013,8 @@ export function createSeedFlow(deps: SeedFlowDeps): SeedFlowApi {
           kind: 'seed_fetch',
           rawId: taskId.value || activeFetchTaskId,
           title: '抓取源种子信息',
-          message: prefetchedDbSeedInfo
-            ? screenshotValidationResult.allValid
-              ? '维护数据已加载完成'
-              : '维护数据已加载，截图需人工检查'
-            : '数据库缓存读取完成',
-          progressText: screenshotValidationResult.allValid
-            ? '可继续核对并修改完成'
-            : screenshotValidationResult.detailMessage || '截图校验异常，请手动修复或重新获取',
+          message: '数据库缓存读取完成',
+          progressText: '维护表单已就绪，截图有效性后台校验中',
           routeTarget: buildFetchRouteTarget({
             taskId: taskId.value || activeFetchTaskId,
             status: 'success',
