@@ -1719,7 +1719,7 @@ const refreshScreenshots = async () => {
   screenshotPreviewCache.value = {}
   ElNotification.info({
     title: '正在重新获取截图',
-    message: '正在检查字幕流；若无法确认中文字幕，将生成候选截图供手动选择...',
+    message: '正在检查字幕流并生成截图；若存在字幕流但未能确认为中文字幕，才会生成候选截图供手动选择。',
     duration: 0,
   })
 
