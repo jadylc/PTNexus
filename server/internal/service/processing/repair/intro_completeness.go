@@ -45,6 +45,14 @@ var introRequiredPatterns = map[string][]*regexp.Regexp{
 
 var introCriticalFields = []string{"片名", "产地", "简介"}
 
+// CheckIntroBodyCompleteness 按前端一致规则检查简介正文是否包含关键字段（导出包装）。
+// 参数/返回：bodyText 为简介正文；返回完整性结果（IsComplete + 缺失字段列表）。
+// 失败场景：不适用。
+// 副作用：无。
+func CheckIntroBodyCompleteness(bodyText string) introCompletenessResult {
+	return checkIntroBodyCompleteness(bodyText)
+}
+
 // checkIntroBodyCompleteness 按前端一致规则检查简介正文是否包含关键字段。
 func checkIntroBodyCompleteness(bodyText string) introCompletenessResult {
 	result := introCompletenessResult{

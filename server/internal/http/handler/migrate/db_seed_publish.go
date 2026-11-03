@@ -89,8 +89,24 @@ func (h *Handler) UpdateDBSeedInfo(c *gin.Context) {
 	if status >= http.StatusBadRequest {
 		logx.Warnf(updateDBSeedHandlerLogModule, "请求结束 请求ID=%s torrent_id=%s site_name=%s 状态码=%d", requestID, torrentID, siteName, status)
 	} else {
-		logx.Infof(updateDBSeedHandlerLogModule, "请求结束 请求ID=%s torrent_id=%s site_name=%s 状态码=%d", requestID, torrentID, siteName, status)
+		logx.Warnf(updateDBSeedHandlerLogModule, "请求结束 请求ID=%s torrent_id=%s site_name=%s 状态码=%d", requestID, torrentID, siteName, status)
 	}
+	c.JSON(status, result)
+}
+
+// BatchAutoCheck 维护列表批量自动检测：对勾选行执行"修改完成可点"同口径校验。
+// 参数/返回：payload.items 为 [{torrent_id, site_name}]；返回逐条结果与汇总。
+// 失败场景：items 缺失返回 400。
+// 副作用：全部通过的行将 is_reviewed 置为 true。
+func (h *Handler) BatchAutoCheck(c *gin.Context) {
+	requestID := c.GetString("request_id")
+	payload, ok := bindMapPayload(c)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "请求体格式错误"})
+		return
+	}
+	logx.Infof("迁移接口-批量自动检测", "收到请求 请求ID=%s", requestID)
+	result, status := h.service.BatchAutoCheck(payload)
 	c.JSON(status, result)
 }
 

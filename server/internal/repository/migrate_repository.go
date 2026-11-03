@@ -354,6 +354,14 @@ func (r *MigrateRepository) UpdateSeedParameterByKey(hash, torrentID, siteName s
 	return r.store.DB.Table("seed_parameters").Where("hash = ? AND torrent_id = ? AND site_name = ?", hash, torrentID, siteName).Updates(updates).Error
 }
 
+// UpdateSeedParameterReviewed 将指定种子的 is_reviewed 置为 true（批量自动检测通过时调用）。
+// 参数/返回：torrentID/siteName 定位行；返回 error 表示更新失败。
+// 失败场景：行不存在时 GORM 不报错但也不更新——调用方无需区分。
+// 副作用：写 seed_parameters.is_reviewed。
+func (r *MigrateRepository) UpdateSeedParameterReviewed(torrentID, siteName string) error {
+	return r.store.DB.Table("seed_parameters").Where("torrent_id = ? AND site_name = ?", torrentID, siteName).Update("is_reviewed", true).Error
+}
+
 func (r *MigrateRepository) ListTorrentsByNames(names []string) ([]map[string]any, error) {
 	rows := make([]map[string]any, 0)
 	if len(names) == 0 {

@@ -48,6 +48,18 @@
         获取数据
       </el-button>
 
+      <el-button
+        v-if="isMaintenanceMode && reviewStatusFilter === 'unreviewed'"
+        type="success"
+        :disabled="selectedRows.length === 0"
+        :loading="batchAutoChecking"
+        plain
+        style="margin-right: 15px"
+        @click="runBatchAutoCheck"
+      >
+        批量自动检测 ({{ selectedRows.length }})
+      </el-button>
+
       <el-tooltip
         v-if="isMaintenanceMode"
         :content="selectedRows.length > 0
@@ -1364,6 +1376,60 @@ const reparseAllComponents = async () => {
     ElMessage.error(message)
   } finally {
     reparseComponents.value = false
+  }
+}
+
+// 批量自动检测：对勾选行执行与「点开维护、修改完成按钮可点」一致的校验口径，
+// 全部通过的行为自动标记 is_reviewed=true（等价于逐个点开确认修改完成）。
+const batchAutoChecking = ref(false)
+const runBatchAutoCheck = async () => {
+  if (batchAutoChecking.value) return
+  if (selectedRows.value.length === 0) {
+    ElMessage.warning('请先勾选要检测的行')
+    return
+  }
+
+  batchAutoChecking.value = true
+  try {
+    const response = await axios.post('/api/migrate/batch_auto_check', {
+      items: selectedRows.value.map((row) => ({
+        torrent_id: row.torrent_id,
+        site_name: row.site_name,
+      })),
+    })
+    const result = response.data
+    if (!result?.success) {
+      throw new Error(result?.message || '批量自动检测失败')
+    }
+
+    const failedItems = (result.results || []).filter((item: any) => !item.passed)
+    if (failedItems.length === 0) {
+      ElMessage.success(`批量自动检测完成：${result.passed} 条全部通过，已标记为已检查`)
+    } else {
+      const firstProblem = failedItems[0]?.problems?.[0] || ''
+      const detail =
+        failedItems.length <= 3
+          ? failedItems
+              .map((item: any) => `${item.site_name}/${item.torrent_id}: ${(item.problems || []).join('、')}`)
+              .join('；')
+          : `首批问题：${failedItems[0].site_name}/${failedItems[0].torrent_id}: ${(failedItems[0].problems || []).join('、')} 等`
+      ElMessage.warning({
+        message: `检测完成：通过 ${result.passed} 条（已标记已检查），部分失败 ${result.failed} 条。${detail || firstProblem}`,
+        duration: 0,
+        showClose: true,
+      })
+    }
+    selectedRows.value = []
+    await fetchData()
+  } catch (error: unknown) {
+    const message = axios.isAxiosError(error)
+      ? String(error.response?.data?.message || error.message)
+      : error instanceof Error
+        ? error.message
+        : '批量自动检测失败'
+    ElMessage.error(message)
+  } finally {
+    batchAutoChecking.value = false
   }
 }
 
