@@ -19,6 +19,13 @@
   ],
   "history": [
     {
+      "version": "v4.2.8",
+      "date": "2026.11.02",
+      "changes": [
+        "修复：批量自动检测不再被「截图待人工确认」拦截——存量 pending 状态的行按直接通过口径处理，通过时 pending 顺带清为 confirmed（否则发布预览仍会被 pending 拦截）"
+      ]
+    },
+    {
       "version": "v4.2.7",
       "date": "2026.11.03",
       "changes": [

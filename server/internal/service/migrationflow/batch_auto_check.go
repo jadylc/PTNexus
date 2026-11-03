@@ -212,16 +212,20 @@ func (s *MigrateService) autoCheckOneSeed(torrentID, siteName string) batchCheck
 		}
 	}
 
-	// 8. 截图待人工确认
-	if reviewStatus := strings.TrimSpace(processingshared.ToString(normalized["screenshot_review_status"], "")); reviewStatus == processingshared.ScreenshotReviewStatusPending {
-		result.Problems = append(result.Problems, "截图待人工确认")
-	}
+	// 8. 截图待人工确认：不再拦截——按"直接通过"口径，通过时顺带把 pending 清为 confirmed
+	reviewStatus := strings.TrimSpace(processingshared.ToString(normalized["screenshot_review_status"], ""))
 
 	result.Passed = len(result.Problems) == 0
 
 	// 全部通过：等价于用户点开维护、按钮可点、点了修改完成 → is_reviewed=true
 	if result.Passed {
-		if err := s.repo.UpdateSeedParameterReviewed(torrentID, siteName); err != nil {
+		// pending 状态一并清为 confirmed：批量检测已替代人工逐条确认，
+		// 否则发布预览仍会被 pending 拦截
+		screenshotStatus := ""
+		if reviewStatus == processingshared.ScreenshotReviewStatusPending {
+			screenshotStatus = processingshared.ScreenshotReviewStatusConfirmed
+		}
+		if err := s.repo.UpdateSeedParameterReviewed(torrentID, siteName, screenshotStatus); err != nil {
 			logx.Warnf(batchAutoCheckLogModule, "写入 is_reviewed 失败 torrent_id=%s site=%s err=%v", torrentID, siteName, err)
 			result.Problems = append(result.Problems, "标记已检查失败: "+err.Error())
 			result.Passed = false
