@@ -1415,7 +1415,7 @@ const runBatchAutoCheck = async () => {
           : `首批问题：${failedItems[0].site_name}/${failedItems[0].torrent_id}: ${(failedItems[0].problems || []).join('、')} 等`
       ElMessage.warning({
         message: `检测完成：通过 ${result.passed} 条（已标记已检查），部分失败 ${result.failed} 条。${detail || firstProblem}`,
-        duration: 0,
+        duration: 10000,
         showClose: true,
       })
     }
