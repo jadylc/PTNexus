@@ -50,7 +50,9 @@ func ShouldUseScreenshotPreview(input ScreenshotGenerateInput) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return inspection.SubtitleState != ScreenshotSubtitleStateConfirmedChinese, nil
+	// 仅"存在字幕流但未能确认为中文"时需要人工挑选截图时间点；
+	// 未检测到字幕流（no_usable_subtitle）没有字幕时间点可确认，直接通过不再人工确认。
+	return inspection.SubtitleState == ScreenshotSubtitleStateUsableButUnconfirmed, nil
 }
 
 func InspectScreenshotSubtitles(input ScreenshotGenerateInput) (ScreenshotSubtitleInspection, error) {

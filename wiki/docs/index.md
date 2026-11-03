@@ -121,6 +121,10 @@
 
 # 更新日志
 
+### v4.2.7（2026.11.03）
+
+- 优化：去掉「未检测到字幕流」的手动确认截图流程——视频没有字幕流时没有字幕时间点可确认，截图直接通过不再标记待人工确认；仅当存在字幕流但未能确认为中文字幕时才保留人工确认（提示文案同步更正）
+
 ### v4.2.6（2026.11.02）
 
 - 修复：批量自动检测数据源与单条维护面板对齐——改用 QueryAndNormalizeSeed 同源加载（NormalizeSeedRow + BuildStandardizedParams 运行时重建标准化参数），不再读 DB 原始行（旧存的 standardized_params 可能是旧格式导致误判失败）；制作组以 title_components 为准、standardized_params.team 兜底

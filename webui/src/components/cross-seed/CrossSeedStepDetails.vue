@@ -365,7 +365,7 @@
                   type="warning"
                   :closable="false"
                   show-icon
-                  title="当前视频未检测到字幕流，请先确认截图是否截到了合适的中文字幕时间点。"
+                  title="检测到字幕流但未能确认为中文字幕，请检查截图是否截到了合适的中文字幕时间点。"
                   style="margin-bottom: 12px"
                 />
                 <el-input type="textarea" v-model="torrentData.intro.screenshots" :rows="20" />
