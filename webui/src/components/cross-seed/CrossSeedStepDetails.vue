@@ -335,19 +335,6 @@
                   <div class="form-label-with-button">
                     <span>截图</span>
                     <div class="form-label-actions">
-                      <el-tag v-if="isScreenshotReviewPending" type="warning" size="small">
-                        待确认
-                      </el-tag>
-                      <el-button
-                        v-if="isScreenshotReviewPending"
-                        @click="confirmScreenshotReview"
-                        :loading="isConfirmingScreenshotReview"
-                        size="small"
-                        type="primary"
-                        plain
-                      >
-                        确认截图
-                      </el-button>
                       <el-button
                         :icon="Refresh"
                         @click="refreshScreenshots"
@@ -360,14 +347,6 @@
                     </div>
                   </div>
                 </template>
-                <el-alert
-                  v-if="isScreenshotReviewPending"
-                  type="warning"
-                  :closable="false"
-                  show-icon
-                  title="检测到字幕流但未能确认为中文字幕，请检查截图是否截到了合适的中文字幕时间点。"
-                  style="margin-bottom: 12px"
-                />
                 <el-input type="textarea" v-model="torrentData.intro.screenshots" :rows="20" />
               </el-form-item>
             </el-form>
@@ -573,9 +552,6 @@ const {
   handleImageErrorWithProxy,
   refreshScreenshots,
   isRefreshingScreenshots,
-  confirmScreenshotReview,
-  isConfirmingScreenshotReview,
-  isScreenshotReviewPending,
   screenshotImages,
   refreshIntro,
   isRefreshingIntro,
