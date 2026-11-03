@@ -8,6 +8,7 @@ import (
 
 	"github.com/pt-nexus/server/internal/platform/logx"
 	processingmedia "github.com/pt-nexus/server/internal/service/processing/media"
+	processingpersist "github.com/pt-nexus/server/internal/service/processing/persist"
 	processingrepair "github.com/pt-nexus/server/internal/service/processing/repair"
 	processingshared "github.com/pt-nexus/server/internal/service/processing/shared"
 )
@@ -31,15 +32,8 @@ type batchCheckItemResult struct {
 // 参数/返回：payload.items 为 [{torrent_id, site_name}]；返回逐条结果与汇总。
 // 失败场景：items 缺失或数据库读取失败返回错误。
 // 副作用：全部通过的行为会写 seed_parameters.is_reviewed=true。
-// 说明：校验口径对齐前端 publishFlow.isNextButtonDisabled 的 8 项检查：
-//  1. 无法识别为空
-//  2. 简介/海报/截图非空
-//  3. 简介正文含片名/产地/简介关键字段
-//  4. 标准五参数（类型/媒介/视频编码/音频编码/分辨率）非空
-//  5. 制作组非空且非 NOGROUP
-//  6. mediainfo 有效（Mediainfo 或 BDInfo 格式）
-//  7. 标准参数与 tags 格式合法（xxx.yyy）
-//  8. 无截图待人工确认
+// 说明：数据来源与单条维护面板同源（QueryAndNormalizeSeed → NormalizeSeedRow →
+// BuildStandardizedParams），保证口径一致；校验项对齐前端 isNextButtonDisabled。
 func (s *MigrateService) BatchAutoCheck(payload map[string]any) (map[string]any, int) {
 	rawItems, _ := payload["items"].([]any)
 	if len(rawItems) == 0 {
@@ -80,14 +74,17 @@ func (s *MigrateService) BatchAutoCheck(payload map[string]any) (map[string]any,
 }
 
 // autoCheckOneSeed 对单条种子执行"修改完成可点"口径校验，全部通过时置 is_reviewed=true。
-// 参数/返回：torrentID/siteName 定位 seed_parameters 行；返回逐项结果。
+// 参数/返回：torrentID/siteName 定位行；返回逐项结果。
 // 失败场景：行不存在时返回未通过并标注原因。
 // 副作用：通过时写 is_reviewed=true。
+// 说明：数据走 QueryAndNormalizeSeed（与单条维护面板加载同源），其内部会
+// NormalizeSeedRow + BuildStandardizedParams 重建标准化参数——与面板展示一致。
 func (s *MigrateService) autoCheckOneSeed(torrentID, siteName string) batchCheckItemResult {
 	result := batchCheckItemResult{TorrentID: torrentID, SiteName: siteName, Passed: false, Problems: []string{}}
 
-	row, err := s.repo.GetSeedParameter(torrentID, siteName)
-	if err != nil || len(row) == 0 {
+	// 与单条维护面板同源：NormalizeSeedRow + BuildStandardizedParams
+	normalized, _, err := processingpersist.QueryAndNormalizeSeed(s.repo, torrentID, siteName)
+	if err != nil {
 		result.Problems = append(result.Problems, "数据库中未找到种子信息")
 		return result
 	}
@@ -98,8 +95,20 @@ func (s *MigrateService) autoCheckOneSeed(torrentID, siteName string) batchCheck
 		Value string `json:"value"`
 	}
 	components := []titleComponent{}
-	if rawComponents := strings.TrimSpace(processingshared.ToString(row["title_components"], "")); rawComponents != "" {
-		_ = json.Unmarshal([]byte(rawComponents), &components)
+	if rawComponents := normalized["title_components"]; rawComponents != nil {
+		switch typed := rawComponents.(type) {
+		case []any:
+			for _, item := range typed {
+				if componentMap, ok := item.(map[string]any); ok {
+					components = append(components, titleComponent{
+						Key:   strings.TrimSpace(processingshared.ToString(componentMap["key"], "")),
+						Value: processingshared.ToString(componentMap["value"], ""),
+					})
+				}
+			}
+		case string:
+			_ = json.Unmarshal([]byte(typed), &components)
+		}
 	}
 	unrecognized := ""
 	team := ""
@@ -118,10 +127,10 @@ func (s *MigrateService) autoCheckOneSeed(torrentID, siteName string) batchCheck
 	}
 
 	// 2. 简介/海报/截图非空
-	statement := strings.TrimSpace(processingshared.ToString(row["statement"], ""))
-	poster := strings.TrimSpace(processingshared.ToString(row["poster"], ""))
-	screenshots := strings.TrimSpace(processingshared.ToString(row["screenshots"], ""))
-	body := strings.TrimSpace(processingshared.ToString(row["body"], ""))
+	statement := strings.TrimSpace(processingshared.ToString(normalized["statement"], ""))
+	poster := strings.TrimSpace(processingshared.ToString(normalized["poster"], ""))
+	screenshots := strings.TrimSpace(processingshared.ToString(normalized["screenshots"], ""))
+	body := strings.TrimSpace(processingshared.ToString(normalized["body"], ""))
 	if statement == "" {
 		result.Problems = append(result.Problems, "简介为空")
 	}
@@ -139,12 +148,12 @@ func (s *MigrateService) autoCheckOneSeed(torrentID, siteName string) batchCheck
 		}
 	}
 
-	// 4. 标准五参数非空（tags 是数组，单独解析，不做 ToString）
+	// 4. 标准参数（BuildStandardizedParams 重建，tags 是数组单独提取）
 	stdParams := map[string]string{}
 	var tags []string
-	if rawParams := row["standardized_params"]; rawParams != nil {
+	if rawStd := normalized["standardized_params"]; rawStd != nil {
 		parsed := map[string]any{}
-		switch typed := rawParams.(type) {
+		switch typed := rawStd.(type) {
 		case map[string]any:
 			parsed = typed
 		case string:
@@ -164,6 +173,10 @@ func (s *MigrateService) autoCheckOneSeed(torrentID, siteName string) batchCheck
 			stdParams[key] = strings.TrimSpace(processingshared.ToString(value, ""))
 		}
 	}
+	// 制作组以 title_components 为准（面板口径），standardized_params.team 作兜底
+	if team == "" {
+		team = stdParams["team"]
+	}
 	for _, key := range []string{"type", "medium", "video_codec", "audio_codec", "resolution"} {
 		if stdParams[key] == "" {
 			result.Problems = append(result.Problems, fmt.Sprintf("标准参数 %s 为空", key))
@@ -178,21 +191,20 @@ func (s *MigrateService) autoCheckOneSeed(torrentID, siteName string) batchCheck
 	}
 
 	// 6. mediainfo 有效
-	mediainfo := strings.TrimSpace(processingshared.ToString(row["mediainfo"], ""))
+	mediainfo := strings.TrimSpace(processingshared.ToString(normalized["mediainfo"], ""))
 	if mediainfo == "" {
 		result.Problems = append(result.Problems, "MediaInfo 为空")
 	} else if isMediainfo, isBDInfo, reason := processingmedia.ValidateMediaInfoFormat(mediainfo); !isMediainfo && !isBDInfo {
 		result.Problems = append(result.Problems, "MediaInfo 格式无效: "+reason)
 	}
 
-	// 7. 标准参数与 tags 格式合法
+	// 7. 标准参数与 tags 格式合法（与前端 invalidStandardParams 一致：非空才验格式）
 	for _, key := range []string{"type", "medium", "video_codec", "audio_codec", "resolution", "team", "source"} {
 		value := stdParams[key]
 		if value != "" && !flexibleStandardValueRegex.MatchString(value) {
 			result.Problems = append(result.Problems, fmt.Sprintf("标准参数 %s 格式无效: %s", key, value))
 		}
 	}
-	// tags 格式校验（已在 standardized_params 解析中提取）
 	for _, tag := range tags {
 		trimmed := strings.TrimSpace(tag)
 		if trimmed != "" && !flexibleStandardValueRegex.MatchString(trimmed) {
@@ -201,7 +213,7 @@ func (s *MigrateService) autoCheckOneSeed(torrentID, siteName string) batchCheck
 	}
 
 	// 8. 截图待人工确认
-	if reviewStatus := strings.TrimSpace(processingshared.ToString(row["screenshot_review_status"], "")); reviewStatus == processingshared.ScreenshotReviewStatusPending {
+	if reviewStatus := strings.TrimSpace(processingshared.ToString(normalized["screenshot_review_status"], "")); reviewStatus == processingshared.ScreenshotReviewStatusPending {
 		result.Problems = append(result.Problems, "截图待人工确认")
 	}
 

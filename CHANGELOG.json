@@ -19,6 +19,13 @@
   ],
   "history": [
     {
+      "version": "v4.2.6",
+      "date": "2026.11.02",
+      "changes": [
+        "修复：批量自动检测数据源与单条维护面板对齐——改用 QueryAndNormalizeSeed 同源加载（NormalizeSeedRow + BuildStandardizedParams 运行时重建标准化参数），不再读 DB 原始行（旧存的 standardized_params 可能是旧格式导致误判失败）；制作组以 title_components 为准、standardized_params.team 兜底"
+      ]
+    },
+    {
       "version": "v4.2.5",
       "date": "2026.11.03",
       "changes": [

@@ -256,6 +256,10 @@ wget -O - https://github.com/jadylc/PTNexus/releases/latest/download/install-pt-
 
 # 更新日志
 
+### v4.2.6（2026.11.02）
+
+- 修复：批量自动检测数据源与单条维护面板对齐——改用 QueryAndNormalizeSeed 同源加载（NormalizeSeedRow + BuildStandardizedParams 运行时重建标准化参数），不再读 DB 原始行（旧存的 standardized_params 可能是旧格式导致误判失败）；制作组以 title_components 为准、standardized_params.team 兜底
+
 ### v4.2.5（2026.11.03）
 
 - 新增：维护种子页待检查页签「批量自动检测」按钮——对勾选行执行与「点开维护、修改完成按钮可点」一致的校验口径（无法识别为空、简介/海报/截图非空、简介正文含关键字段、标准五参数非空、制作组非 NOGROUP、MediaInfo 有效、标准参数与标签格式合法、无截图待确认）；全部通过的行为自动标记 is_reviewed=true（等价逐个点开确认修改完成），部分失败则逐条列出问题（保留待检查状态人工处理）
