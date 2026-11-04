@@ -9,9 +9,11 @@ import (
 	"net/http"
 	neturl "net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +24,131 @@ import (
 const maxPosterBytes = 25 * 1024 * 1024
 const posterTransferLogModule = "迁移-海报转存"
 const posterTransferDownloadRetry = 2
+
+// uploadSizeLimitBytes 是 Pixhost 上传的图片体积目标（9MB）。
+// 实测 pixhost 免费通道在 8~10MB 之间开始返回 413（Request Entity Too Large），
+// 各代理通道（mirror.ygmm.de / workers.dev）只是透传该错误，无法绕过，
+// 因此上传前统一把超限图片压到该目标以内。
+const uploadSizeLimitBytes = 9 * 1024 * 1024
+
+// EnsureImageWithinUploadLimit 保证待上传图片不超过 Pixhost 的上传体积限制。
+// 参数/返回：imagePath 为原始文件路径，logLine 可为 nil；返回最终应上传的路径——
+// 未超限时返回原路径，超限时返回新生成的压缩文件路径（调用方负责用后删除）。
+// 失败场景：ffmpeg 不可用或所有压缩档位仍无法达标时返回原路径（尽力而为，交给上传端报错）。
+// 副作用：可能在系统临时目录生成压缩文件；会调用 ffmpeg。
+// 压缩策略（逐级，达标即停，保证画质损失最小）：
+//  1. PNG level 9 无损重压（不改像素）；
+//  2. lanczos 缩宽 3200 重存 PNG（4K 帧无损级观感）；
+//  3. 缩宽 2560；4. 缩宽 1920；5. 缩宽 1440。
+func EnsureImageWithinUploadLimit(imagePath string, logLine func(string, ...any)) string {
+	trimmed := strings.TrimSpace(imagePath)
+	if trimmed == "" {
+		return trimmed
+	}
+	info, err := os.Stat(trimmed)
+	if err != nil || info.Size() <= uploadSizeLimitBytes {
+		return trimmed
+	}
+	announce := func(format string, args ...any) {
+		if logLine != nil {
+			logLine(format, args...)
+		}
+		logx.Infof(posterTransferLogModule, format, args...)
+	}
+	announce("图片 %.1f MB 超过上传体积目标 %.1f MB，开始压缩...",
+		float64(info.Size())/1024/1024, float64(uploadSizeLimitBytes)/1024/1024)
+
+	ffmpegPath, ffmpegErr := resolveBinary("ffmpeg", "PTNEXUS_FFMPEG_PATH")
+	if ffmpegErr != nil {
+		announce("未找到 ffmpeg，无法压缩，按原图上传: %v", ffmpegErr)
+		return trimmed
+	}
+
+	ext := strings.ToLower(filepath.Ext(trimmed))
+	if ext == "" {
+		ext = ".png"
+	}
+	tmpDir, mkErr := os.MkdirTemp("", "ptnexus-shrink-*")
+	if mkErr != nil {
+		announce("创建压缩临时目录失败，按原图上传: %v", mkErr)
+		return trimmed
+	}
+
+	// 阶段 1：PNG 无损重压（level 9）
+	lossless := filepath.Join(tmpDir, "lossless.png")
+	if runFFmpegShrink(ffmpegPath, trimmed, lossless, "", 9) == nil {
+		if shrunk := applyShrinkResult(lossless, info.Size(), announce); shrunk != "" {
+			return shrunk
+		}
+		_ = os.Remove(lossless)
+	}
+
+	// 阶段 2：逐级缩宽重存（保留原扩展名形态；gif 缩到 1440 仍超限则放弃压缩）
+	if ext == ".gif" {
+		_ = os.RemoveAll(tmpDir)
+		announce("GIF 无损重压仍未达标，按原图上传")
+		return trimmed
+	}
+	scales := []int{3200, 2560, 1920, 1440}
+	outName := filepath.Join(tmpDir, "shrunk"+ext)
+	for _, width := range scales {
+		if runFFmpegShrink(ffmpegPath, trimmed, outName, fmt.Sprintf("scale=%d:-2", width), 9) != nil {
+			continue
+		}
+		if shrunk := applyShrinkResult(outName, info.Size(), announce); shrunk != "" {
+			return shrunk
+		}
+	}
+
+	announce("压缩到最低档位仍无法降到 %.1f MB 以内，按原尺寸最小档上传", float64(uploadSizeLimitBytes)/1024/1024)
+	if finalStat, statErr := os.Stat(outName); statErr == nil && finalStat.Size() > 0 && finalStat.Size() < info.Size() {
+		return outName
+	}
+	_ = os.RemoveAll(tmpDir)
+	return trimmed
+}
+
+// applyShrinkResult 检查压缩产物是否达标；达标返回产物路径，未达标返回空串（由调用方继续降级）。
+func applyShrinkResult(candidate string, originalSize int64, announce func(string, ...any)) string {
+	info, err := os.Stat(candidate)
+	if err != nil || info.Size() <= 0 {
+		return ""
+	}
+	if info.Size() <= uploadSizeLimitBytes {
+		announce("压缩完成: %.1f MB -> %.1f MB",
+			float64(originalSize)/1024/1024, float64(info.Size())/1024/1024)
+		return candidate
+	}
+	announce("压缩后 %.1f MB 仍超限，继续降档...", float64(info.Size())/1024/1024)
+	return ""
+}
+
+// runFFmpegShrink 用 ffmpeg 重编码图片；vf 为空表示只做重压缩不改像素。
+func runFFmpegShrink(ffmpegPath, src, dst, vf string, pngLevel int) error {
+	args := []string{"-y", "-v", "error", "-i", src, "-frames:v", "1"}
+	if strings.TrimSpace(vf) != "" {
+		args = append(args, "-vf", vf)
+	}
+	if strings.HasSuffix(strings.ToLower(dst), ".png") {
+		args = append(args, "-compression_level", strconv.Itoa(pngLevel), "-pred", "mixed")
+	} else {
+		args = append(args, "-q:v", "3")
+	}
+	args = append(args, dst)
+	cmd := exec.Command(ffmpegPath, args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		text := strings.TrimSpace(string(out))
+		if text == "" {
+			text = err.Error()
+		}
+		return fmt.Errorf("ffmpeg 压缩失败: %s", text)
+	}
+	if stat, statErr := os.Stat(dst); statErr != nil || stat.Size() == 0 {
+		return fmt.Errorf("ffmpeg 未生成输出文件")
+	}
+	return nil
+}
 
 var (
 	rePixhostDirect      = regexp.MustCompile(`(\d+)/([^/]+\.(?:jpg|jpeg|png|gif|webp))`)
@@ -364,6 +491,7 @@ func UploadImageToPixhostDirectWithLogger(imagePath string, logLine func(string,
 
 // uploadImageToPixhostReply 带主备域名重试地把图片上传到 Pixhost，并返回解析后的响应。
 // 参数/返回：成功返回 show_url 与图床给出的直链；全部域名失败返回最后一次错误。
+// 说明：上传前对超过体积目标的图片执行逐级压缩（Pixhost 在 8~10MB 即返回 413）。
 func uploadImageToPixhostReply(imagePath string, logLine func(string, ...any)) (pixhostUploadReply, error) {
 	apiURLs := []string{
 		"https://api.pixhost.to/images",
@@ -377,6 +505,12 @@ func uploadImageToPixhostReply(imagePath string, logLine func(string, ...any)) (
 		return pixhostUploadReply{}, err
 	}
 
+	// 体积守卫：超限图片逐级压缩（无损重压 → 缩宽），达标才上传
+	uploadPath := EnsureImageWithinUploadLimit(imagePath, logLine)
+	if uploadPath != imagePath {
+		defer cleanupShrinkTempDir(uploadPath)
+	}
+
 	maxRetries := 3
 	var lastErr error
 	for attempt := 1; attempt <= maxRetries; attempt++ {
@@ -386,13 +520,15 @@ func uploadImageToPixhostReply(imagePath string, logLine func(string, ...any)) (
 				domainName = "备用域名"
 			}
 			logLine("尝试使用%s: %s", domainName, apiURL)
-			reply, statusCode, err := uploadToPixhostDirectStream(imagePath, apiURL, logLine)
+			reply, statusCode, err := uploadToPixhostDirectStream(uploadPath, apiURL, logLine)
 			if err == nil && strings.TrimSpace(reply.ShowURL) != "" {
 				logLine("%s上传成功", domainName)
 				return reply, nil
 			}
 			lastErr = err
-			if statusCode > 0 {
+			if statusCode == http.StatusRequestEntityTooLarge {
+				logLine("   ❌ %s 返回 413（图片超过图床体积限制）", domainName)
+			} else if statusCode > 0 {
 				logLine("   ❌ 直接上传失败 (状态码: %d)", statusCode)
 			} else if err != nil {
 				logLine("   ❌ 直接上传失败: %s", classifyPixhostUploadError(err))
@@ -411,6 +547,14 @@ func uploadImageToPixhostReply(imagePath string, logLine func(string, ...any)) (
 		return pixhostUploadReply{}, lastErr
 	}
 	return pixhostUploadReply{}, fmt.Errorf("Pixhost 上传失败")
+}
+
+// cleanupShrinkTempDir 删除压缩产物所在的临时目录。
+func cleanupShrinkTempDir(shrunkPath string) {
+	dir := filepath.Dir(strings.TrimSpace(shrunkPath))
+	if filepath.Base(dir) == "ptnexus-shrink" || strings.HasPrefix(filepath.Base(dir), "ptnexus-shrink-") {
+		_ = os.RemoveAll(dir)
+	}
 }
 
 func uploadToPixhostDirectStream(imagePath string, apiURL string, logLine func(string, ...any)) (pixhostUploadReply, int, error) {

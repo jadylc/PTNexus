@@ -256,6 +256,11 @@ wget -O - https://github.com/jadylc/PTNexus/releases/latest/download/install-pt-
 
 # 更新日志
 
+### v4.6.0（2026.11.04）
+
+- 新增：MediaInfo 数据口径统一——源站发布者把 MediaInfo 贴在简介正文里时，抓取入库自动提取补齐 mediainfo 列（正文保持原样）；「重算标题」对存量行同样回退正文提取并补写列，历史数据重算一次即订正。修复正文有媒体信息但列为空导致音频编码/HDR 组件重算无效的问题
+- 新增：图片上传体积守卫——超过 9MB 的截图/海报逐级压缩到限制内（先 PNG 无损重压 level9，仍超限按 3200/2560/1920/1440 宽逐级缩放），解决 Pixhost 上传频繁 413（免费通道 8~10MB 拒收，各代理仅透传）
+
 ### v4.5.1（2026.11.04）
 
 - 新增：为 image.tmdb.org / api.themoviedb.org / api.pixhost.to 增加加速站 https://mirror.ygmm.de/mirrors/（前缀+完整URL 透传，已验证可用）——作为各请求的兜底候选（直连失败后尝试，排在 workers.dev 之前），覆盖 TMDb 反查/详情、海报下载转存、Pixhost 上传

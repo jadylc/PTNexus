@@ -9,6 +9,7 @@ import (
 	"github.com/pt-nexus/server/internal/platform/logx"
 	extract "github.com/pt-nexus/server/internal/service/acquire/extract"
 	"github.com/pt-nexus/server/internal/service/crossseed"
+	processingpersist "github.com/pt-nexus/server/internal/service/processing/persist"
 	processingshared "github.com/pt-nexus/server/internal/service/processing/shared"
 	processingtagging "github.com/pt-nexus/server/internal/service/processing/tagging"
 	processingtitle "github.com/pt-nexus/server/internal/service/processing/title"
@@ -71,7 +72,7 @@ func (s *MigrateService) ReparseTitleComponents(payload map[string]any) (map[str
 	// 批量"仅错误行"改为行级判定（无法识别 OR 标准列值无效）：
 	// 此前用 SQL LIKE 只筛组件含"无法识别"的行，会漏掉列值无效的行
 	//（如 team=team.hdsky、audio_codec=2Audio），这些行重算后依然标红。
-	selectSQL := "SELECT hash, torrent_id, site_name, title, subtitle, name, mediainfo, title_components, type, medium, video_codec, audio_codec, resolution, team, source, tags FROM seed_parameters"
+	selectSQL := "SELECT hash, torrent_id, site_name, title, subtitle, name, mediainfo, body, title_components, type, medium, video_codec, audio_codec, resolution, team, source, tags FROM seed_parameters"
 	where := make([]string, 0)
 	args := make([]any, 0)
 	if len(items) > 0 {
@@ -123,6 +124,16 @@ func (s *MigrateService) ReparseTitleComponents(payload map[string]any) (map[str
 			continue
 		}
 		mediaInfoText := strings.TrimSpace(processingshared.ToString(row["mediainfo"], ""))
+		// 统一口径：mediainfo 列为空时回退从正文提取内嵌 MediaInfo（与抓取链一致），
+		// 并把提取结果补写回 mediainfo 列，重算即完成存量数据订正。
+		bodyText := strings.TrimSpace(processingshared.ToString(row["body"], ""))
+		extractedFromBody := false
+		if mediaInfoText == "" && bodyText != "" {
+			if media, _ := processingpersist.ExtractMediainfoFromBody(bodyText); media != "" {
+				mediaInfoText = media
+				extractedFromBody = true
+			}
+		}
 
 		// 批量"仅错误行"的精确行级判定：组件含无法识别，或任一标准列值无效。
 		if onlyErrors && !reparseRowHasProblem(row, reverseMappings) {
@@ -176,11 +187,15 @@ func (s *MigrateService) ReparseTitleComponents(payload map[string]any) (map[str
 		}
 
 		// 解析结果与库中一致且无列值修复：内容没有变化，跳过写回（保护 updated_at 与人工状态）。
-		if strings.TrimSpace(string(encoded)) == storedComponents && fixedTitle == title && fixedSubtitle == subtitle && len(updates) == 0 {
+		// 例外：从正文提取到 MediaInfo 时必须写回补列（存量订正），即使组件内容相同。
+		if strings.TrimSpace(string(encoded)) == storedComponents && fixedTitle == title && fixedSubtitle == subtitle && len(updates) == 0 && !extractedFromBody {
 			skipped++
 			continue
 		}
 		updates["title_components"] = string(encoded)
+		if extractedFromBody {
+			updates["mediainfo"] = mediaInfoText
+		}
 		if fixedTitle != title {
 			updates["title"] = fixedTitle
 		}

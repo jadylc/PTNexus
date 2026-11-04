@@ -92,6 +92,13 @@ func (d *SeedDraft) ApplyReviewExtract(review parser.ReviewExtractedData, detail
 	d.Body = strings.TrimSpace(review.Body)
 	d.Screenshots = strings.TrimSpace(review.Screens)
 	d.Mediainfo = strings.TrimSpace(review.Mediainfo)
+	// 方案二统一口径：源站发布者把 MediaInfo 贴在简介正文里时（mediainfo 解析为空），
+	// 从正文提取补齐 mediainfo 列；body 保持原文不动，发布与展示行为不变。
+	if d.Mediainfo == "" {
+		if media, _ := ExtractMediainfoFromBody(d.Body); media != "" {
+			d.Mediainfo = media
+		}
+	}
 
 	d.Type = strings.TrimSpace(review.Type)
 	d.Medium = strings.TrimSpace(review.Medium)
