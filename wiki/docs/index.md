@@ -121,6 +121,10 @@
 
 # 更新日志
 
+### v4.4.3（2026.11.04）
+
+- 优化：GIN 访问日志跳过 /api/migrate/task_monitor——前端每 3 秒轮询该接口导致日志刷屏，其余接口日志保持不变
+
 ### v4.4.2（2026.11.04）
 
 - 优化：彻底移除已失效域名 pt-nexus-proxy/imdb2douban(pt).sqing33.dpdns.org 的全部引用（共 5 处：PTGen 候选、imdb2douban 桥接、图床转存代理、Pixhost 上传备用、TMDb 代理×2）——DNS 已不解析，各处均保留 workers.dev 备用域名，功能不受影响

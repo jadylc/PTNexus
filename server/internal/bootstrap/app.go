@@ -188,7 +188,12 @@ func NewApp() (*App, error) {
 	}
 	engine.Use(
 		middleware.RequestContextMiddleware(),
-		gin.Logger(),
+		gin.LoggerWithConfig(gin.LoggerConfig{
+			// 前端每3秒轮询的任务监控不记 GIN 访问日志，避免刷屏淹没有效日志
+			SkipPaths: []string{
+				"/api/migrate/task_monitor",
+			},
+		}),
 		gin.Recovery(),
 		cors.New(cors.Config{
 			AllowAllOrigins:  true,
