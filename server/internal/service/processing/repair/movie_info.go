@@ -317,7 +317,6 @@ func buildPTGenCandidates(resourceURL, doubanURL, csptToken string) []string {
 		candidates = append(candidates, fmt.Sprintf("https://cspt.top/api/ptgen/query/%s?url=%s", neturl.PathEscape(csptToken), encodedResource))
 	}
 	candidates = append(candidates,
-		fmt.Sprintf("https://pt-nexus-ptgen.sqing33.dpdns.org/api?url=%s", encodedResource),
 		fmt.Sprintf("https://pt-nexus-ptgen.1395251710.workers.dev/api?url=%s", encodedResource),
 		fmt.Sprintf("https://ptgen.homeqian.top/?url=%s", encodedResource),
 		fmt.Sprintf("https://api.iyuu.cn/App.Movie.Ptgen?url=%s", encodedResource),
@@ -373,7 +372,7 @@ func preferredPTGenMethods(rawURL string) []string {
 		return []string{http.MethodGet}
 	}
 	host := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
-	if host == "pt-nexus-ptgen.sqing33.dpdns.org" || host == "pt-nexus-ptgen.1395251710.workers.dev" {
+	if host == "pt-nexus-ptgen.1395251710.workers.dev" {
 		return []string{http.MethodPost, http.MethodGet}
 	}
 	return []string{http.MethodGet}

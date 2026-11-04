@@ -19,6 +19,13 @@
   ],
   "history": [
     {
+      "version": "v4.4.1",
+      "date": "2026.11.04",
+      "changes": [
+        "优化：PTGen 候选移除已失效的 pt-nexus-ptgen.sqing33.dpdns.org——候选顺序变为 财神（配置了令牌时）→ 自建 worker（1395251710.workers.dev）→ homeqian → iyuu →（豆瓣链接时）tju"
+      ]
+    },
+    {
       "version": "v4.4.0",
       "date": "2026.11.04",
       "changes": [
