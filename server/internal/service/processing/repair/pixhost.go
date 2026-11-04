@@ -38,6 +38,7 @@ var (
 	rePixhostAnyDirect = regexp.MustCompile(`https?://img[0-9]+\.pixhost\.to/images/\d+/[^"'\\<>\s]+\.(?:jpg|jpeg|png|gif|webp)`)
 
 	posterTransferProxyPrefixes = []string{
+		"https://mirror.ygmm.de/mirrors/",
 		"http://pt-nexus-proxy.1395251710.workers.dev/",
 	}
 )
@@ -366,6 +367,7 @@ func UploadImageToPixhostDirectWithLogger(imagePath string, logLine func(string,
 func uploadImageToPixhostReply(imagePath string, logLine func(string, ...any)) (pixhostUploadReply, error) {
 	apiURLs := []string{
 		"https://api.pixhost.to/images",
+		"https://mirror.ygmm.de/mirrors/https://api.pixhost.to/images",
 		"http://pt-nexus-proxy.1395251710.workers.dev/https://api.pixhost.to/images",
 	}
 
