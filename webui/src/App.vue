@@ -24,19 +24,22 @@
   </div>
 
   <div v-if="!isLoginPage" class="app-nav-wrapper">
-    <div v-if="!showMobileNav" class="desktop-main-nav">
+    <div
+      v-if="!showMobileNav"
+      class="desktop-main-nav glass-nav desktop-drag-region"
+      @dblclick="handleDesktopNavDoubleClick"
+    >
+      <div class="brand-block desktop-no-drag">
+        <img src="/favicon.ico" alt="Logo" height="32" class="brand-logo" />
+        PT Nexus
+      </div>
       <el-menu
         :default-active="activeRoute"
-        class="main-nav glass-nav desktop-drag-region"
+        class="main-nav desktop-no-drag"
         mode="horizontal"
         :ellipsis="false"
         router
-        @dblclick="handleDesktopNavDoubleClick"
       >
-        <div class="brand-block desktop-no-drag">
-          <img src="/favicon.ico" alt="Logo" height="32" class="brand-logo" />
-          PT Nexus
-        </div>
         <el-menu-item index="/">首页</el-menu-item>
         <el-menu-item index="/info">流量统计</el-menu-item>
         <el-menu-item index="/torrents">一种多站</el-menu-item>
@@ -1039,21 +1042,31 @@ body {
 
 .desktop-main-nav {
   position: relative;
-  flex-shrink: 0;
   z-index: 1;
+  /* 三段式：固定品牌 + 可滚动菜单 + 固定操作区，任何宽度都是一行 */
+  display: flex;
+  align-items: center;
+  min-width: 0;
 }
 
 .main-nav {
   border-bottom: solid 1px var(--el-menu-border-color);
-  flex-shrink: 0;
+  /* 菜单占据剩余空间：窗口不够宽时菜单项在菜单条内部横向滚动，
+     右侧任务/超链接/版本号/按钮始终完整可见，不再叠压或消失 */
+  flex: 1 1 auto;
+  min-width: 0;
   height: 40px;
   display: flex;
   align-items: center;
   position: relative;
   z-index: 1;
-  /* 窄屏时导航整体横向滚动，而不是让右侧容器叠压菜单项 */
   overflow-x: auto;
   overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.main-nav::-webkit-scrollbar {
+  height: 4px;
 }
 
 .main-nav :deep(.el-menu-item),
@@ -1070,6 +1083,7 @@ body {
   line-height: 32px;
   display: flex;
   align-items: center;
+  flex-shrink: 0;
 }
 
 .brand-logo {
@@ -1078,8 +1092,7 @@ body {
 }
 
 .right-buttons-container {
-  /* 参与导航 flex 排布而非绝对定位：窄屏时与菜单项叠加的问题 */
-  margin-left: auto;
+  /* 固定操作区：不参与收缩，任何窗口宽度下都完整显示 */
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1088,24 +1101,7 @@ body {
 }
 
 .right-buttons-container--with-window-controls {
-  margin-right: 8px;
-}
-
-/* 窄屏收纳：隐藏任务按钮的运行/失败摘要与导出按钮，避免与菜单项叠压 */
-@media (max-width: 1560px) {
-  .right-buttons-container .task-monitor-button__summary {
-    display: none;
-  }
-}
-
-@media (max-width: 1360px) {
-  .right-buttons-container .desktop-link-action {
-    display: none;
-  }
-
-  .right-buttons-container .version-tag {
-    display: none;
-  }
+  margin-left: 8px;
 }
 
 .desktop-link-action {
