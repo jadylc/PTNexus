@@ -256,6 +256,10 @@ wget -O - https://github.com/jadylc/PTNexus/releases/latest/download/install-pt-
 
 # 更新日志
 
+### v4.5.2（2026.11.04）
+
+- 修复：大图上传反复 413——Cloudflare 通道（mirror.ygmm.de 与 workers.dev 均为 CF 部署）免费版请求体上限 25MB，4K 原图 PNG（25~40MB）必撞。现按不牺牲原图原则止血：超过上限的图片自动跳过 CF 通道（省掉必然失败的 9 次重试）；任一通道实际返回 413 时本轮不再重试它；失败提示给出明确出路（直连图床，或在设置「全局网络代理」勾选图床上传经自有代理 CONNECT 隧道直连 api.pixhost.to——隧道无体积限制）
+
 ### v4.5.1（2026.11.04）
 
 - 新增：为 image.tmdb.org / api.themoviedb.org / api.pixhost.to 增加加速站 https://mirror.ygmm.de/mirrors/（前缀+完整URL 透传，已验证可用）——作为各请求的兜底候选（直连失败后尝试，排在 workers.dev 之前），覆盖 TMDb 反查/详情、海报下载转存、Pixhost 上传

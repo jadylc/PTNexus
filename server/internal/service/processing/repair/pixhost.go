@@ -363,6 +363,8 @@ func UploadImageToPixhostDirectWithLogger(imagePath string, logLine func(string,
 }
 
 // uploadImageToPixhostReply 带主备域名重试地把图片上传到 Pixhost，并返回解析后的响应。
+// 体积适配：Cloudflare 通道（mirror.ygmm.de / workers.dev）免费版请求体上限 25MB，
+// 超限图片自动跳过这些通道（必然 413，避免徒劳重试）；某通道实际返回 413 时本轮也不再重试它。
 // 参数/返回：成功返回 show_url 与图床给出的直链；全部域名失败返回最后一次错误。
 func uploadImageToPixhostReply(imagePath string, logLine func(string, ...any)) (pixhostUploadReply, error) {
 	apiURLs := []string{
@@ -372,18 +374,36 @@ func uploadImageToPixhostReply(imagePath string, logLine func(string, ...any)) (
 	}
 
 	logLine("准备上传图片: %s", imagePath)
-	if _, err := os.Stat(imagePath); err != nil {
+	info, statErr := os.Stat(imagePath)
+	if statErr != nil {
 		logLine("错误：文件不存在 %s", imagePath)
-		return pixhostUploadReply{}, err
+		return pixhostUploadReply{}, statErr
+	}
+	// 留 1MB 余量：multipart 头部也计入请求体
+	overCFLimit := info.Size() >= (cfWorkerUploadBodyLimitBytes - 1024*1024)
+	if overCFLimit {
+		logLine("   ⚠️ 图片 %.1f MB 超过 Cloudflare 加速通道 %d MB 上限，将只尝试直连",
+			float64(info.Size())/1024/1024, cfWorkerUploadBodyLimitBytes/1024/1024)
 	}
 
 	maxRetries := 3
 	var lastErr error
+	skippedURLs := map[string]struct{}{}
+	saw413 := false
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		for i, apiURL := range apiURLs {
 			domainName := "主域名"
 			if i != 0 {
 				domainName = "备用域名"
+			}
+			if _, skipped := skippedURLs[apiURL]; skipped {
+				continue
+			}
+			if overCFLimit && isCFWorkerUploadURL(apiURL) {
+				skippedURLs[apiURL] = struct{}{}
+				saw413 = true
+				logLine("   ⏭ %s 为 Cloudflare 通道，图片超限已跳过: %s", domainName, apiURL)
+				continue
 			}
 			logLine("尝试使用%s: %s", domainName, apiURL)
 			reply, statusCode, err := uploadToPixhostDirectStream(imagePath, apiURL, logLine)
@@ -392,6 +412,13 @@ func uploadImageToPixhostReply(imagePath string, logLine func(string, ...any)) (
 				return reply, nil
 			}
 			lastErr = err
+			if statusCode == http.StatusRequestEntityTooLarge {
+				// 413：代理体积上限拒绝，重试该通道必然再失败，本轮直接放弃它
+				saw413 = true
+				skippedURLs[apiURL] = struct{}{}
+				logLine("   ❌ %s 拒绝(413)：图片超过该代理请求体上限，不再重试该域名", domainName)
+				continue
+			}
 			if statusCode > 0 {
 				logLine("   ❌ 直接上传失败 (状态码: %d)", statusCode)
 			} else if err != nil {
@@ -401,6 +428,9 @@ func uploadImageToPixhostReply(imagePath string, logLine func(string, ...any)) (
 			}
 			logLine("%s上传失败，尝试下一个", domainName)
 		}
+		if len(skippedURLs) >= len(apiURLs) {
+			break
+		}
 		if attempt < maxRetries {
 			time.Sleep(2 * time.Second)
 		}
@@ -408,9 +438,25 @@ func uploadImageToPixhostReply(imagePath string, logLine func(string, ...any)) (
 
 	logLine("所有API域名都上传失败")
 	if lastErr != nil {
+		if saw413 || overCFLimit {
+			return pixhostUploadReply{}, fmt.Errorf("%w（图片 %.1f MB 超过 Cloudflare 加速通道 25 MB 请求体上限；原图上传请直连图床，或在设置的全局网络代理中勾选「图床上传」经自有代理 CONNECT 直连 api.pixhost.to——代理隧道没有体积限制）",
+				lastErr, float64(info.Size())/1024/1024)
+		}
 		return pixhostUploadReply{}, lastErr
 	}
 	return pixhostUploadReply{}, fmt.Errorf("Pixhost 上传失败")
+}
+
+// cfWorkerUploadBodyLimitBytes 是 Cloudflare Workers 免费版上游请求体上限（25MB）。
+const cfWorkerUploadBodyLimitBytes = 25 * 1024 * 1024
+
+// isCFWorkerUploadURL 判断上传通道是否为 Cloudflare 部署的加速域名（受 25MB 请求体限制）。
+// 参数/返回：rawURL 为上传地址；返回是否为 CF 通道。
+// 失败场景：不适用。
+// 副作用：无。
+func isCFWorkerUploadURL(rawURL string) bool {
+	lower := strings.ToLower(strings.TrimSpace(rawURL))
+	return strings.Contains(lower, "workers.dev") || strings.Contains(lower, "mirror.ygmm.de")
 }
 
 func uploadToPixhostDirectStream(imagePath string, apiURL string, logLine func(string, ...any)) (pixhostUploadReply, int, error) {
