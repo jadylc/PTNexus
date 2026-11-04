@@ -536,7 +536,6 @@ func queryIDBridge(query string) (string, string) {
 		return "", ""
 	}
 	baseURLs := []string{
-		"https://pt-nexus-imdb2douban.sqing33.dpdns.org/?" + query,
 		"https://pt-nexus-imdb2douban.1395251710.workers.dev/?" + query,
 	}
 	for _, target := range baseURLs {
@@ -653,7 +652,6 @@ func imdbToTMDb(imdbLink string) string {
 	baseURLs := []string{
 		"https://api.tmdb.org",
 		"https://api.themoviedb.org",
-		"http://pt-nexus-proxy.sqing33.dpdns.org/https://api.themoviedb.org",
 		"http://pt-nexus-proxy.1395251710.workers.dev/https://api.themoviedb.org",
 	}
 	for _, base := range baseURLs {
@@ -720,7 +718,6 @@ func fetchTMDbDetails(tmdbLink string) (string, string, string) {
 	baseURLs := []string{
 		"https://api.tmdb.org",
 		"https://api.themoviedb.org",
-		"http://pt-nexus-proxy.sqing33.dpdns.org/https://api.themoviedb.org",
 		"http://pt-nexus-proxy.1395251710.workers.dev/https://api.themoviedb.org",
 	}
 	for _, base := range baseURLs {

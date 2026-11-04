@@ -19,6 +19,13 @@
   ],
   "history": [
     {
+      "version": "v4.4.2",
+      "date": "2026.11.04",
+      "changes": [
+        "优化：彻底移除已失效域名 pt-nexus-proxy/imdb2douban(pt).sqing33.dpdns.org 的全部引用（共 5 处：PTGen 候选、imdb2douban 桥接、图床转存代理、Pixhost 上传备用、TMDb 代理×2）——DNS 已不解析，各处均保留 workers.dev 备用域名，功能不受影响"
+      ]
+    },
+    {
       "version": "v4.4.1",
       "date": "2026.11.04",
       "changes": [
