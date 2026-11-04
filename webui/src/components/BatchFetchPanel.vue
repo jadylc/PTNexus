@@ -443,9 +443,12 @@
                 link
                 type="primary"
                 style="margin-left: 12px"
-                @click="toggleAllProgressItems"
+                @click="expandAllProgressItems"
               >
-                {{ allProgressExpanded ? '全部折叠' : '全部展开' }}
+                全部展开
+              </el-button>
+              <el-button size="small" link type="primary" @click="collapseAllProgressItems">
+                全部收起
               </el-button>
             </el-divider>
             <div class="progress-items-container">
@@ -934,51 +937,117 @@ const subStageNames: Record<string, string> = {
 
 // 折叠展开状态：任务启动时全部折叠，当前处理项自动展开
 const expandedProgressItems = ref<Set<string>>(new Set())
+// 记录"自动展开"的项：自动收起只作用于这些，用户手动展开的不受影响
+const autoExpandedItems = ref<Set<string>>(new Set())
+// 用户手动收起的正在处理项：本轮不再自动展开回去
+const suppressedAutoExpand = ref<Set<string>>(new Set())
 const expandCurrentOnly = ref(true)
-const allProgressExpanded = computed(
-  () =>
-    !!progress.value.items &&
-    progress.value.items.length > 0 &&
-    progress.value.items.every((item) => expandedProgressItems.value.has(item.name)),
-)
 
 const toggleProgressItem = (name: string) => {
   const next = new Set(expandedProgressItems.value)
+  const auto = new Set(autoExpandedItems.value)
+  const suppressed = new Set(suppressedAutoExpand.value)
   if (next.has(name)) {
     next.delete(name)
+    auto.delete(name)
+    // 收起的正是当前处理项时，抑制本轮自动展开
+    if (progress.value.current_name === name) {
+      suppressed.add(name)
+    }
   } else {
     next.add(name)
+    // 手动展开的记为非自动（从自动集合移除），避免被自动收起逻辑关掉
+    auto.delete(name)
+    suppressed.delete(name)
   }
   expandedProgressItems.value = next
+  autoExpandedItems.value = auto
+  suppressedAutoExpand.value = suppressed
 }
 
-const toggleAllProgressItems = () => {
+const expandAllProgressItems = () => {
   const items = progress.value.items || []
-  if (allProgressExpanded.value) {
-    expandedProgressItems.value = new Set()
-    return
-  }
   expandedProgressItems.value = new Set(items.map((item) => item.name))
+  // 手动全展开的不属于自动集合，也不再有收起抑制
+  autoExpandedItems.value = new Set()
+  suppressedAutoExpand.value = new Set()
 }
 
-// 当前处理项自动展开（受"仅自动展开当前处理项"开关控制）
+const collapseAllProgressItems = () => {
+  expandedProgressItems.value = new Set()
+  autoExpandedItems.value = new Set()
+  // 全部收起后，当前处理项不应被自动展开回去（用户意图是全部隐藏）
+  const suppressed = new Set(suppressedAutoExpand.value)
+  if (progress.value.current_name) {
+    suppressed.add(progress.value.current_name)
+  }
+  suppressedAutoExpand.value = suppressed
+}
+
+// 当前处理项自动展开、处理完成自动收起（受"仅自动展开当前处理项"开关控制）
 watch(
-  () => progress.value.current_name,
-  (name) => {
-    if (!expandCurrentOnly.value || !name) return
-    if (!expandedProgressItems.value.has(name)) {
-      expandedProgressItems.value = new Set([...expandedProgressItems.value, name])
+  () => [progress.value.current_name, progress.value.items] as const,
+  () => {
+    if (!expandCurrentOnly.value) return
+    const items = progress.value.items || []
+    const next = new Set(expandedProgressItems.value)
+    const auto = new Set(autoExpandedItems.value)
+    const suppressed = suppressedAutoExpand.value
+    let changed = false
+    // 收起：仅收起"自动展开过"且已不再运行的项
+    for (const name of [...auto]) {
+      const item = items.find((candidate) => candidate.name === name)
+      if (!item || item.status !== 'running') {
+        next.delete(name)
+        auto.delete(name)
+        suppressed.delete(name)
+        changed = true
+      }
+    }
+    // 展开：新的当前处理项（用户手动收起过的不违背意愿）
+    const current = progress.value.current_name
+    if (current && !next.has(current) && !suppressed.has(current)) {
+      const item = items.find((candidate) => candidate.name === current)
+      if (item && item.status === 'running') {
+        next.add(current)
+        auto.add(current)
+        changed = true
+      }
+    }
+    if (changed) {
+      expandedProgressItems.value = next
+      autoExpandedItems.value = auto
     }
   },
+  { deep: false },
 )
 
-// 任务启动时重置折叠状态，避免上一批的展开记忆串进来
+// 新任务开始时重置折叠状态
 watch(
   () => progress.value.started_at,
   () => {
     expandedProgressItems.value = new Set()
+    autoExpandedItems.value = new Set()
+    suppressedAutoExpand.value = new Set()
   },
 )
+
+// 开关从关到开时，立即按当前状态收一次（只收自动项）
+watch(expandCurrentOnly, (enabled) => {
+  if (!enabled) return
+  const items = progress.value.items || []
+  const next = new Set(expandedProgressItems.value)
+  const auto = new Set(autoExpandedItems.value)
+  for (const name of [...auto]) {
+    const item = items.find((candidate) => candidate.name === name)
+    if (!item || item.status !== 'running') {
+      next.delete(name)
+      auto.delete(name)
+    }
+  }
+  expandedProgressItems.value = next
+  autoExpandedItems.value = auto
+})
 
 function itemStatusIcon(status: string): string {
   switch (status) {

@@ -298,9 +298,59 @@ func (s *BatchFetchState) MarkItemResult(taskID, name, status, finalSite, messag
 		locate.State = "done"
 		locate.Ended = nowText
 	}
-	if fetchTop := item.Stages[StageFetchTop]; fetchTop != nil && fetchTop.State == "running" && status == "failed" {
-		fetchTop.State = "failed"
-		fetchTop.Ended = nowText
+	if fetchTop := item.Stages[StageFetchTop]; fetchTop != nil {
+		switch status {
+		case "failed":
+			if fetchTop.State == "running" {
+				fetchTop.State = "failed"
+				fetchTop.Ended = nowText
+			}
+		default:
+			// 成功/待确认：抓取阶段必须收尾，否则阶段条 chip 会永远停在 running（橙色）
+			if fetchTop.State == "running" || fetchTop.State == "warning" {
+				fetchTop.State = "done"
+				fetchTop.Ended = nowText
+			}
+		}
+	}
+	// 未走完的子阶段（如写库中途失败）按终态收口，避免残留 running（橙色）
+	finalState := "done"
+	if status == "failed" {
+		finalState = "failed"
+	}
+	for _, record := range item.Stages {
+		if record == nil || record.State != "running" {
+			continue
+		}
+		record.State = finalState
+		if record.Ended == "" {
+			record.Ended = nowText
+		}
+	}
+	for _, attempt := range item.Attempts {
+		if attempt == nil || attempt.State != "running" {
+			continue
+		}
+		if status == "failed" {
+			attempt.State = "failed"
+			if attempt.Reason == "" {
+				attempt.Reason = message
+			}
+		} else {
+			attempt.State = "success"
+		}
+		if attempt.Ended == "" {
+			attempt.Ended = nowText
+			attempt.Dms = elapsedMs(attempt.Started, now)
+		}
+		for _, record := range attempt.Stages {
+			if record != nil && record.State == "running" {
+				record.State = "done"
+				if record.Ended == "" {
+					record.Ended = nowText
+				}
+			}
+		}
 	}
 	if task.CurrentName == name {
 		task.CurrentName = ""

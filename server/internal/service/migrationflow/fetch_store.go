@@ -140,7 +140,7 @@ func (s *MigrateService) FetchAndStore(payload map[string]any) (map[string]any, 
 		},
 		processingpersist.FetchAndStoreOutcomeDeps{
 			EmitLog: func(step, message, status string) {
-				s.emitLog(taskID, step, message, status)
+				emitStep(step, message, status)
 			},
 			CloseLog: func() {
 				s.closeLogStream(taskID)
