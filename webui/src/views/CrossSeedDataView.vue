@@ -63,8 +63,8 @@
       <el-tooltip
         v-if="isMaintenanceMode"
         :content="selectedRows.length > 0
-          ? `重算选中的 ${selectedRows.length} 条种子的标题组件`
-          : '按当前解析规则重算含「无法识别」问题的种子标题组件（不重新请求站点，正确数据不动）'"
+          ? `重算选中的 ${selectedRows.length} 条种子的标题组件并补齐空/无效的标准参数列`
+          : '按当前解析规则重算所有待检查种子的标题组件并补齐空/无效的标准参数列（不重新请求站点）'"
         placement="top"
       >
         <el-button
@@ -74,7 +74,7 @@
           style="margin-right: 15px"
           @click="reparseAllComponents"
         >
-          {{ selectedRows.length > 0 ? `重算选中 (${selectedRows.length})` : '批量重算标题' }}
+          批量重算标题
         </el-button>
       </el-tooltip>
 

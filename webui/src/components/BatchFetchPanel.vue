@@ -431,33 +431,161 @@
             />
           </div>
 
-          <!-- 详细结果列表 -->
-          <el-divider content-position="left">处理详情</el-divider>
-          <div class="results-table-container">
-            <el-table
-              :data="progress.results"
-              style="width: 100%"
-              size="small"
-              stripe
-              max-height="400"
-            >
-              <el-table-column prop="name" label="种子名称" min-width="300" show-overflow-tooltip />
-              <el-table-column prop="status" label="状态" width="100" align="center">
-                <template #default="scope">
-                  <el-tag :type="getResultStatusType(scope.row.status)" size="small">
-                    {{ getResultStatusText(scope.row.status) }}
-                  </el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column prop="source_site" label="源站点" width="120" align="center" />
-              <el-table-column
-                prop="reason"
-                label="失败原因"
-                min-width="200"
-                show-overflow-tooltip
-              />
-            </el-table>
-          </div>
+          <!-- 细粒度进度：全量条目列表（可折叠），旧后端无 items 时回退结果表模式 -->
+          <template v-if="progress.items && progress.items.length > 0">
+            <el-divider content-position="left">
+              <span>逐条进度</span>
+              <el-checkbox v-model="expandCurrentOnly" size="small" style="margin-left: 15px">
+                仅自动展开当前处理项
+              </el-checkbox>
+              <el-button
+                size="small"
+                link
+                type="primary"
+                style="margin-left: 12px"
+                @click="toggleAllProgressItems"
+              >
+                {{ allProgressExpanded ? '全部折叠' : '全部展开' }}
+              </el-button>
+            </el-divider>
+            <div class="progress-items-container">
+              <div
+                v-for="item in progress.items"
+                :key="item.name"
+                class="progress-item"
+                :class="`progress-item--${item.status}`"
+              >
+                <div class="progress-item__header" @click="toggleProgressItem(item.name)">
+                  <span class="progress-item__icon">{{ itemStatusIcon(item.status) }}</span>
+                  <span class="progress-item__index">#{{ item.index }}</span>
+                  <span class="progress-item__name" :title="item.name">{{ item.name }}</span>
+                  <span v-if="item.status === 'running'" class="progress-item__stage">
+                    ▶ {{ runningStageText(item) }}
+                  </span>
+                  <span v-else-if="item.status === 'queued'" class="progress-item__queued">排队中</span>
+                  <span v-else-if="item.status === 'success'" class="progress-item__ok">
+                    {{ item.final_site ? `源站 ${item.final_site}` : '成功' }} ·
+                    {{ formatDurationMs(item.duration_ms) }}
+                  </span>
+                  <span v-else-if="item.status === 'pending_review'" class="progress-item__warn">
+                    抓取成功 · 截图待人工确认
+                  </span>
+                  <span v-else class="progress-item__err" :title="item.error">
+                    ✗ {{ truncateText(item.error, 60) }}
+                  </span>
+                  <el-button
+                    v-if="item.status === 'failed'"
+                    size="small"
+                    link
+                    type="primary"
+                    class="progress-item__copy"
+                    @click.stop="copyItemFailure(item)"
+                  >
+                    复制日志
+                  </el-button>
+                  <span class="progress-item__chevron">{{
+                    expandedProgressItems.has(item.name) ? '▼' : '▶'
+                  }}</span>
+                </div>
+
+                <div v-if="expandedProgressItems.has(item.name)" class="progress-item__body">
+                  <!-- 主阶段步骤条 -->
+                  <div class="progress-stages">
+                    <span
+                      v-for="stageID in mainStageOrder"
+                      :key="stageID"
+                      class="progress-stage-chip"
+                      :class="stageChipClass(item.stages?.[stageID]?.state)"
+                    >
+                      {{ stageChipText(stageID, item.stages?.[stageID]) }}
+                    </span>
+                  </div>
+
+                  <!-- 候选站点尝试明细 -->
+                  <div v-if="item.attempts && item.attempts.length > 0" class="progress-attempts">
+                    <div
+                      v-for="(attempt, attemptIndex) in item.attempts"
+                      :key="`${item.name}-${attemptIndex}`"
+                      class="progress-attempt"
+                      :class="`progress-attempt--${attempt.state}`"
+                    >
+                      <div class="progress-attempt__title">
+                        候选 {{ Number(attemptIndex) + 1 }}/{{ item.attempts.length }}：
+                        {{ attempt.site }}
+                        <span v-if="attempt.torrent_id">（ID {{ attempt.torrent_id }}）</span>
+                        <template v-if="attempt.state === 'failed'">
+                          <span class="progress-attempt__reason">✗ {{ attempt.reason }}</span>
+                        </template>
+                        <template v-else-if="attempt.state === 'success'">
+                          <span class="progress-attempt__ok">✓ 成功</span>
+                        </template>
+                        <span v-if="attempt.duration_ms" class="progress-attempt__time">
+                          {{ formatDurationMs(attempt.duration_ms) }}
+                        </span>
+                      </div>
+                      <div
+                        v-if="attempt.stages && Object.keys(attempt.stages).length > 0"
+                        class="progress-attempt__stages"
+                      >
+                        <span
+                          v-for="(record, stageID) in attempt.stages"
+                          :key="stageID"
+                          class="progress-stage-chip progress-stage-chip--sub"
+                          :class="stageChipClass(record.state)"
+                          :title="record.message"
+                        >
+                          {{ subStageLabel(String(stageID)) }}
+                          <template v-if="record.duration_ms">
+                            {{ (record.duration_ms / 1000).toFixed(1) }}s
+                          </template>
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- 内部日志尾 -->
+                  <div v-if="item.log_tail && item.log_tail.length > 0" class="progress-log">
+                    <div v-for="(line, lineIndex) in item.log_tail" :key="lineIndex">
+                      {{ line }}
+                    </div>
+                  </div>
+
+                  <!-- 失败完整原因 -->
+                  <div v-if="item.status === 'failed' && item.error" class="progress-item__failure">
+                    <pre>{{ item.error }}</pre>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
+          <template v-else>
+            <el-divider content-position="left">处理详情</el-divider>
+            <div class="results-table-container">
+              <el-table
+                :data="progress.results"
+                style="width: 100%"
+                size="small"
+                stripe
+                max-height="400"
+              >
+                <el-table-column prop="name" label="种子名称" min-width="300" show-overflow-tooltip />
+                <el-table-column prop="status" label="状态" width="100" align="center">
+                  <template #default="scope">
+                    <el-tag :type="getResultStatusType(scope.row.status)" size="small">
+                      {{ getResultStatusText(scope.row.status) }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="source_site" label="源站点" width="120" align="center" />
+                <el-table-column
+                  prop="reason"
+                  label="失败原因"
+                  min-width="200"
+                  show-overflow-tooltip
+                />
+              </el-table>
+            </div>
+          </template>
         </div>
         <div class="progress-footer">
           <el-button @click="closeProgressDialog">关闭</el-button>
@@ -537,6 +665,42 @@ interface BatchProgressResult {
   mediainfo?: string
 }
 
+// 细粒度阶段进度（与后端阶段字典 A/B.*/C/E 对应）
+interface BatchStageRecord {
+  state: string // running | done | failed | warning
+  message?: string
+  site?: string
+  started_at?: string
+  ended_at?: string
+  duration_ms?: number
+}
+
+interface BatchAttemptRecord {
+  site: string
+  torrent_id?: string
+  state: string // running | success | failed
+  reason?: string
+  started_at?: string
+  ended_at?: string
+  duration_ms?: number
+  stages?: Record<string, BatchStageRecord>
+}
+
+interface BatchItemState {
+  name: string
+  index: number
+  status: string // queued | running | success | failed | pending_review
+  started_at?: string
+  ended_at?: string
+  duration_ms?: number
+  candidates?: string[]
+  stages?: Record<string, BatchStageRecord>
+  attempts?: BatchAttemptRecord[]
+  error?: string
+  final_site?: string
+  log_tail?: string[]
+}
+
 interface BdinfoStats {
   processing: number
   completed: number
@@ -552,6 +716,10 @@ interface BatchProgress {
   isRunning: boolean
   results: BatchProgressResult[]
   bdinfo_stats?: BdinfoStats
+  // 细粒度进度（新版后端提供；为空时面板退化为结果表模式）
+  items?: BatchItemState[]
+  current_name?: string
+  started_at?: string
 }
 
 interface RefreshListOptions {
@@ -743,6 +911,215 @@ const progressStatus = computed(() => {
   if (progress.value.failed > 0) return 'exception'
   return 'success'
 })
+
+// --- 细粒度进度面板辅助 ---
+const mainStageOrder = ['A', 'B', 'C', 'E'] as const
+const mainStageNames: Record<string, string> = {
+  A: '定位',
+  B: '抓取',
+  C: '写库',
+  E: '完成',
+}
+const subStageNames: Record<string, string> = {
+  'B.detail': '详情页',
+  'B.torrent': '下载种子',
+  'B.parse': '解析种子',
+  'B.scrape': '解析页面',
+  'B.repair': '抓取修复',
+  'B.poster': '海报',
+  'B.intro': '简介',
+  'B.screens': '截图',
+  'B.mediainfo': '媒体信息',
+}
+
+// 折叠展开状态：任务启动时全部折叠，当前处理项自动展开
+const expandedProgressItems = ref<Set<string>>(new Set())
+const expandCurrentOnly = ref(true)
+const allProgressExpanded = computed(
+  () =>
+    !!progress.value.items &&
+    progress.value.items.length > 0 &&
+    progress.value.items.every((item) => expandedProgressItems.value.has(item.name)),
+)
+
+const toggleProgressItem = (name: string) => {
+  const next = new Set(expandedProgressItems.value)
+  if (next.has(name)) {
+    next.delete(name)
+  } else {
+    next.add(name)
+  }
+  expandedProgressItems.value = next
+}
+
+const toggleAllProgressItems = () => {
+  const items = progress.value.items || []
+  if (allProgressExpanded.value) {
+    expandedProgressItems.value = new Set()
+    return
+  }
+  expandedProgressItems.value = new Set(items.map((item) => item.name))
+}
+
+// 当前处理项自动展开（受"仅自动展开当前处理项"开关控制）
+watch(
+  () => progress.value.current_name,
+  (name) => {
+    if (!expandCurrentOnly.value || !name) return
+    if (!expandedProgressItems.value.has(name)) {
+      expandedProgressItems.value = new Set([...expandedProgressItems.value, name])
+    }
+  },
+)
+
+// 任务启动时重置折叠状态，避免上一批的展开记忆串进来
+watch(
+  () => progress.value.started_at,
+  () => {
+    expandedProgressItems.value = new Set()
+  },
+)
+
+function itemStatusIcon(status: string): string {
+  switch (status) {
+    case 'success':
+      return '✓'
+    case 'failed':
+      return '✗'
+    case 'pending_review':
+      return '⚠'
+    case 'running':
+      return '⟳'
+    default:
+      return '○'
+  }
+}
+
+// runningStageText 返回当前阶段的人话摘要，如 "下载种子（彩虹岛）"
+function runningStageText(item: BatchItemState): string {
+  const stages = item.stages || {}
+  // 从 B 子步里找最新 running
+  const attemptStages =
+    item.attempts && item.attempts.length > 0
+      ? item.attempts[item.attempts.length - 1].stages || {}
+      : {}
+  for (const [stageID, record] of Object.entries(attemptStages)) {
+    if (record?.state === 'running') {
+      return `${subStageNames[stageID] || stageID}（${record.site || ''}）`.replace('（）', '')
+    }
+  }
+  const top = stages['B']
+  if (top?.state === 'running') {
+    return `${top.message || '抓取源站'}（${top.site || ''}）`.replace('（）', '')
+  }
+  for (const stageID of mainStageOrder) {
+    const record = stages[stageID]
+    if (record?.state === 'running') {
+      return mainStageNames[stageID] || stageID
+    }
+  }
+  return '准备中'
+}
+
+function stageChipText(stageID: string, record?: BatchStageRecord): string {
+  const base = mainStageNames[stageID] || stageID
+  if (!record) return `· ${base}`
+  const prefix =
+    record.state === 'done'
+      ? '✓'
+      : record.state === 'failed'
+        ? '✗'
+        : record.state === 'warning'
+          ? '⚠'
+          : record.state === 'running'
+            ? '▶'
+            : '·'
+  return `${prefix} ${base}`
+}
+
+function stageChipClass(state?: string): string {
+  switch (state) {
+    case 'done':
+      return 'is-done'
+    case 'running':
+      return 'is-running'
+    case 'failed':
+      return 'is-failed'
+    case 'warning':
+      return 'is-warning'
+    default:
+      return 'is-idle'
+  }
+}
+
+function subStageLabel(stageID: string): string {
+  return subStageNames[stageID] || stageID
+}
+
+function formatDurationMs(ms?: number): string {
+  if (!ms || ms <= 0) return ''
+  if (ms < 1000) return `${ms}ms`
+  const seconds = ms / 1000
+  if (seconds < 60) return `${seconds.toFixed(1)}s`
+  const minutes = Math.floor(seconds / 60)
+  return `${minutes}m${Math.round(seconds % 60)}s`
+}
+
+function truncateText(text: string | undefined, limit: number): string {
+  const trimmed = (text || '').replace(/\s+/g, ' ').trim()
+  if (trimmed.length <= limit) return trimmed
+  return `${trimmed.slice(0, limit)}…`
+}
+
+// copyItemFailure 复制该条失败种子的完整排障文本
+async function copyItemFailure(item: BatchItemState) {
+  const lines: string[] = []
+  lines.push(`种子：${item.name}`)
+  lines.push(`状态：${item.status === 'failed' ? '失败' : item.status}`)
+  lines.push(`时间：${item.started_at || '-'} ~ ${item.ended_at || '-'}`)
+  if (item.candidates && item.candidates.length > 0) {
+    lines.push(`候选站点：${item.candidates.join(' → ')}`)
+  }
+  if (item.attempts && item.attempts.length > 0) {
+    item.attempts.forEach((attempt, idx) => {
+      lines.push(`── 候选 ${idx + 1}/${item.attempts!.length}：${attempt.site} ──`)
+      if (attempt.torrent_id) lines.push(`  种子ID：${attempt.torrent_id}`)
+      const stages = attempt.stages || {}
+      const stageEntries = Object.entries(stages)
+      if (stageEntries.length > 0) {
+        stageEntries.forEach(([stageID, record]) => {
+          const duration = record?.duration_ms ? ` (${(record.duration_ms / 1000).toFixed(1)}s)` : ''
+          lines.push(`  ${subStageNames[stageID] || stageID} ${record?.state}${duration} ${record?.message || ''}`.trim())
+        })
+      }
+      if (attempt.state === 'failed' && attempt.reason) {
+        lines.push(`  失败原因：${attempt.reason}`)
+      }
+    })
+  }
+  if (item.error) {
+    lines.push(`结论：${item.error}`)
+  }
+  if (item.log_tail && item.log_tail.length > 0) {
+    lines.push('日志尾：')
+    item.log_tail.forEach((line) => lines.push(`  ${line}`))
+  }
+  const text = lines.join('\n')
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success('失败日志已复制到剪贴板')
+  } catch {
+    // 剪贴板不可用（http 环境）时回退下载文本
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `${item.name.slice(0, 40) || 'batch-item'}.log.txt`
+    anchor.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success('已导出失败日志文件')
+  }
+}
 
 const buildPathTree = (paths: string[]): PathNode[] => {
   const root: PathNode[] = []
@@ -1683,8 +2060,8 @@ watch(nameSearch, () => {
 }
 
 .progress-card {
-  width: 90vw;
-  max-width: 1000px;
+  width: 92vw;
+  max-width: 1200px;
   max-height: 90vh;
   display: flex;
   flex-direction: column;
@@ -1723,6 +2100,255 @@ watch(nameSearch, () => {
 
 .results-table-container {
   margin-top: 15px;
+}
+
+/* --- 细粒度进度折叠列表 --- */
+.progress-items-container {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.progress-item {
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  background: var(--el-fill-color-blank);
+  overflow: hidden;
+}
+
+.progress-item--running {
+  border-color: var(--el-color-warning);
+}
+
+.progress-item--failed {
+  border-color: var(--el-color-danger-light-7);
+}
+
+.progress-item--queued {
+  opacity: 0.65;
+}
+
+.progress-item__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  cursor: pointer;
+  font-size: 13px;
+  min-width: 0;
+}
+
+.progress-item__header:hover {
+  background: var(--el-fill-color-light);
+}
+
+.progress-item__icon {
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+  font-weight: 600;
+}
+
+.progress-item--success .progress-item__icon {
+  color: var(--el-color-success);
+}
+
+.progress-item--failed .progress-item__icon {
+  color: var(--el-color-danger);
+}
+
+.progress-item--pending_review .progress-item__icon {
+  color: var(--el-color-warning);
+}
+
+.progress-item--running .progress-item__icon {
+  color: var(--el-color-warning);
+}
+
+.progress-item__index {
+  flex-shrink: 0;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.progress-item__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progress-item__stage {
+  flex-shrink: 0;
+  color: var(--el-color-warning);
+  font-size: 12px;
+}
+
+.progress-item__queued {
+  flex-shrink: 0;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.progress-item__ok {
+  flex-shrink: 0;
+  color: var(--el-color-success);
+  font-size: 12px;
+}
+
+.progress-item__warn {
+  flex-shrink: 0;
+  color: var(--el-color-warning);
+  font-size: 12px;
+}
+
+.progress-item__err {
+  flex-shrink: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--el-color-danger);
+  font-size: 12px;
+}
+
+.progress-item__copy {
+  flex-shrink: 0;
+}
+
+.progress-item__chevron {
+  flex-shrink: 0;
+  color: var(--el-text-color-placeholder);
+  font-size: 11px;
+}
+
+.progress-item__body {
+  padding: 8px 12px 10px 34px;
+  border-top: 1px dashed var(--el-border-color-lighter);
+  font-size: 12px;
+}
+
+.progress-stages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.progress-stage-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--el-border-color-lighter);
+  color: var(--el-text-color-secondary);
+  background: var(--el-fill-color-lighter);
+  white-space: nowrap;
+}
+
+.progress-stage-chip.is-done {
+  border-color: var(--el-color-success-light-7);
+  color: var(--el-color-success);
+  background: var(--el-color-success-light-9);
+}
+
+.progress-stage-chip.is-running {
+  border-color: var(--el-color-warning-light-5);
+  color: var(--el-color-warning);
+  background: var(--el-color-warning-light-9);
+}
+
+.progress-stage-chip.is-failed {
+  border-color: var(--el-color-danger-light-7);
+  color: var(--el-color-danger);
+  background: var(--el-color-danger-light-9);
+}
+
+.progress-stage-chip.is-warning {
+  border-color: var(--el-color-warning-light-5);
+  color: var(--el-color-warning);
+  background: var(--el-color-warning-light-9);
+}
+
+.progress-stage-chip--sub {
+  font-size: 11px;
+  padding: 1px 6px;
+}
+
+.progress-attempts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.progress-attempt {
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: var(--el-fill-color-lighter);
+}
+
+.progress-attempt--failed {
+  background: var(--el-color-danger-light-9);
+}
+
+.progress-attempt--success {
+  background: var(--el-color-success-light-9);
+}
+
+.progress-attempt__title {
+  margin-bottom: 4px;
+}
+
+.progress-attempt__reason {
+  color: var(--el-color-danger);
+  margin-left: 6px;
+}
+
+.progress-attempt__ok {
+  color: var(--el-color-success);
+  margin-left: 6px;
+}
+
+.progress-attempt__time {
+  color: var(--el-text-color-secondary);
+  margin-left: 6px;
+}
+
+.progress-attempt__stages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.progress-log {
+  max-height: 140px;
+  overflow-y: auto;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: var(--el-fill-color-light);
+  color: var(--el-text-color-secondary);
+  font-family: Consolas, Monaco, monospace;
+  font-size: 11px;
+  line-height: 1.7;
+  margin-bottom: 6px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.progress-item__failure pre {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: var(--el-color-danger-light-9);
+  color: var(--el-color-danger);
+  font-family: Consolas, Monaco, monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 @media (max-width: 768px) {

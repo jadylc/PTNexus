@@ -20,6 +20,9 @@ type BatchFetchTask struct {
 	StartedAt string           `json:"started_at"`
 	UpdatedAt string           `json:"updated_at"`
 	Results   []map[string]any `json:"results"`
+	// Items 为批次内全部种子的细粒度进度（含排队中）；CurrentName 指向当前处理项。
+	Items       []*BatchItemState `json:"items,omitempty"`
+	CurrentName string            `json:"current_name,omitempty"`
 }
 
 // BatchFetchState 管理批量抓取任务的内存状态。
@@ -186,6 +189,7 @@ func copyBatchFetchTask(task *BatchFetchTask) BatchFetchTask {
 	for _, item := range task.Results {
 		copied.Results = append(copied.Results, cloneAnyMap(item))
 	}
+	copied.Items = copyBatchItems(task.Items)
 	return copied
 }
 

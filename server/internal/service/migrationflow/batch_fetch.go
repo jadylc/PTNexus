@@ -25,7 +25,7 @@ func (s *MigrateService) StartBatchFetch(torrentNames []string, sourcePriority [
 		excludedSites = processingshared.ToStringSlice(configured["source_priority_excluded"])
 	}
 	taskID := s.newID("fetch")
-	s.batchFetchState.Start(taskID, len(torrentNames))
+	s.batchFetchState.StartWithItems(taskID, torrentNames)
 	// 逐条落库，使重启后可以只重跑未完成的部分（抓取本身可重复执行，覆盖即可）。
 	s.taskRunStart(taskID, repository.TaskRunKindBatchFetch, taskRunJSON(map[string]any{"source_priority": sourcePriority, "excluded_sites": excludedSites}), 1, torrentNames)
 	go s.runBatchFetch(taskID, torrentNames, sourcePriority, excludedSites)
@@ -37,6 +37,8 @@ func (s *MigrateService) runBatchFetch(taskID string, torrentNames []string, sou
 	if err != nil {
 		for _, name := range torrentNames {
 			reason := "读取 torrents 失败: " + err.Error()
+			s.batchFetchState.MarkItemStart(taskID, name, nil)
+			s.batchFetchState.MarkItemResult(taskID, name, "failed", "", reason)
 			s.batchFetchState.MarkResult(taskID, false, map[string]any{
 				"name":   name,
 				"status": "failed",
@@ -61,6 +63,19 @@ func (s *MigrateService) runBatchFetch(taskID string, torrentNames []string, sou
 			}
 			s.taskRunItemDone(taskID, name, repository.TaskItemStatusFailed, message)
 		},
+		OnItemStart: func(name string, candidates []string) {
+			s.batchFetchState.MarkItemStart(taskID, name, candidates)
+		},
+		OnAttemptStart: func(name, site, torrentID string) {
+			s.batchFetchState.MarkItemAttemptStart(taskID, name, site, torrentID)
+		},
+		OnAttemptEnd: func(name, site string, success bool, reason string) {
+			s.batchFetchState.MarkItemAttemptEnd(taskID, name, site, success, reason)
+		},
+		OnItemEnd: func(name, status, finalSite, message string) {
+			s.batchFetchState.MarkItemResult(taskID, name, status, finalSite, message)
+		},
+		StageHook: s.newBatchStageHook(taskID),
 		// 协作式取消：任务监控里的"终止"置标志位，这里在下一个种子前退出，
 		// 不中断正在抓的当前项，避免留下半写状态。
 		ShouldCancel: func() bool {

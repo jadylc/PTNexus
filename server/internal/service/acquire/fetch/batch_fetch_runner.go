@@ -17,7 +17,21 @@ type BatchFetchRunnerDeps struct {
 	// ShouldCancel 在每处理完一个种子后检查是否已请求取消；返回 true 时立即停止剩余条目。
 	// 取消是协作式的：正在执行的当前这一项不会被打断（避免留下半写状态）。
 	ShouldCancel func() bool
+	// OnItemStart 在某条种子开始处理时回调（候选站点列表已确定）。
+	OnItemStart func(name string, candidates []string)
+	// OnAttemptStart 在对某个候选站点发起抓取前回调。
+	OnAttemptStart func(name, site, torrentID string)
+	// OnAttemptEnd 在一次候选抓取结束时回调。
+	OnAttemptEnd func(name, site string, success bool, reason string)
+	// OnItemEnd 在某条种子进入终态时回调（status: success | pending_review | failed）。
+	OnItemEnd func(name, status, finalSite, message string)
+	// StageHook 透传给 FetchAndStore payload（key=batchStageHookPayloadKey），
+	// 由抓取内部 emitLog 调用，用于把内部步骤映射为阶段事件。
+	StageHook func(name, step, message, status string)
 }
+
+// batchStageHookPayloadKey 是 FetchAndStore payload 里携带阶段钩子的键。
+const batchStageHookPayloadKey = "batch_stage_hook"
 
 // RunBatchFetch 按种子名称列表执行批量抓取流程。
 // 参数/返回：torrentNames 为待抓取名称，sourcePriority 为站点优先级，excludedSites 为屏蔽站点（不参与拉取），
@@ -43,6 +57,31 @@ func RunBatchFetch(torrentNames []string, sourcePriority []string, excludedSites
 			deps.OnResult(success, result)
 		}
 	}
+	itemStart := func(name string, candidates []sourceCandidate) {
+		if deps.OnItemStart == nil {
+			return
+		}
+		sites := make([]string, 0, len(candidates))
+		for _, candidate := range candidates {
+			sites = append(sites, candidate.site)
+		}
+		deps.OnItemStart(name, sites)
+	}
+	attemptStart := func(name, site, torrentID string) {
+		if deps.OnAttemptStart != nil {
+			deps.OnAttemptStart(name, site, torrentID)
+		}
+	}
+	attemptEnd := func(name, site string, success bool, reason string) {
+		if deps.OnAttemptEnd != nil {
+			deps.OnAttemptEnd(name, site, success, reason)
+		}
+	}
+	itemEnd := func(name, status, finalSite, message string) {
+		if deps.OnItemEnd != nil {
+			deps.OnItemEnd(name, status, finalSite, message)
+		}
+	}
 
 	for _, name := range torrentNames {
 		if deps.ShouldCancel != nil && deps.ShouldCancel() {
@@ -51,8 +90,10 @@ func RunBatchFetch(torrentNames []string, sourcePriority []string, excludedSites
 		result := map[string]any{"name": name}
 		entries := byName[name]
 		if len(entries) == 0 {
+			itemStart(name, nil)
 			result["status"] = "failed"
 			result["reason"] = "未找到种子记录"
+			itemEnd(name, "failed", "", "未找到种子记录")
 			emit(false, result)
 			continue
 		}
@@ -61,10 +102,12 @@ func RunBatchFetch(torrentNames []string, sourcePriority []string, excludedSites
 		// 高优站点失败（CF 挑战、网络错误、详情页 404 等）自动切换下一个站点，
 		// 直到某个站点成功；全部失败才报错（附各站点失败原因）。
 		candidates := selectSourceCandidatesByPriority(entries, sourcePriority, excludedSites)
+		itemStart(name, candidates)
 		if len(candidates) == 0 {
 			result["status"] = "failed"
 			result["reason"] = "未找到可用源站点或详情ID"
 			result["attempted_sites"] = len(entries)
+			itemEnd(name, "failed", "", result["reason"].(string))
 			emit(false, result)
 			continue
 		}
@@ -86,15 +129,21 @@ func RunBatchFetch(torrentNames []string, sourcePriority []string, excludedSites
 			if deps.ShouldCancel != nil && deps.ShouldCancel() {
 				return
 			}
-			attemptResult, attemptStatus := deps.FetchAndStore(map[string]any{
+			attemptStart(name, candidate.site, candidate.torrentID)
+			payload := map[string]any{
 				"sourceSite":           candidate.site,
 				"searchTerm":           candidate.torrentID,
 				"torrentName":          name,
 				"savePath":             savePath,
 				"downloaderId":         downloaderID,
 				"screenshotReviewMode": processingshared.ScreenshotReviewModeBackground,
-			})
+			}
+			if deps.StageHook != nil {
+				payload[batchStageHookPayloadKey] = deps.StageHook
+			}
+			attemptResult, attemptStatus := deps.FetchAndStore(payload)
 			if attemptStatus == 200 && isSuccessResult(attemptResult) {
+				attemptEnd(name, candidate.site, true, "")
 				succeededSite = candidate.site
 				succeededID = candidate.torrentID
 				fetchResult = attemptResult
@@ -102,6 +151,7 @@ func RunBatchFetch(torrentNames []string, sourcePriority []string, excludedSites
 				break
 			}
 			reason := toStringAny(attemptResult["message"], "抓取失败")
+			attemptEnd(name, candidate.site, false, reason)
 			attemptFailures = append(attemptFailures, fmt.Sprintf("%s: %s", candidate.site, reason))
 			logx.Warnf("迁移-种子下载", "源站点抓取失败，尝试下一个候选 source_site=%s torrent_name=%s err=%s", candidate.site, name, reason)
 		}
@@ -110,6 +160,8 @@ func RunBatchFetch(torrentNames []string, sourcePriority []string, excludedSites
 			result["status"] = "failed"
 			result["reason"] = "所有候选源站点均抓取失败: " + strings.Join(attemptFailures, "; ")
 			result["attempted_sites"] = len(candidates)
+			result["attempt_failures"] = append([]string{}, attemptFailures...)
+			itemEnd(name, "failed", "", result["reason"].(string))
 			emit(false, result)
 			continue
 		}
@@ -127,6 +179,7 @@ func RunBatchFetch(torrentNames []string, sourcePriority []string, excludedSites
 		result["torrent_id"] = succeededID
 		result["task_id"] = toStringAny(fetchResult["task_id"], "")
 		result["screenshot_review_status"] = screenshotReviewStatus
+		itemEnd(name, result["status"].(string), succeededSite, result["message"].(string))
 		emit(true, result)
 		sleep(50 * time.Millisecond)
 	}

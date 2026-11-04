@@ -822,6 +822,20 @@ func audioCleanupTags(audio string) []string {
 		}
 	}
 
+	// DDP 归一化 token：标题原文常写作 DD+（紧粘声道）。"+5" 中 + 后为数字，
+	// 显式边界规则会让裸 "DD+" 移除失败、"DD+5.1" 拆剩 "DD+" 泄漏进"无法识别"，
+	// 因此为每个声道补齐 DD+ 组合 token，同时保留裸 DD+/全角加号变体。
+	if strings.Contains(upper, "DDP") {
+		for _, match := range channelMatches {
+			if len(match) >= 2 {
+				appendTag("DD+" + match[1])
+				appendTag("DD＋" + strings.ToLower(match[1]))
+			}
+		}
+		appendTag("DD+")
+		appendTag("DD＋")
+	}
+
 	if strings.Contains(upper, "ATMOS") {
 		appendTag("Atmos")
 	}

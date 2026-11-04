@@ -53,12 +53,29 @@ func (s *MigrateService) FetchAndStore(payload map[string]any) (map[string]any, 
 	s.ensureLogStream(taskID)
 	s.emitLog(taskID, "开始抓取", "正在从源站点抓取种子信息...", "processing")
 
+	// 批量抓取阶段钩子：把内部 emitLog 步骤转发为批量任务的阶段事件。
+	// 非批量入口（单条抓取）payload 不带钩子，emitStep 即普通日志转发。
+	stageHook, _ := payload["batch_stage_hook"].(func(name, step, message, status string))
+	emitStep := func(step, message, status string) {
+		s.emitLog(taskID, step, message, status)
+		if stageHook != nil {
+			stageHook(torrentName, step, message, status)
+		}
+	}
+	// 修复链回调签名带自身 taskID：忽略该参数，统一归入当前抓取项的阶段事件。
+	emitRepairStep := func(_ string, step, message, status string) {
+		s.emitLog(taskID, step, message, status)
+		if stageHook != nil {
+			stageHook(torrentName, step, message, status)
+		}
+	}
+
 	rootConfig := map[string]any{}
 	if s != nil && s.cfg != nil {
 		rootConfig = s.cfg.Get()
 	}
 	fetchRepairDeps := processingrepair.FetchRepairDeps{
-		EmitLog:          s.emitLog,
+		EmitLog:          emitRepairStep,
 		RefreshMediainfo: s.refreshMediainfoAsync,
 		CSPTToken:        s.csptToken(),
 		RootConfig:       rootConfig,
@@ -77,9 +94,7 @@ func (s *MigrateService) FetchAndStore(payload map[string]any) (map[string]any, 
 		processingpersist.FetchAndStoreEntryDeps{
 			Repo:            s.repo,
 			ExtractorEngine: s.extractorEngine,
-			EmitLog: func(step, message, status string) {
-				s.emitLog(taskID, step, message, status)
-			},
+			EmitLog:         emitStep,
 			FetchRepairDeps: fetchRepairDeps,
 			TriggerMediainfoRepair: func(input processingrepair.TriggerMediainfoRepairInput) {
 				processingrepair.TriggerMediainfoRepairDuringFetch(input, fetchRepairDeps)

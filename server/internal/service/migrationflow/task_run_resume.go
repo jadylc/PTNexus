@@ -174,7 +174,8 @@ func (s *MigrateService) resumeTaskRun(run repository.TaskRun) {
 		logx.Infof(taskRunLogModule, "续跑批量发布 run_id=%s 剩余=%d 并发=%d", run.RunID, len(targets), concurrency)
 		go s.resumePublishBatch(run, payload, targets, concurrency)
 	case repository.TaskRunKindBatchFetch:
-		s.batchFetchState.Start(run.RunID, s.taskRunItemCount(run.RunID))
+		// 续跑面板只含剩余条目（重启前的内存态明细已丢失）。
+		s.batchFetchState.StartWithItems(run.RunID, targets)
 		logx.Infof(taskRunLogModule, "续跑批量获取 run_id=%s 剩余=%d", run.RunID, len(targets))
 		go s.resumeBatchFetch(run, payload, targets)
 	default:
@@ -240,6 +241,7 @@ func (s *MigrateService) resumeBatchFetch(run repository.TaskRun, payload map[st
 	acquirefetch.RunBatchFetch(targets, sourcePriority, excludedSites, rows, acquirefetch.BatchFetchRunnerDeps{
 		FetchAndStore: s.FetchAndStore,
 		OnResult: func(success bool, result map[string]any) {
+			s.batchFetchState.MarkResult(run.RunID, success, result)
 			name := strings.TrimSpace(processingshared.ToString(result["name"], ""))
 			message := taskRunResultMessage(result)
 			if success {
@@ -248,10 +250,24 @@ func (s *MigrateService) resumeBatchFetch(run repository.TaskRun, payload map[st
 			}
 			s.taskRunItemDone(run.RunID, name, repository.TaskItemStatusFailed, message)
 		},
+		OnItemStart: func(name string, candidates []string) {
+			s.batchFetchState.MarkItemStart(run.RunID, name, candidates)
+		},
+		OnAttemptStart: func(name, site, torrentID string) {
+			s.batchFetchState.MarkItemAttemptStart(run.RunID, name, site, torrentID)
+		},
+		OnAttemptEnd: func(name, site string, success bool, reason string) {
+			s.batchFetchState.MarkItemAttemptEnd(run.RunID, name, site, success, reason)
+		},
+		OnItemEnd: func(name, status, finalSite, message string) {
+			s.batchFetchState.MarkItemResult(run.RunID, name, status, finalSite, message)
+		},
+		StageHook: s.newBatchStageHook(run.RunID),
 		ShouldCancel: func() bool {
 			return s.batchFetchState.IsCancelled(run.RunID)
 		},
 	})
+	s.batchFetchState.Finish(run.RunID)
 	s.finishTaskRun(run.RunID, repository.TaskRunKindBatchFetch)
 }
 
