@@ -2,13 +2,25 @@ package stats
 
 import (
 	"sort"
+	"sync"
 	"time"
 )
+
+// 站点每日统计的进程内缓存：重复打开页面直接命中，不再重复计算。
+var (
+	siteDailyCacheMu   sync.Mutex
+	siteDailyCacheDays int
+	siteDailyCacheAt   time.Time
+	siteDailyCacheData map[string]any
+)
+
+const siteDailyCacheTTL = 60 * time.Second
 
 // GetSiteDailyUploadStats 返回按天统计的各站点上传增量（流量统计页"站点数据统计"数据源）。
 // 参数/返回：days 为返回的天数窗口（默认 30，上限 365）；返回 dates（升序）与各站点的每日增量序列。
 // 计算口径：相邻两次快照的累计上传差值；窗口首日以更早的历史快照为基线（无更早快照时为 0）。
-// 说明：快照由后台采集线程每日写入（site_daily_stats），历史从部署后开始记录。
+// 说明：快照由后台采集线程每日写入（site_daily_stats），历史从部署后开始记录；
+// 接口只读快照小表（每天每站点一行），并带 60 秒进程内缓存——页面打开零重算压力。
 // 失败场景：数据库查询失败时返回错误。
 // 副作用：仅读取 site_daily_stats 快照表。
 func (s *Service) GetSiteDailyUploadStats(days int) (map[string]any, error) {
@@ -19,7 +31,33 @@ func (s *Service) GetSiteDailyUploadStats(days int) (map[string]any, error) {
 		days = 365
 	}
 
-	rows, err := s.repo.QuerySiteDailyStats("")
+	siteDailyCacheMu.Lock()
+	if siteDailyCacheData != nil && siteDailyCacheDays == days && time.Since(siteDailyCacheAt) < siteDailyCacheTTL {
+		cached := siteDailyCacheData
+		siteDailyCacheMu.Unlock()
+		return cached, nil
+	}
+	siteDailyCacheMu.Unlock()
+
+	result, err := s.computeSiteDailyUploadStats(days)
+	if err != nil {
+		return nil, err
+	}
+
+	siteDailyCacheMu.Lock()
+	siteDailyCacheDays = days
+	siteDailyCacheAt = time.Now()
+	siteDailyCacheData = result
+	siteDailyCacheMu.Unlock()
+	return result, nil
+}
+
+// computeSiteDailyUploadStats 从快照表计算每日增量序列（不含缓存逻辑）。
+func (s *Service) computeSiteDailyUploadStats(days int) (map[string]any, error) {
+	// 读取窗口：窗口天数 + 90 天基线回看（跨天停机时仍能取到前值基线），
+	// 快照表每天每站点仅一行，量级极小，查询恒定快速。
+	startDate := time.Now().AddDate(0, 0, -(days + 90)).Format("2006-01-02")
+	rows, err := s.repo.QuerySiteDailyStats(startDate)
 	if err != nil {
 		return nil, err
 	}
