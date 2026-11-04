@@ -72,14 +72,20 @@ func (h *StatsHandler) SiteStats(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
-// SiteUploadStats 流量统计页"站点数据统计"：按站点聚合种库累计上传/做种数量/总体积。
-// 参数/返回：无查询参数；返回 [{site_name, total_uploaded, torrent_count, total_size}]（按累计上传降序）。
+// SiteUploadStats 流量统计页"站点数据统计"：按天统计各站点上传增量。
+// 参数/返回：days 查询参数（默认 30，上限 365）；返回 {dates, sites:[{site_name, daily, total_uploaded, torrent_count}]}。
 // 失败场景：数据库查询失败返回 500。
 // 副作用：仅读取。
 func (h *StatsHandler) SiteUploadStats(c *gin.Context) {
-	result, err := h.service.GetSiteUploadStats()
+	days := 30
+	if raw := c.Query("days"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			days = parsed
+		}
+	}
+	result, err := h.service.GetSiteDailyUploadStats(days)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取站点上传统计失败"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取站点每日上传统计失败"})
 		return
 	}
 	c.JSON(http.StatusOK, result)

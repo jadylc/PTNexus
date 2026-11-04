@@ -147,24 +147,26 @@
       </div>
     </div>
 
-    <!-- 站点数据统计：按种库各站点累计上传与做种数量 -->
+    <!-- 站点数据统计：按天查看各站点上传增量（基于每日快照差值） -->
     <div class="chart-card glass-card glass-rounded site-stats-card">
       <div class="chart-header">
-        <!-- 左侧：指标切换 -->
+        <!-- 左侧：时间范围 -->
         <div class="header-left-controls">
           <div class="button-group">
-            <button @click="changeSiteStatsMetric('uploaded')"
-              :class="{ active: siteStatsMetric === 'uploaded' }">
-              累计上传
+            <button @click="changeSiteStatsRange(7)" :class="{ active: siteStatsDays === 7 }">
+              近7天
             </button>
-            <button @click="changeSiteStatsMetric('count')" :class="{ active: siteStatsMetric === 'count' }">
-              做种数量
+            <button @click="changeSiteStatsRange(30)" :class="{ active: siteStatsDays === 30 }">
+              近30天
+            </button>
+            <button @click="changeSiteStatsRange(90)" :class="{ active: siteStatsDays === 90 }">
+              近90天
             </button>
           </div>
         </div>
 
         <!-- 中间：标题 -->
-        <div class="chart-title">站点数据统计</div>
+        <div class="chart-title">站点数据统计（每日）</div>
 
         <!-- 右侧：占位 -->
         <div class="header-right-controls"></div>
@@ -174,7 +176,6 @@
           ref="siteStatsChart"
           v-loading="siteStatsLoading"
           class="chart-body chart-body-inner site-stats-body"
-          :style="{ height: siteStatsChartHeight + 'px' }"
         ></div>
       </div>
     </div>
@@ -1028,36 +1029,43 @@ const changeTrafficVisibility = (mode: VisibilityMode, isInternalCall = false) =
   }))
 }
 
-// --- 站点数据统计（按种库各站点累计上传/做种数量） ---
-type SiteUploadStatRow = {
-  site_name: string
-  total_uploaded: number
-  torrent_count: number
-  total_size: number
+// --- 站点数据统计（按天查看各站点上传增量，基于每日快照差值） ---
+type SiteDailyStatsResponse = {
+  dates: string[]
+  sites: { site_name: string; daily: number[]; total_uploaded: number; torrent_count: number }[]
+  snapshot_at?: string
 }
-type SiteStatsMetric = 'uploaded' | 'count'
+
+const SITE_STATS_PALETTE = [
+  '#F56C6C',
+  '#409EFF',
+  '#E6A23C',
+  '#67C23A',
+  '#8A2BE2',
+  '#FF9F7F',
+  '#5AB1EF',
+  '#D98A6F',
+  '#B3E19D',
+  '#FAB6B6',
+]
 
 const siteStatsChart = ref<HTMLElement | null>(null)
 let siteStatsChartInstance: echarts.ECharts | null = null
-const siteStatsMetric = ref<SiteStatsMetric>('uploaded')
-const siteStatsRows = ref<SiteUploadStatRow[]>([])
+const siteStatsDays = ref<number>(30)
+const siteStatsData = ref<SiteDailyStatsResponse | null>(null)
 const siteStatsLoading = ref(false)
 
-const siteStatsChartHeight = computed(() => {
-  const rows = siteStatsRows.value.length
-  return Math.max(320, rows * 30 + 90)
-})
-
-const fetchSiteUploadStats = async () => {
+const fetchSiteDailyStats = async () => {
   siteStatsLoading.value = true
   try {
-    const { data } = await axios.get<SiteUploadStatRow[]>('/api/site_upload_stats')
-    siteStatsRows.value = Array.isArray(data)
-      ? data.filter((row) => row && row.site_name)
-      : []
+    const { data } = await axios.get<SiteDailyStatsResponse>('/api/site_upload_stats', {
+      params: { days: siteStatsDays.value },
+    })
+    siteStatsData.value =
+      data && Array.isArray(data.dates) && Array.isArray(data.sites) ? data : null
   } catch (error) {
     console.error('获取站点数据统计失败:', error)
-    siteStatsRows.value = []
+    siteStatsData.value = null
   } finally {
     siteStatsLoading.value = false
     renderSiteStatsChart()
@@ -1066,91 +1074,100 @@ const fetchSiteUploadStats = async () => {
 
 const renderSiteStatsChart = () => {
   if (!siteStatsChartInstance) return
-  const metric = siteStatsMetric.value
-  const rows = [...siteStatsRows.value].sort((a, b) => {
-    const left = metric === 'uploaded' ? a.total_uploaded : a.torrent_count
-    const right = metric === 'uploaded' ? b.total_uploaded : b.torrent_count
-    return right - left
-  })
+  const payload = siteStatsData.value
+  const dates = payload?.dates || []
+  const sites = payload?.sites || []
 
-  const names = rows.map((row) => row.site_name)
-  const values = rows.map((row) =>
-    metric === 'uploaded' ? Number(row.total_uploaded) || 0 : Number(row.torrent_count) || 0,
+  if (dates.length === 0 || sites.length === 0) {
+    siteStatsChartInstance.clear()
+    siteStatsChartInstance.setOption({
+      title: {
+        text: '暂无每日快照数据（快照自部署后由后台每日记录）',
+        left: 'center',
+        top: 'middle',
+        textStyle: { color: '#909399', fontSize: 14, fontWeight: 'normal' },
+      },
+    })
+    return
+  }
+
+  // 取窗口内累计上传 Top10 站点，其余合并为「其他」
+  const topSites = sites.slice(0, 10)
+  const restSites = sites.slice(10)
+  const seriesList: { name: string; data: number[]; color: string }[] = topSites.map(
+    (site, index) => ({
+      name: site.site_name,
+      data: site.daily.map((value) => Number(value) || 0),
+      color: SITE_STATS_PALETTE[index % SITE_STATS_PALETTE.length],
+    }),
   )
-  const seriesColor = metric === 'uploaded' ? '#F56C6C' : '#409EFF'
-  const seriesName = metric === 'uploaded' ? '累计上传' : '做种数量'
+  if (restSites.length > 0) {
+    const restData = dates.map((_, dayIndex) =>
+      restSites.reduce((acc, site) => acc + (Number(site.daily[dayIndex]) || 0), 0),
+    )
+    seriesList.push({ name: '其他', data: restData, color: '#C0C4CC' })
+  }
+
+  const dayTotals = dates.map((_, dayIndex) =>
+    sites.reduce((acc, site) => acc + (Number(site.daily[dayIndex]) || 0), 0),
+  )
 
   siteStatsChartInstance.setOption({
-    title: {
-      text: rows.length === 0 && !siteStatsLoading.value ? '暂无站点数据' : '',
-      left: 'center',
-      top: 'middle',
-      textStyle: { color: '#909399', fontSize: 14, fontWeight: 'normal' },
-    },
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
       formatter: (params: unknown) => {
         const list = Array.isArray(params) ? params : [params]
-        const first = list[0] as { name?: string; value?: number } | undefined
-        if (!first) return ''
-        const row = rows.find((item) => item.site_name === first.name)
-        const lines = [`${first.name}`]
-        if (metric === 'uploaded') {
-          lines.push(`累计上传：${formatBytes(first.value)}`)
-        } else {
-          lines.push(`做种数量：${first.value}`)
-        }
-        if (row) {
-          lines.push(`做种数量：${row.torrent_count}`)
-          lines.push(`总体积：${formatBytes(row.total_size ?? 0)}`)
+        const first = list[0] as { dataIndex?: number } | undefined
+        const dayIndex = first?.dataIndex ?? 0
+        const lines = [`<b>${dates[dayIndex]}</b>`, `当日合计：${formatBytes(dayTotals[dayIndex])}`]
+        for (const item of list) {
+          const named = item as { seriesName?: string; value?: number; marker?: string }
+          if (!named.seriesName) continue
+          lines.push(
+            `${named.marker || ''}${named.seriesName}：${formatBytes(named.value)}`,
+          )
         }
         return lines.join('<br/>')
       },
     },
-    grid: { left: 8, right: 40, top: 10, bottom: 10, containLabel: true },
+    legend: {
+      type: 'scroll',
+      top: 0,
+      data: seriesList.map((series) => series.name),
+    },
+    grid: { left: 8, right: 16, top: 34, bottom: 24, containLabel: true },
     xAxis: {
-      type: 'value',
-      axisLabel: {
-        formatter: (value: number) => (metric === 'uploaded' ? formatBytes(value) : String(value)),
-      },
-      splitLine: { show: true, lineStyle: { opacity: 0.25 } },
+      type: 'category',
+      data: dates.map((date) => date.slice(5)),
+      axisLabel: { rotate: dates.length > 20 ? 45 : 0, fontSize: 11 },
     },
     yAxis: {
-      type: 'category',
-      data: names,
-      inverse: true,
-      axisLabel: { width: 110, overflow: 'truncate' },
+      type: 'value',
+      axisLabel: { formatter: (value: number) => formatBytes(value) },
+      splitLine: { show: true, lineStyle: { opacity: 0.25 } },
     },
-    series: [
-      {
-        name: seriesName,
-        type: 'bar',
-        data: values,
-        barMaxWidth: 18,
-        itemStyle: { color: seriesColor, borderRadius: [0, 4, 4, 0] },
-        label: {
-          show: true,
-          position: 'right',
-          formatter: (p: { value: number }) =>
-            metric === 'uploaded' ? formatBytes(p.value) : String(p.value),
-          fontSize: 11,
-          color: '#909399',
-        },
-      },
-    ],
+    series: seriesList.map((series) => ({
+      name: series.name,
+      type: 'bar' as const,
+      stack: 'daily',
+      data: series.data,
+      color: series.color,
+      barMaxWidth: 26,
+      emphasis: { focus: 'series' as const },
+    })),
   })
 }
 
-const changeSiteStatsMetric = (metric: SiteStatsMetric) => {
-  siteStatsMetric.value = metric
-  renderSiteStatsChart()
+const changeSiteStatsRange = (days: number) => {
+  siteStatsDays.value = days
+  void fetchSiteDailyStats()
 }
 
 const initSiteStatsChart = () => {
   if (!siteStatsChart.value) return
   siteStatsChartInstance = echarts.init(siteStatsChart.value)
-  void fetchSiteUploadStats()
+  void fetchSiteDailyStats()
 }
 
 const handleWindowResize = () => {
@@ -1241,20 +1258,19 @@ onUnmounted(() => {
   min-height: 0;
 }
 
-/* 站点数据统计卡片：图表高度随站点数量自适应，容器可滚动 */
+/* 站点数据统计卡片：固定高度每日堆叠柱状图 */
 .site-stats-card {
   flex: 0 0 auto;
 }
 
 .site-stats-scroll {
   flex: 0 0 auto;
-  overflow: auto;
-  max-height: 520px;
+  overflow: hidden;
 }
 
 .site-stats-body {
   flex: 0 0 auto;
-  height: auto;
+  height: 420px;
 }
 
 .chart-header {

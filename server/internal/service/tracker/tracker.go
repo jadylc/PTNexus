@@ -51,6 +51,8 @@ type Service struct {
 	lastCumulative   map[string]repository.CumulativeSnapshot
 	lastFlushTime    time.Time
 	aggregationCount int
+	// lastSiteSnapshotDate 记录最近一次站点每日快照的日期（YYYY-MM-DD）
+	lastSiteSnapshotDate string
 }
 
 // New 创建流量采集服务实例。
@@ -106,6 +108,13 @@ func (s *Service) run() {
 	if err := s.repo.EnsureTrafficStatsTables(); err != nil {
 		logx.Errorf(trackerModule, "初始化流量表失败 err=%v", err)
 		return
+	}
+
+	// 站点每日快照表：启动即建表并补当日快照
+	if err := s.repo.EnsureSiteDailyStatsTable(); err != nil {
+		logx.Warnf(trackerModule, "初始化站点每日快照表失败 err=%v", err)
+	} else {
+		s.ensureSiteDailySnapshot()
 	}
 
 	initialSnapshots, err := s.repo.QueryLatestCumulativeByDownloader()
@@ -167,8 +176,28 @@ func (s *Service) run() {
 					logx.Infof(trackerModule, "小时聚合完成 aggregated=%d deleted=%d", aggregated, deleted)
 				}
 			}
+
+			// 站点每日快照：跨天后的首个采集周期执行（幂等），供流量统计页按天查看各站点上传
+			s.ensureSiteDailySnapshot()
 		}
 	}
+}
+
+// ensureSiteDailySnapshot 当日期变化时写入站点每日快照（启动后首次调用立即执行）。
+// 参数/返回：无参数；失败仅记录日志，不影响采集循环。
+// 失败场景：聚合查询或写库失败时记录告警。
+// 副作用：写 site_daily_stats 当日快照行。
+func (s *Service) ensureSiteDailySnapshot() {
+	today := time.Now().Format("2006-01-02")
+	if today == s.lastSiteSnapshotDate {
+		return
+	}
+	if err := s.repo.UpsertSiteDailySnapshot(today); err != nil {
+		logx.Warnf(trackerModule, "站点每日快照失败 日期=%s err=%v", today, err)
+		return
+	}
+	s.lastSiteSnapshotDate = today
+	logx.Debugf(trackerModule, "站点每日快照完成 日期=%s", today)
 }
 
 func (s *Service) resolveIntervalSeconds() int {

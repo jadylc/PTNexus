@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 type TrafficDeltaRow struct {
@@ -56,6 +58,14 @@ type SiteUploadStatRow struct {
 	TotalUploaded int64  `gorm:"column:total_uploaded"`
 	TorrentCount  int64  `gorm:"column:torrent_count"`
 	TotalSize     int64  `gorm:"column:total_size"`
+}
+
+// SiteDailyStatRow 表示站点每日快照行（存各站点当日累计上传，用于计算每日增量）。
+type SiteDailyStatRow struct {
+	StatDate      string `gorm:"column:stat_date"`
+	SiteName      string `gorm:"column:site_name"`
+	TotalUploaded int64  `gorm:"column:total_uploaded"`
+	TorrentCount  int64  `gorm:"column:torrent_count"`
 }
 
 type GroupStatRow struct {
@@ -672,6 +682,96 @@ func (r *StatsRepository) QuerySiteUploadStats() ([]SiteUploadStatRow, error) {
 	`
 	rows := make([]SiteUploadStatRow, 0)
 	if err := r.store.DB.Raw(query).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// EnsureSiteDailyStatsTable 确保站点每日快照表存在。
+// 参数/返回：无参数，成功返回 nil。
+// 失败场景：数据库不可写或 SQL 执行失败时返回错误。
+// 副作用：会在数据库中创建表结构（若不存在）。
+func (r *StatsRepository) EnsureSiteDailyStatsTable() error {
+	var createSQL string
+	switch r.store.DBType {
+	case "mysql":
+		createSQL = `
+			CREATE TABLE IF NOT EXISTS site_daily_stats (
+				stat_date DATE NOT NULL,
+				site_name VARCHAR(128) NOT NULL,
+				total_uploaded BIGINT NOT NULL DEFAULT 0,
+				torrent_count INTEGER NOT NULL DEFAULT 0,
+				PRIMARY KEY (stat_date, site_name)
+			) ENGINE=InnoDB ROW_FORMAT=Dynamic
+		`
+	case "postgresql":
+		createSQL = `
+			CREATE TABLE IF NOT EXISTS site_daily_stats (
+				stat_date DATE NOT NULL,
+				site_name VARCHAR(128) NOT NULL,
+				total_uploaded BIGINT NOT NULL DEFAULT 0,
+				torrent_count INTEGER NOT NULL DEFAULT 0,
+				PRIMARY KEY (stat_date, site_name)
+			)
+		`
+	default:
+		createSQL = `
+			CREATE TABLE IF NOT EXISTS site_daily_stats (
+				stat_date TEXT NOT NULL,
+				site_name TEXT NOT NULL,
+				total_uploaded INTEGER NOT NULL DEFAULT 0,
+				torrent_count INTEGER NOT NULL DEFAULT 0,
+				PRIMARY KEY (stat_date, site_name)
+			)
+		`
+	}
+	return r.store.DB.Exec(createSQL).Error
+}
+
+// UpsertSiteDailySnapshot 把当前各站点累计上传写入指定日期的快照（幂等：先删后插）。
+// 参数/返回：statDate 为快照日期（YYYY-MM-DD）；成功返回 nil。
+// 失败场景：聚合查询或写库失败时返回错误。
+// 副作用：覆盖写 site_daily_stats 中该日期的行。
+func (r *StatsRepository) UpsertSiteDailySnapshot(statDate string) error {
+	rows, err := r.QuerySiteUploadStats()
+	if err != nil {
+		return err
+	}
+	return r.store.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Table("site_daily_stats").Where("stat_date = ?", statDate).Delete(nil).Error; err != nil {
+			return err
+		}
+		if len(rows) == 0 {
+			return nil
+		}
+		records := make([]map[string]any, 0, len(rows))
+		for _, row := range rows {
+			records = append(records, map[string]any{
+				"stat_date":      statDate,
+				"site_name":      row.SiteName,
+				"total_uploaded": row.TotalUploaded,
+				"torrent_count":  row.TorrentCount,
+			})
+		}
+		return tx.Table("site_daily_stats").Create(records).Error
+	})
+}
+
+// QuerySiteDailyStats 读取站点每日快照（可选起始日期，含当天）。
+// 参数/返回：startDate 为空时读取全部；返回按日期升序的快照行。
+// 失败场景：表不存在时返回空切片；查询失败返回错误。
+// 副作用：仅读取。
+func (r *StatsRepository) QuerySiteDailyStats(startDate string) ([]SiteDailyStatRow, error) {
+	rows := make([]SiteDailyStatRow, 0)
+	query := r.store.DB.Table("site_daily_stats").
+		Select("stat_date, site_name, total_uploaded, torrent_count")
+	if trimmed := strings.TrimSpace(startDate); trimmed != "" {
+		query = query.Where("stat_date >= ?", trimmed)
+	}
+	if err := query.Order("stat_date ASC, site_name ASC").Scan(&rows).Error; err != nil {
+		if isMissingTableError(err) {
+			return []SiteDailyStatRow{}, nil
+		}
 		return nil, err
 	}
 	return rows, nil
