@@ -153,13 +153,19 @@
         <!-- 左侧：时间范围 -->
         <div class="header-left-controls">
           <div class="button-group">
-            <button @click="changeSiteStatsRange(7)" :class="{ active: siteStatsDays === 7 }">
+            <button @click="changeSiteStatsRange('today')" :class="{ active: siteStatsRange === 'today' }">
+              今日
+            </button>
+            <button @click="changeSiteStatsRange('yesterday')" :class="{ active: siteStatsRange === 'yesterday' }">
+              昨日
+            </button>
+            <button @click="changeSiteStatsRange('7')" :class="{ active: siteStatsRange === '7' }">
               近7天
             </button>
-            <button @click="changeSiteStatsRange(30)" :class="{ active: siteStatsDays === 30 }">
+            <button @click="changeSiteStatsRange('30')" :class="{ active: siteStatsRange === '30' }">
               近30天
             </button>
-            <button @click="changeSiteStatsRange(90)" :class="{ active: siteStatsDays === 90 }">
+            <button @click="changeSiteStatsRange('90')" :class="{ active: siteStatsRange === '90' }">
               近90天
             </button>
           </div>
@@ -1036,30 +1042,20 @@ type SiteDailyStatsResponse = {
   snapshot_at?: string
 }
 
-const SITE_STATS_PALETTE = [
-  '#F56C6C',
-  '#409EFF',
-  '#E6A23C',
-  '#67C23A',
-  '#8A2BE2',
-  '#FF9F7F',
-  '#5AB1EF',
-  '#D98A6F',
-  '#B3E19D',
-  '#FAB6B6',
-]
-
 const siteStatsChart = ref<HTMLElement | null>(null)
 let siteStatsChartInstance: echarts.ECharts | null = null
-const siteStatsDays = ref<number>(30)
+// siteStatsRange：今日/昨日为单日切片，其余为最近 N 天窗口
+type SiteStatsRange = 'today' | 'yesterday' | '7' | '30' | '90'
+const siteStatsRange = ref<SiteStatsRange>('7')
 const siteStatsData = ref<SiteDailyStatsResponse | null>(null)
 const siteStatsLoading = ref(false)
 
+// 一次性拉取近 90 天快照，各档位在本地切片切换（零请求）
 const fetchSiteDailyStats = async () => {
   siteStatsLoading.value = true
   try {
     const { data } = await axios.get<SiteDailyStatsResponse>('/api/site_upload_stats', {
-      params: { days: siteStatsDays.value },
+      params: { days: 90 },
     })
     siteStatsData.value =
       data && Array.isArray(data.dates) && Array.isArray(data.sites) ? data : null
@@ -1072,17 +1068,59 @@ const fetchSiteDailyStats = async () => {
   }
 }
 
+// 按档位切出窗口：返回日期与各站点对齐的每日增量
+const sliceSiteStatsWindow = (): {
+  dates: string[]
+  sites: { site_name: string; daily: number[]; total_uploaded: number; torrent_count: number }[]
+  emptyReason: string
+} => {
+  const payload = siteStatsData.value
+  const allDates = payload?.dates || []
+  const allSites = payload?.sites || []
+  const empty = { dates: [], sites: [], emptyReason: '暂无每日快照数据（快照自部署后由后台每日记录）' }
+  if (allDates.length === 0 || allSites.length === 0) return empty
+
+  let endIdx = allDates.length
+  let startIdx = 0
+  let emptyReason = ''
+  if (siteStatsRange.value === 'today') {
+    startIdx = allDates.length - 1
+  } else if (siteStatsRange.value === 'yesterday') {
+    if (allDates.length < 2) {
+      return { dates: [], sites: [], emptyReason: '昨日无快照数据（昨日尚未生成快照）' }
+    }
+    startIdx = allDates.length - 2
+    endIdx = allDates.length - 1
+  } else {
+    const days = Number(siteStatsRange.value)
+    startIdx = Math.max(0, allDates.length - days)
+  }
+  if (startIdx >= endIdx) {
+    return { dates: [], sites: [], emptyReason: emptyReason || '所选范围暂无快照数据' }
+  }
+
+  const dates = allDates.slice(startIdx, endIdx)
+  const sites = allSites.map((site) => ({
+    site_name: site.site_name,
+    daily: (site.daily || []).slice(startIdx, endIdx).map((value) => Number(value) || 0),
+    total_uploaded: 0,
+    torrent_count: Number(site.torrent_count) || 0,
+  }))
+  for (const site of sites) {
+    site.total_uploaded = site.daily.reduce((acc, value) => acc + value, 0)
+  }
+  return { dates, sites, emptyReason: '' }
+}
+
 const renderSiteStatsChart = () => {
   if (!siteStatsChartInstance) return
-  const payload = siteStatsData.value
-  const dates = payload?.dates || []
-  const sites = payload?.sites || []
+  const { dates, sites, emptyReason } = sliceSiteStatsWindow()
 
   if (dates.length === 0 || sites.length === 0) {
     siteStatsChartInstance.clear()
     siteStatsChartInstance.setOption({
       title: {
-        text: '暂无每日快照数据（快照自部署后由后台每日记录）',
+        text: emptyReason,
         left: 'center',
         top: 'middle',
         textStyle: { color: '#909399', fontSize: 14, fontWeight: 'normal' },
@@ -1091,22 +1129,13 @@ const renderSiteStatsChart = () => {
     return
   }
 
-  // 取窗口内累计上传 Top10 站点，其余合并为「其他」
-  const topSites = sites.slice(0, 10)
-  const restSites = sites.slice(10)
-  const seriesList: { name: string; data: number[]; color: string }[] = topSites.map(
-    (site, index) => ({
-      name: site.site_name,
-      data: site.daily.map((value) => Number(value) || 0),
-      color: SITE_STATS_PALETTE[index % SITE_STATS_PALETTE.length],
-    }),
-  )
-  if (restSites.length > 0) {
-    const restData = dates.map((_, dayIndex) =>
-      restSites.reduce((acc, site) => acc + (Number(site.daily[dayIndex]) || 0), 0),
-    )
-    seriesList.push({ name: '其他', data: restData, color: '#C0C4CC' })
-  }
+  // 所有站点逐个显示（不做合并），按窗口内上传降序排列；图例可滚动、可点击隔离
+  const sorted = [...sites].sort((a, b) => b.total_uploaded - a.total_uploaded)
+  const seriesList = sorted.map((site, index) => ({
+    name: site.site_name,
+    data: site.daily,
+    color: `hsl(${Math.round((index * 360) / Math.max(sorted.length, 1))}, 65%, 55%)`,
+  }))
 
   const dayTotals = dates.map((_, dayIndex) =>
     sites.reduce((acc, site) => acc + (Number(site.daily[dayIndex]) || 0), 0),
@@ -1121,12 +1150,16 @@ const renderSiteStatsChart = () => {
         const first = list[0] as { dataIndex?: number } | undefined
         const dayIndex = first?.dataIndex ?? 0
         const lines = [`<b>${dates[dayIndex]}</b>`, `当日合计：${formatBytes(dayTotals[dayIndex])}`]
-        for (const item of list) {
-          const named = item as { seriesName?: string; value?: number; marker?: string }
-          if (!named.seriesName) continue
-          lines.push(
-            `${named.marker || ''}${named.seriesName}：${formatBytes(named.value)}`,
-          )
+        // 明细按当日上传降序，只列非零站点
+        const details = [...list]
+          .map((item) => item as { seriesName?: string; value?: number; marker?: string })
+          .filter((item) => item.seriesName && (Number(item.value) || 0) > 0)
+          .sort((a, b) => (Number(b.value) || 0) - (Number(a.value) || 0))
+        for (const item of details) {
+          lines.push(`${item.marker || ''}${item.seriesName}：${formatBytes(item.value)}`)
+        }
+        if (details.length === 0) {
+          lines.push('当日各站点均无上传')
         }
         return lines.join('<br/>')
       },
@@ -1159,9 +1192,9 @@ const renderSiteStatsChart = () => {
   })
 }
 
-const changeSiteStatsRange = (days: number) => {
-  siteStatsDays.value = days
-  void fetchSiteDailyStats()
+const changeSiteStatsRange = (range: SiteStatsRange) => {
+  siteStatsRange.value = range
+  renderSiteStatsChart()
 }
 
 const initSiteStatsChart = () => {
