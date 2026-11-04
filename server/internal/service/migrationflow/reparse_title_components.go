@@ -162,13 +162,12 @@ func (s *MigrateService) ReparseTitleComponents(payload map[string]any) (map[str
 
 		// 无效列值修复：当前列值映射不到标准键时，用标题推断出的标准键替换
 		//（如 team.hdsky → team.hds、2Audio → audio.other）；有效列值不动。
+		// 空列补齐：列值为空但能从标题/MediaInfo 推断出有效标准键时补写
+		//（此前空值直接跳过，导致 mediainfo 明明有 AC-3、audio_codec 列仍是空串）。
 		inferred := extract.InferStandardizedValues(fixedTitle, mediaInfoText, "")
 		for _, column := range reparseStandardColumns {
 			current := strings.TrimSpace(processingshared.ToString(row[column], ""))
-			if current == "" {
-				continue
-			}
-			if !crossseed.IsInvalidStandardValue(column, current, reverseMappings) {
+			if current != "" && !crossseed.IsInvalidStandardValue(column, current, reverseMappings) {
 				continue
 			}
 			fixed := strings.TrimSpace(inferred[column])

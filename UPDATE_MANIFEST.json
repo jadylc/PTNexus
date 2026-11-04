@@ -2,38 +2,45 @@
   "schema": 2,
   "note": "repo-root metadata only; production updater must use release UPDATE_MANIFEST.json",
   "latest": {
-    "version": "v4.6.0",
+    "version": "v4.6.1",
     "artifacts": [
       {
         "os": "linux",
         "arch": "amd64",
-        "url": "https://github.com/jadylc/PTNexus/releases/download/v4.6.0/ptnexus-runtime-linux-amd64.tar.gz",
+        "url": "https://github.com/jadylc/PTNexus/releases/download/v4.6.1/ptnexus-runtime-linux-amd64.tar.gz",
         "sha256": "",
         "size": 11163781,
         "format": "tar.gz",
         "mirror_urls": [
-          "https://gitee.com/jadylc/PTNexus/releases/download/v4.6.0/ptnexus-runtime-linux-amd64.tar.gz",
-          "https://gh.ddlc.top/https://github.com/jadylc/PTNexus/releases/download/v4.6.0/ptnexus-runtime-linux-amd64.tar.gz",
-          "https://ghproxy.net/https://github.com/jadylc/PTNexus/releases/download/v4.6.0/ptnexus-runtime-linux-amd64.tar.gz"
+          "https://gitee.com/jadylc/PTNexus/releases/download/v4.6.1/ptnexus-runtime-linux-amd64.tar.gz",
+          "https://gh.ddlc.top/https://github.com/jadylc/PTNexus/releases/download/v4.6.1/ptnexus-runtime-linux-amd64.tar.gz",
+          "https://ghproxy.net/https://github.com/jadylc/PTNexus/releases/download/v4.6.1/ptnexus-runtime-linux-amd64.tar.gz"
         ]
       },
       {
         "os": "linux",
         "arch": "arm64",
-        "url": "https://github.com/jadylc/PTNexus/releases/download/v4.6.0/ptnexus-runtime-linux-arm64.tar.gz",
+        "url": "https://github.com/jadylc/PTNexus/releases/download/v4.6.1/ptnexus-runtime-linux-arm64.tar.gz",
         "sha256": "",
         "size": 10104449,
         "format": "tar.gz",
         "mirror_urls": [
-          "https://gitee.com/jadylc/PTNexus/releases/download/v4.6.0/ptnexus-runtime-linux-arm64.tar.gz",
-          "https://gh.ddlc.top/https://github.com/jadylc/PTNexus/releases/download/v4.6.0/ptnexus-runtime-linux-arm64.tar.gz",
-          "https://ghproxy.net/https://github.com/jadylc/PTNexus/releases/download/v4.6.0/ptnexus-runtime-linux-arm64.tar.gz"
+          "https://gitee.com/jadylc/PTNexus/releases/download/v4.6.1/ptnexus-runtime-linux-arm64.tar.gz",
+          "https://gh.ddlc.top/https://github.com/jadylc/PTNexus/releases/download/v4.6.1/ptnexus-runtime-linux-arm64.tar.gz",
+          "https://ghproxy.net/https://github.com/jadylc/PTNexus/releases/download/v4.6.1/ptnexus-runtime-linux-arm64.tar.gz"
         ]
       }
     ],
     "date": "2026.11.04"
   },
   "history": [
+    {
+      "version": "v4.6.1",
+      "date": "2026.11.04",
+      "changes": [
+        "修复：「重算标题」不补齐空的标准参数列——旧逻辑遇到空列直接跳过（只修有值但无效的行），导致 mediainfo 明明含 AC-3、audio_codec 列依然为空、重算无效果；现在空列会用标题+MediaInfo 推断出的合法标准键补写，已有有效值（含人工修改）仍不覆盖"
+      ]
+    },
     {
       "version": "v4.6.0",
       "date": "2026.11.04",
