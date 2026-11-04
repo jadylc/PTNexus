@@ -183,13 +183,50 @@
               />
             </el-form-item>
 
+            <el-form-item label="按功能选择是否走代理" class="form-item">
+              <div class="proxy-category-group">
+                <el-checkbox v-model="networkProxyForm.categories.media">
+                  PTGen / 媒体信息（TMDB、IMDb、豆瓣、财神等）
+                </el-checkbox>
+                <el-checkbox v-model="networkProxyForm.categories.image_host">
+                  图床上传与转发（Pixhost、pt-nexus 转发 worker）
+                </el-checkbox>
+                <el-checkbox v-model="networkProxyForm.categories.iyuu">
+                  IYUU 辅种 API
+                </el-checkbox>
+                <el-checkbox v-model="networkProxyForm.categories.other">
+                  其余外网目标（cookie 云同步等，PT 站点不受此项影响）
+                </el-checkbox>
+              </div>
+            </el-form-item>
+
+            <el-form-item label="走代理的 PT 站点（默认全部直连，勾选才走代理）" class="form-item">
+              <el-select
+                v-model="networkProxyForm.proxy_sites"
+                multiple
+                filterable
+                clearable
+                collapse-tags
+                collapse-tags-tooltip
+                placeholder="选择需要通过代理访问的站点"
+                style="width: 100%"
+              >
+                <el-option
+                  v-for="item in filteredProxySiteOptions"
+                  :key="item.domain"
+                  :label="`${item.nickname}（${item.domain}）`"
+                  :value="item.domain"
+                />
+              </el-select>
+            </el-form-item>
+
             <div class="form-spacer"></div>
 
             <el-text type="info" size="small" class="proxy-hint">
               <el-icon size="12">
                 <InfoFilled />
               </el-icon>
-              填写后后续新请求立即使用该代理；留空则回退 HTTP_PROXY / HTTPS_PROXY / NO_PROXY 环境变量；qB/TR/NAS 等内网地址请写入 NO_PROXY。
+              填写代理 URL 后，仅上方勾选的功能与站点通过代理出网，其余请求强制直连——代理节点故障不会影响发种与站点访问。qB/TR/NAS 等内网地址始终直连。留空则不启用代理（仅回退环境变量）。
             </el-text>
           </el-form>
         </div>
@@ -1159,10 +1196,62 @@ const savingNetworkProxy = ref(false)
 const networkProxyForm = reactive<{
   proxy_url: string
   no_proxy: string
+  categories: { media: boolean; image_host: boolean; iyuu: boolean; other: boolean }
+  proxy_sites: string[]
 }>({
   proxy_url: '',
   no_proxy: '',
+  categories: { media: true, image_host: true, iyuu: false, other: false },
+  proxy_sites: [],
 })
+
+// 站点走代理白名单选项：来自 /api/sites，按 base_url 提取域名展示
+type ProxySiteOption = { domain: string; nickname: string }
+const proxySiteOptions = ref<ProxySiteOption[]>([])
+const proxySiteFilter = ref('')
+
+const filteredProxySiteOptions = computed(() => {
+  const keyword = proxySiteFilter.value.trim().toLowerCase()
+  if (!keyword) return proxySiteOptions.value
+  return proxySiteOptions.value.filter(
+    (item) =>
+      item.domain.toLowerCase().includes(keyword) || item.nickname.toLowerCase().includes(keyword),
+  )
+})
+
+const extractHostFromURL = (raw: string): string => {
+  const trimmed = (raw || '').trim()
+  if (!trimmed) return ''
+  try {
+    const parsed = new URL(trimmed.startsWith('http') ? trimmed : `https://${trimmed}`)
+    return parsed.hostname.toLowerCase()
+  } catch {
+    return trimmed
+      .replace(/^https?:\/\//i, '')
+      .split('/')[0]
+      .toLowerCase()
+  }
+}
+
+const loadProxySiteOptions = async () => {
+  try {
+    const { data } = await axios.get('/api/sites?filter_by_torrents=all')
+    const rows = Array.isArray(data) ? data : []
+    const seen = new Set<string>()
+    const options: ProxySiteOption[] = []
+    for (const row of rows) {
+      const domain = extractHostFromURL(String((row as any).base_url || ''))
+      if (!domain || seen.has(domain)) continue
+      seen.add(domain)
+      options.push({ domain, nickname: String((row as any).nickname || domain) })
+    }
+    options.sort((a, b) => a.nickname.localeCompare(b.nickname, 'zh-CN'))
+    proxySiteOptions.value = options
+  } catch (error) {
+    console.error('加载站点代理白名单选项失败:', error)
+  }
+}
+
 const savingFlareSolver = ref(false)
 const flareSolverForm = reactive<{
   enabled: boolean
@@ -1424,6 +1513,16 @@ const fetchSettings = async () => {
         config.network_proxy.https_proxy ||
         ''
       networkProxyForm.no_proxy = config.network_proxy.no_proxy || ''
+      const rawCategories = config.network_proxy.categories || {}
+      networkProxyForm.categories = {
+        media: rawCategories.media !== false,
+        image_host: rawCategories.image_host !== false,
+        iyuu: rawCategories.iyuu === true,
+        other: rawCategories.other === true,
+      }
+      networkProxyForm.proxy_sites = Array.isArray(config.network_proxy.proxy_sites)
+        ? config.network_proxy.proxy_sites.map((item: string) => String(item).trim()).filter(Boolean)
+        : []
     }
 
     // 获取 FlareSolverr 设置
@@ -1699,6 +1798,8 @@ const saveNetworkProxySettings = async () => {
       network_proxy: {
         proxy_url: networkProxyForm.proxy_url.trim(),
         no_proxy: networkProxyForm.no_proxy.trim(),
+        categories: { ...networkProxyForm.categories },
+        proxy_sites: [...networkProxyForm.proxy_sites],
       },
     })
     ElMessage.success('网络代理设置已保存，后续新请求将使用新配置。')
@@ -1881,6 +1982,7 @@ const saveSelectedPaths = () => {
 
 onMounted(() => {
   fetchSettings()
+  void loadProxySiteOptions()
   void initDesktopRuntime()
 })
 </script>
@@ -2036,6 +2138,12 @@ onMounted(() => {
   gap: 4px;
   line-height: 1.4;
   margin-top: auto;
+}
+
+.proxy-category-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .proxy-hint {
