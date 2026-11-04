@@ -177,12 +177,33 @@
         <!-- 右侧：占位 -->
         <div class="header-right-controls"></div>
       </div>
-      <div class="chart-scroll-container site-stats-scroll">
-        <div
-          ref="siteStatsChart"
+      <div class="site-stats-table-wrap">
+        <el-table
+          :data="siteStatsTableRows"
           v-loading="siteStatsLoading"
-          class="chart-body chart-body-inner site-stats-body"
-        ></div>
+          :empty-text="siteStatsEmptyReason"
+          size="small"
+          border
+          height="480"
+          :default-sort="{ prop: 'total_uploaded', order: 'descending' }"
+        >
+          <el-table-column prop="site_name" label="站点" min-width="150" fixed="left" sortable />
+          <el-table-column prop="total_uploaded" label="上传合计" width="120" sortable align="right">
+            <template #default="{ row }">{{ formatBytes(row.total_uploaded) }}</template>
+          </el-table-column>
+          <el-table-column prop="torrent_count" label="做种数量" width="100" sortable align="right" />
+          <el-table-column
+            v-for="(date, i) in siteStatsTableDates"
+            :key="date"
+            :label="date.slice(5)"
+            width="110"
+            align="right"
+            sortable
+            :sort-method="(a: { days: number[] }, b: { days: number[] }) => (a.days[i] || 0) - (b.days[i] || 0)"
+          >
+            <template #default="{ row }">{{ formatBytes(row.days[i] || 0) }}</template>
+          </el-table-column>
+        </el-table>
       </div>
     </div>
   </div>
@@ -1042,31 +1063,11 @@ type SiteDailyStatsResponse = {
   snapshot_at?: string
 }
 
-const siteStatsChart = ref<HTMLElement | null>(null)
-let siteStatsChartInstance: echarts.ECharts | null = null
 // siteStatsRange：今日/昨日为单日切片，其余为最近 N 天窗口
 type SiteStatsRange = 'today' | 'yesterday' | '7' | '30' | '90'
 const siteStatsRange = ref<SiteStatsRange>('7')
 const siteStatsData = ref<SiteDailyStatsResponse | null>(null)
 const siteStatsLoading = ref(false)
-
-// 一次性拉取近 90 天快照，各档位在本地切片切换（零请求）
-const fetchSiteDailyStats = async () => {
-  siteStatsLoading.value = true
-  try {
-    const { data } = await axios.get<SiteDailyStatsResponse>('/api/site_upload_stats', {
-      params: { days: 90 },
-    })
-    siteStatsData.value =
-      data && Array.isArray(data.dates) && Array.isArray(data.sites) ? data : null
-  } catch (error) {
-    console.error('获取站点数据统计失败:', error)
-    siteStatsData.value = null
-  } finally {
-    siteStatsLoading.value = false
-    renderSiteStatsChart()
-  }
-}
 
 // 按档位切出窗口：返回日期与各站点对齐的每日增量
 const sliceSiteStatsWindow = (): {
@@ -1082,7 +1083,6 @@ const sliceSiteStatsWindow = (): {
 
   let endIdx = allDates.length
   let startIdx = 0
-  let emptyReason = ''
   if (siteStatsRange.value === 'today') {
     startIdx = allDates.length - 1
   } else if (siteStatsRange.value === 'yesterday') {
@@ -1096,7 +1096,7 @@ const sliceSiteStatsWindow = (): {
     startIdx = Math.max(0, allDates.length - days)
   }
   if (startIdx >= endIdx) {
-    return { dates: [], sites: [], emptyReason: emptyReason || '所选范围暂无快照数据' }
+    return { dates: [], sites: [], emptyReason: '所选范围暂无快照数据' }
   }
 
   const dates = allDates.slice(startIdx, endIdx)
@@ -1112,95 +1112,37 @@ const sliceSiteStatsWindow = (): {
   return { dates, sites, emptyReason: '' }
 }
 
-const renderSiteStatsChart = () => {
-  if (!siteStatsChartInstance) return
-  const { dates, sites, emptyReason } = sliceSiteStatsWindow()
+// 表格数据：由快照数据 + 当前档位切片派生，排序交给 el-table 内置排序
+const siteStatsTableDates = computed(() => sliceSiteStatsWindow().dates)
+const siteStatsTableRows = computed(() =>
+  sliceSiteStatsWindow().sites.map((site) => ({
+    site_name: site.site_name,
+    total_uploaded: site.total_uploaded,
+    torrent_count: site.torrent_count,
+    days: site.daily,
+  })),
+)
+const siteStatsEmptyReason = computed(() => sliceSiteStatsWindow().emptyReason)
 
-  if (dates.length === 0 || sites.length === 0) {
-    siteStatsChartInstance.clear()
-    siteStatsChartInstance.setOption({
-      title: {
-        text: emptyReason,
-        left: 'center',
-        top: 'middle',
-        textStyle: { color: '#909399', fontSize: 14, fontWeight: 'normal' },
-      },
+// 一次性拉取近 90 天快照，各档位在本地切片切换（零请求）
+const fetchSiteDailyStats = async () => {
+  siteStatsLoading.value = true
+  try {
+    const { data } = await axios.get<SiteDailyStatsResponse>('/api/site_upload_stats', {
+      params: { days: 90 },
     })
-    return
+    siteStatsData.value =
+      data && Array.isArray(data.dates) && Array.isArray(data.sites) ? data : null
+  } catch (error) {
+    console.error('获取站点数据统计失败:', error)
+    siteStatsData.value = null
+  } finally {
+    siteStatsLoading.value = false
   }
-
-  // 所有站点逐个显示（不做合并），按窗口内上传降序排列；图例可滚动、可点击隔离
-  const sorted = [...sites].sort((a, b) => b.total_uploaded - a.total_uploaded)
-  const seriesList = sorted.map((site, index) => ({
-    name: site.site_name,
-    data: site.daily,
-    color: `hsl(${Math.round((index * 360) / Math.max(sorted.length, 1))}, 65%, 55%)`,
-  }))
-
-  const dayTotals = dates.map((_, dayIndex) =>
-    sites.reduce((acc, site) => acc + (Number(site.daily[dayIndex]) || 0), 0),
-  )
-
-  siteStatsChartInstance.setOption({
-    tooltip: {
-      trigger: 'axis',
-      axisPointer: { type: 'shadow' },
-      formatter: (params: unknown) => {
-        const list = Array.isArray(params) ? params : [params]
-        const first = list[0] as { dataIndex?: number } | undefined
-        const dayIndex = first?.dataIndex ?? 0
-        const lines = [`<b>${dates[dayIndex]}</b>`, `当日合计：${formatBytes(dayTotals[dayIndex])}`]
-        // 明细按当日上传降序，只列非零站点
-        const details = [...list]
-          .map((item) => item as { seriesName?: string; value?: number; marker?: string })
-          .filter((item) => item.seriesName && (Number(item.value) || 0) > 0)
-          .sort((a, b) => (Number(b.value) || 0) - (Number(a.value) || 0))
-        for (const item of details) {
-          lines.push(`${item.marker || ''}${item.seriesName}：${formatBytes(item.value)}`)
-        }
-        if (details.length === 0) {
-          lines.push('当日各站点均无上传')
-        }
-        return lines.join('<br/>')
-      },
-    },
-    legend: {
-      type: 'scroll',
-      top: 0,
-      data: seriesList.map((series) => series.name),
-    },
-    grid: { left: 8, right: 16, top: 34, bottom: 24, containLabel: true },
-    xAxis: {
-      type: 'category',
-      data: dates.map((date) => date.slice(5)),
-      axisLabel: { rotate: dates.length > 20 ? 45 : 0, fontSize: 11 },
-    },
-    yAxis: {
-      type: 'value',
-      axisLabel: { formatter: (value: number) => formatBytes(value) },
-      splitLine: { show: true, lineStyle: { opacity: 0.25 } },
-    },
-    series: seriesList.map((series) => ({
-      name: series.name,
-      type: 'bar' as const,
-      stack: 'daily',
-      data: series.data,
-      color: series.color,
-      barMaxWidth: 26,
-      emphasis: { focus: 'series' as const },
-    })),
-  })
 }
 
 const changeSiteStatsRange = (range: SiteStatsRange) => {
   siteStatsRange.value = range
-  renderSiteStatsChart()
-}
-
-const initSiteStatsChart = () => {
-  if (!siteStatsChart.value) return
-  siteStatsChartInstance = echarts.init(siteStatsChart.value)
-  void fetchSiteDailyStats()
 }
 
 const handleWindowResize = () => {
@@ -1217,7 +1159,6 @@ const handleWindowResize = () => {
 
   speedChartInstance?.resize()
   trafficChartInstance?.resize()
-  siteStatsChartInstance?.resize()
 }
 
 // --- Lifecycle ---
@@ -1233,7 +1174,7 @@ onMounted(async () => {
 
   initSpeedChart()
   initTrafficChart()
-  initSiteStatsChart()
+  void fetchSiteDailyStats()
   changeSpeedMode(speedDisplayMode.value)
   changeTrafficMode(trafficDisplayMode.value)
   window.addEventListener('resize', handleWindowResize)
@@ -1246,8 +1187,6 @@ onUnmounted(() => {
     clearInterval(speedUpdateTimer)
   }
   window.removeEventListener('resize', handleWindowResize)
-  siteStatsChartInstance?.dispose()
-  siteStatsChartInstance = null
 })
 </script>
 
@@ -1291,19 +1230,13 @@ onUnmounted(() => {
   min-height: 0;
 }
 
-/* 站点数据统计卡片：固定高度每日堆叠柱状图 */
+/* 站点数据统计卡片：表格固定高度，内部滚动 */
 .site-stats-card {
   flex: 0 0 auto;
 }
 
-.site-stats-scroll {
+.site-stats-table-wrap {
   flex: 0 0 auto;
-  overflow: hidden;
-}
-
-.site-stats-body {
-  flex: 0 0 auto;
-  height: 420px;
 }
 
 .chart-header {
