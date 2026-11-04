@@ -50,6 +50,14 @@ type SiteStatRow struct {
 	TorrentCount int64  `gorm:"column:torrent_count"`
 }
 
+// SiteUploadStatRow 表示按站点聚合的累计上传统计行。
+type SiteUploadStatRow struct {
+	SiteName      string `gorm:"column:site_name"`
+	TotalUploaded int64  `gorm:"column:total_uploaded"`
+	TorrentCount  int64  `gorm:"column:torrent_count"`
+	TotalSize     int64  `gorm:"column:total_size"`
+}
+
 type GroupStatRow struct {
 	SiteName     string `gorm:"column:site_name"`
 	GroupSuffix  string `gorm:"column:group_suffix"`
@@ -627,6 +635,42 @@ func (r *StatsRepository) QuerySiteStats() ([]SiteStatRow, error) {
 		ORDER BY sites
 	`
 	rows := make([]SiteStatRow, 0)
+	if err := r.store.DB.Raw(query).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// QuerySiteUploadStats 按站点聚合种库累计上传：上传量来自 torrent_upload_stats（按 hash 汇总），
+// 站点归属来自 torrents.sites；返回按累计上传降序的列表。
+// 参数/返回：无参数；返回站点名、累计上传、做种数量与总体积。
+// 失败场景：数据库查询失败时返回错误。
+// 副作用：仅读取，不写入。
+func (r *StatsRepository) QuerySiteUploadStats() ([]SiteUploadStatRow, error) {
+	query := `
+		SELECT t.sites AS site_name,
+		       COALESCE(SUM(u.total_uploaded), 0) AS total_uploaded,
+		       COUNT(DISTINCT u.hash) AS torrent_count,
+		       COALESCE(SUM(sizes.size), 0) AS total_size
+		FROM (
+			SELECT us.hash AS hash, SUM(us.uploaded) AS total_uploaded
+			FROM torrent_upload_stats us
+			WHERE (us.is_hidden = 0 OR us.is_hidden IS NULL)
+			GROUP BY us.hash
+		) u
+		JOIN torrents t
+		  ON t.hash = u.hash
+		 AND (t.is_hidden = 0 OR t.is_hidden IS NULL)
+		LEFT JOIN (
+			SELECT hash, MAX(size) AS size
+			FROM torrents
+			GROUP BY hash
+		) sizes ON sizes.hash = u.hash
+		WHERE t.sites IS NOT NULL AND TRIM(t.sites) != ''
+		GROUP BY t.sites
+		ORDER BY total_uploaded DESC
+	`
+	rows := make([]SiteUploadStatRow, 0)
 	if err := r.store.DB.Raw(query).Scan(&rows).Error; err != nil {
 		return nil, err
 	}

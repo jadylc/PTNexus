@@ -62,38 +62,7 @@ func ValidateMediaPayload(payload map[string]any, rootConfig map[string]any, csp
 		return map[string]any{"success": true, "screenshots": ToBBCodeImages(generated)}, 200
 
 	case "screenshot":
-		// “重新获取截图”语义：优先沿用原有字幕流直出逻辑；仅在未找到可用字幕流时返回候选截图供人工选择。
-		usePreview, previewDecisionErr := ShouldUseScreenshotPreview(ScreenshotGenerateInput{
-			Payload:     payload,
-			SourceInfo:  sourceInfo,
-			ContentName: contentName,
-			RootConfig:  rootConfig,
-		})
-		if previewDecisionErr != nil {
-			usePreview = false
-		}
-		if usePreview {
-			previewCount := parsePreviewCountAny(payload["preview_count"])
-			previewBundle, previewErr := GenerateScreenshotPreviewCandidates(ScreenshotGenerateInput{
-				Payload:     payload,
-				SourceInfo:  sourceInfo,
-				ContentName: contentName,
-				RootConfig:  rootConfig,
-			}, previewCount)
-			if previewErr != nil {
-				return map[string]any{"success": false, "error": previewErr.Error()}, 400
-			}
-			return map[string]any{
-				"success":              true,
-				"preview_required":     true,
-				"candidates":           previewBundle.Candidates,
-				"selection_limit":      previewBundle.SelectionLimit,
-				"subtitle_state":       previewBundle.SubtitleState,
-				"subtitle_streams":     previewBundle.SubtitleStreams,
-				"current_subtitle_sid": previewBundle.CurrentSubtitleSID,
-			}, 200
-		}
-
+		// “重新获取截图”语义：直接按字幕流直出生成正式截图，不再走候选截图人工挑选。
 		generated, genErr := GenerateAndUploadScreenshots(ScreenshotGenerateInput{
 			Payload:     payload,
 			SourceInfo:  sourceInfo,
@@ -112,7 +81,7 @@ func ValidateMediaPayload(payload map[string]any, rootConfig map[string]any, csp
 	case "poster":
 		result, errMsg := FetchMovieInfo(mediaType, contentName, subtitle, sourceInfo, csptToken)
 		if errMsg != "" {
-			return map[string]any{"success": false, "error": errMsg}, 400
+			return map[string]any{"success": false, "error": errMsg, "warning": result.Warning}, 400
 		}
 		result.Poster = NormalizePosterBBCode(result.Poster)
 		return map[string]any{
@@ -122,12 +91,13 @@ func ValidateMediaPayload(payload map[string]any, rootConfig map[string]any, csp
 			"extracted_imdb_link":   result.IMDb,
 			"extracted_douban_link": result.Douban,
 			"extracted_tmdb_link":   result.TMDb,
+			"warning":               result.Warning,
 		}, 200
 
 	case "intro":
 		result, errMsg := FetchMovieInfo(mediaType, contentName, subtitle, sourceInfo, csptToken)
 		if errMsg != "" {
-			return map[string]any{"success": false, "error": errMsg}, 400
+			return map[string]any{"success": false, "error": errMsg, "warning": result.Warning}, 400
 		}
 		// 从新获取的简介文本中提取“类别”字段对应的标准化标签，仅随响应返回，不落库。
 		categoryTags := processingtagging.ExtractTagsFromDescriptionCategory(result.Intro)
@@ -147,6 +117,7 @@ func ValidateMediaPayload(payload map[string]any, rootConfig map[string]any, csp
 			"extracted_imdb_link":   result.IMDb,
 			"extracted_douban_link": result.Douban,
 			"extracted_tmdb_link":   result.TMDb,
+			"warning":               result.Warning,
 		}, 200
 
 	case "mediainfo":

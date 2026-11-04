@@ -417,6 +417,9 @@ func repairPosterDuringFetch(
 		emitLog(deps, taskID, "修复海报", "海报自动修复失败："+posterErr, "warning")
 		return
 	}
+	if warning := strings.TrimSpace(posterResult.Warning); warning != "" {
+		emitLog(deps, taskID, "修复海报", warning, "warning")
+	}
 	logx.Infof(
 		fetchRepairPosterLogModule,
 		"海报兜底获取返回 title=%s poster_non_empty=%t imdb=%s douban=%s tmdb=%s",
@@ -518,6 +521,9 @@ func repairIntroBodyDuringFetch(
 		logx.Warnf(fetchRepairIntroLogModule, "简介自动补全失败 title=%s err=%s", torrentName, introErr)
 		emitLog(deps, taskID, "修复简介", "简介自动补全失败："+introErr, "warning")
 		return
+	}
+	if warning := strings.TrimSpace(introResult.Warning); warning != "" {
+		emitLog(deps, taskID, "修复简介", warning, "warning")
 	}
 
 	if strings.TrimSpace(introResult.Intro) != "" {

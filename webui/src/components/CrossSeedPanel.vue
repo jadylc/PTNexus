@@ -1595,11 +1595,28 @@ const refreshIntro = async () => {
         title: '重新获取成功',
         message: '已成功从豆瓣/IMDb/TMDb获取并更新了简介内容。',
       })
+      // 后端非致命告警（如财神PTGen令牌失效已回退公共接口）
+      if (response.data.warning) {
+        ElNotification.warning({
+          title: 'PTGen 令牌告警',
+          message: String(response.data.warning),
+          duration: 0,
+          showClose: true,
+        })
+      }
     } else {
       ElNotification.error({
         title: '重新获取失败',
         message: response.data.error || '无法从豆瓣/IMDb/TMDb获取简介。',
       })
+      if (response.data.warning) {
+        ElNotification.warning({
+          title: 'PTGen 令牌告警',
+          message: String(response.data.warning),
+          duration: 0,
+          showClose: true,
+        })
+      }
     }
   } catch (error: unknown) {
     ElNotification.closeAll()
@@ -1719,7 +1736,7 @@ const refreshScreenshots = async () => {
   screenshotPreviewCache.value = {}
   ElNotification.info({
     title: '正在重新获取截图',
-    message: '正在检查字幕流并生成截图；若存在字幕流但未能确认为中文字幕，才会生成候选截图供手动选择。',
+    message: '正在按字幕流生成正式截图，请稍候...',
     duration: 0,
   })
 
@@ -2389,11 +2406,28 @@ const refreshPosters = async () => {
         title: '重新获取成功',
         message: '已成功生成并加载了新的海报。',
       })
+      // 后端非致命告警（如财神PTGen令牌失效已回退公共接口）
+      if (response.data.warning) {
+        ElNotification.warning({
+          title: 'PTGen 令牌告警',
+          message: String(response.data.warning),
+          duration: 0,
+          showClose: true,
+        })
+      }
     } else {
       ElNotification.error({
         title: '重新获取失败',
         message: response.data.error || '无法从后端获取新的海报，请查看后台日志。',
       })
+      if (response.data.warning) {
+        ElNotification.warning({
+          title: 'PTGen 令牌告警',
+          message: String(response.data.warning),
+          duration: 0,
+          showClose: true,
+        })
+      }
     }
   } catch (error: unknown) {
     ElNotification.closeAll()

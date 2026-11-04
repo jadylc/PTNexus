@@ -297,6 +297,7 @@ func registerRoutes(
 		api.GET("/recent_speed_data", statsHandler.RecentSpeedData)
 		api.GET("/speed_chart_data", statsHandler.SpeedChartData)
 		api.GET("/site_stats", statsHandler.SiteStats)
+		api.GET("/site_upload_stats", statsHandler.SiteUploadStats)
 		api.GET("/group_stats", statsHandler.GroupStats)
 
 		api.GET("/cross-seed-data/unique-paths", crossSeedHandler.UniquePaths)

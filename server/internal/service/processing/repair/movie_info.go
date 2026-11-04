@@ -86,7 +86,10 @@ func FetchMovieInfo(mediaType, contentName, subtitle string, sourceInfo map[stri
 		backfillTMDbByIMDbIfNeeded(result.TMDb, result.IMDb, &tmdbBackfillAttempted, movieInfoLogModule, "初始外链互补后"),
 	)
 
-	format, formatIMDb, formatDouban, formatTMDb, errMsg := fetchPTGenFormat(result, csptToken)
+	format, formatIMDb, formatDouban, formatTMDb, errMsg, csptWarning := fetchPTGenFormat(result, csptToken)
+	if strings.TrimSpace(csptWarning) != "" {
+		result.Warning = csptWarning
+	}
 	if errMsg == "" && strings.TrimSpace(format) != "" {
 		poster, intro, imdb, douban, tmdb := parseFormatContent(format, formatIMDb, formatDouban, formatTMDb)
 		result.IMDb = firstNonEmpty(imdb, result.IMDb)
@@ -222,7 +225,19 @@ func logFetchMovieInfoResult(mediaType, source string, result MovieInfoResult, n
 	)
 }
 
-func fetchPTGenFormat(links MovieInfoResult, csptToken string) (string, string, string, string, string) {
+// reCSPTTokenIssue 匹配财神 PTGen（cspt.top）令牌失效/无效类错误特征。
+var reCSPTTokenIssue = regexp.MustCompile(`(?i)(token|令牌|授权|登录|密钥|无效|过期|失效|unauthorized|forbidden|401|403)`)
+
+// isCSPTCandidate 判断候选地址是否为财神 PTGen（cspt.top）。
+func isCSPTCandidate(candidate string) bool {
+	return strings.Contains(strings.ToLower(candidate), "cspt.top")
+}
+
+// fetchPTGenFormat 按候选顺序请求 PTGen 并解析格式；cspt 候选的令牌异常会以 warning 返回。
+// 参数/返回：links 为外链；csptToken 为财神令牌；返回格式、外链与错误/告警文本。
+// 失败场景：全部候选失败时 errMsg 非空。
+// 副作用：会向 PTGen 候选地址发起网络请求。
+func fetchPTGenFormat(links MovieInfoResult, csptToken string) (string, string, string, string, string, string) {
 	resource := firstNonEmpty(links.Douban, links.TMDb, links.IMDb)
 	traceID := fmt.Sprintf("ptgen-%d", time.Now().UnixNano())
 	if resource == "" {
@@ -234,7 +249,7 @@ func fetchPTGenFormat(links MovieInfoResult, csptToken string) (string, string, 
 			CompactLogText(links.Douban, 120),
 			CompactLogText(links.TMDb, 120),
 		)
-		return "", "", "", "", ""
+		return "", "", "", "", "", ""
 	}
 
 	candidates := buildPTGenCandidates(resource, links.Douban, csptToken)
@@ -247,6 +262,7 @@ func fetchPTGenFormat(links MovieInfoResult, csptToken string) (string, string, 
 	)
 
 	lastErr := ""
+	csptTokenIssue := ""
 	for idx, candidate := range candidates {
 		startTime := time.Now()
 		logURL := sanitizePTGenCandidateForLog(candidate)
@@ -256,6 +272,11 @@ func fetchPTGenFormat(links MovieInfoResult, csptToken string) (string, string, 
 		costMs := time.Since(startTime).Milliseconds()
 		if err != nil {
 			lastErr = err.Error()
+			// 财神令牌异常（无效/过期/未授权）单独标记，供前端提示
+			if csptTokenIssue == "" && isCSPTCandidate(candidate) && reCSPTTokenIssue.MatchString(lastErr) {
+				csptTokenIssue = "财神PTGen令牌无效或已过期，已自动回退公共接口；请到设置更新令牌"
+				logx.Warnf(ptgenLogModule, "财神PTGen令牌异常 流程ID=%s 地址=%s 错误=%s", traceID, logURL, CompactLogText(lastErr, 240))
+			}
 			logx.Warnf(ptgenLogModule, "PTGen 请求失败 流程ID=%s 候选=%d/%d 耗时=%dms 地址=%s 错误=%v", traceID, idx+1, len(candidates), costMs, logURL, err)
 			continue
 		}
@@ -277,7 +298,7 @@ func fetchPTGenFormat(links MovieInfoResult, csptToken string) (string, string, 
 			CompactLogText(douban, 120),
 			CompactLogText(tmdb, 120),
 		)
-		return format, imdb, douban, tmdb, ""
+		return format, imdb, douban, tmdb, "", csptTokenIssue
 	}
 
 	if strings.TrimSpace(lastErr) != "" {
@@ -285,7 +306,7 @@ func fetchPTGenFormat(links MovieInfoResult, csptToken string) (string, string, 
 	} else {
 		logx.Warnf(ptgenLogModule, "PTGen 候选全部未返回有效格式，转入后续回退逻辑 流程ID=%s", traceID)
 	}
-	return "", "", "", "", lastErr
+	return "", "", "", "", lastErr, csptTokenIssue
 }
 
 func buildPTGenCandidates(resourceURL, doubanURL, csptToken string) []string {

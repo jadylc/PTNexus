@@ -141,15 +141,6 @@
           </div>
         </el-popover>
         <el-link
-          href="https://ptn-wiki.sqing33.dpdns.org"
-          target="_blank"
-          :underline="false"
-          class="desktop-link-action"
-        >
-          <el-icon><Link /></el-icon>
-          Wiki
-        </el-link>
-        <el-link
           href="https://github.com/jadylc/PTNexus"
           target="_blank"
           :underline="false"
@@ -280,10 +271,6 @@
         >
           刷新缓存
         </el-button>
-        <el-link href="https://ptn-wiki.sqing33.dpdns.org" target="_blank" :underline="false">
-          <el-icon><Link /></el-icon>
-          Wiki
-        </el-link>
         <el-link href="https://github.com/jadylc/PTNexus" target="_blank" :underline="false">
           <el-icon><Link /></el-icon>
           GitHub
@@ -1064,6 +1051,9 @@ body {
   align-items: center;
   position: relative;
   z-index: 1;
+  /* 窄屏时导航整体横向滚动，而不是让右侧容器叠压菜单项 */
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .main-nav :deep(.el-menu-item),
@@ -1088,17 +1078,34 @@ body {
 }
 
 .right-buttons-container {
-  position: absolute;
-  right: 20px;
-  top: 3px;
+  /* 参与导航 flex 排布而非绝对定位：窄屏时与菜单项叠加的问题 */
+  margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  flex-shrink: 0;
   z-index: 2;
 }
 
 .right-buttons-container--with-window-controls {
-  right: 150px;
+  margin-right: 8px;
+}
+
+/* 窄屏收纳：隐藏任务按钮的运行/失败摘要与导出按钮，避免与菜单项叠压 */
+@media (max-width: 1560px) {
+  .right-buttons-container .task-monitor-button__summary {
+    display: none;
+  }
+}
+
+@media (max-width: 1360px) {
+  .right-buttons-container .desktop-link-action {
+    display: none;
+  }
+
+  .right-buttons-container .version-tag {
+    display: none;
+  }
 }
 
 .desktop-link-action {

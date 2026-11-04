@@ -7,6 +7,8 @@ type MovieInfoResult struct {
 	IMDb   string
 	Douban string
 	TMDb   string
+	// Warning 非致命告警（如财神 PTGen token 失效已回退公共源），随响应返回给前端提示。
+	Warning string
 }
 
 // ScreenshotGenerateInput 描述截图自动生成与上传所需的输入参数。

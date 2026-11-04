@@ -146,6 +146,38 @@
         <div ref="trafficChart" class="chart-body chart-body-inner"></div>
       </div>
     </div>
+
+    <!-- 站点数据统计：按种库各站点累计上传与做种数量 -->
+    <div class="chart-card glass-card glass-rounded site-stats-card">
+      <div class="chart-header">
+        <!-- 左侧：指标切换 -->
+        <div class="header-left-controls">
+          <div class="button-group">
+            <button @click="changeSiteStatsMetric('uploaded')"
+              :class="{ active: siteStatsMetric === 'uploaded' }">
+              累计上传
+            </button>
+            <button @click="changeSiteStatsMetric('count')" :class="{ active: siteStatsMetric === 'count' }">
+              做种数量
+            </button>
+          </div>
+        </div>
+
+        <!-- 中间：标题 -->
+        <div class="chart-title">站点数据统计</div>
+
+        <!-- 右侧：占位 -->
+        <div class="header-right-controls"></div>
+      </div>
+      <div class="chart-scroll-container site-stats-scroll">
+        <div
+          ref="siteStatsChart"
+          v-loading="siteStatsLoading"
+          class="chart-body chart-body-inner site-stats-body"
+          :style="{ height: siteStatsChartHeight + 'px' }"
+        ></div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -996,6 +1028,131 @@ const changeTrafficVisibility = (mode: VisibilityMode, isInternalCall = false) =
   }))
 }
 
+// --- 站点数据统计（按种库各站点累计上传/做种数量） ---
+type SiteUploadStatRow = {
+  site_name: string
+  total_uploaded: number
+  torrent_count: number
+  total_size: number
+}
+type SiteStatsMetric = 'uploaded' | 'count'
+
+const siteStatsChart = ref<HTMLElement | null>(null)
+let siteStatsChartInstance: echarts.ECharts | null = null
+const siteStatsMetric = ref<SiteStatsMetric>('uploaded')
+const siteStatsRows = ref<SiteUploadStatRow[]>([])
+const siteStatsLoading = ref(false)
+
+const siteStatsChartHeight = computed(() => {
+  const rows = siteStatsRows.value.length
+  return Math.max(320, rows * 30 + 90)
+})
+
+const fetchSiteUploadStats = async () => {
+  siteStatsLoading.value = true
+  try {
+    const { data } = await axios.get<SiteUploadStatRow[]>('/api/site_upload_stats')
+    siteStatsRows.value = Array.isArray(data)
+      ? data.filter((row) => row && row.site_name)
+      : []
+  } catch (error) {
+    console.error('获取站点数据统计失败:', error)
+    siteStatsRows.value = []
+  } finally {
+    siteStatsLoading.value = false
+    renderSiteStatsChart()
+  }
+}
+
+const renderSiteStatsChart = () => {
+  if (!siteStatsChartInstance) return
+  const metric = siteStatsMetric.value
+  const rows = [...siteStatsRows.value].sort((a, b) => {
+    const left = metric === 'uploaded' ? a.total_uploaded : a.torrent_count
+    const right = metric === 'uploaded' ? b.total_uploaded : b.torrent_count
+    return right - left
+  })
+
+  const names = rows.map((row) => row.site_name)
+  const values = rows.map((row) =>
+    metric === 'uploaded' ? Number(row.total_uploaded) || 0 : Number(row.torrent_count) || 0,
+  )
+  const seriesColor = metric === 'uploaded' ? '#F56C6C' : '#409EFF'
+  const seriesName = metric === 'uploaded' ? '累计上传' : '做种数量'
+
+  siteStatsChartInstance.setOption({
+    title: {
+      text: rows.length === 0 && !siteStatsLoading.value ? '暂无站点数据' : '',
+      left: 'center',
+      top: 'middle',
+      textStyle: { color: '#909399', fontSize: 14, fontWeight: 'normal' },
+    },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      formatter: (params: unknown) => {
+        const list = Array.isArray(params) ? params : [params]
+        const first = list[0] as { name?: string; value?: number } | undefined
+        if (!first) return ''
+        const row = rows.find((item) => item.site_name === first.name)
+        const lines = [`${first.name}`]
+        if (metric === 'uploaded') {
+          lines.push(`累计上传：${formatBytes(first.value)}`)
+        } else {
+          lines.push(`做种数量：${first.value}`)
+        }
+        if (row) {
+          lines.push(`做种数量：${row.torrent_count}`)
+          lines.push(`总体积：${formatBytes(row.total_size ?? 0)}`)
+        }
+        return lines.join('<br/>')
+      },
+    },
+    grid: { left: 8, right: 40, top: 10, bottom: 10, containLabel: true },
+    xAxis: {
+      type: 'value',
+      axisLabel: {
+        formatter: (value: number) => (metric === 'uploaded' ? formatBytes(value) : String(value)),
+      },
+      splitLine: { show: true, lineStyle: { opacity: 0.25 } },
+    },
+    yAxis: {
+      type: 'category',
+      data: names,
+      inverse: true,
+      axisLabel: { width: 110, overflow: 'truncate' },
+    },
+    series: [
+      {
+        name: seriesName,
+        type: 'bar',
+        data: values,
+        barMaxWidth: 18,
+        itemStyle: { color: seriesColor, borderRadius: [0, 4, 4, 0] },
+        label: {
+          show: true,
+          position: 'right',
+          formatter: (p: { value: number }) =>
+            metric === 'uploaded' ? formatBytes(p.value) : String(p.value),
+          fontSize: 11,
+          color: '#909399',
+        },
+      },
+    ],
+  })
+}
+
+const changeSiteStatsMetric = (metric: SiteStatsMetric) => {
+  siteStatsMetric.value = metric
+  renderSiteStatsChart()
+}
+
+const initSiteStatsChart = () => {
+  if (!siteStatsChart.value) return
+  siteStatsChartInstance = echarts.init(siteStatsChart.value)
+  void fetchSiteUploadStats()
+}
+
 const handleWindowResize = () => {
   const tooltipTriggerOn = getTooltipTriggerOn()
 
@@ -1010,6 +1167,7 @@ const handleWindowResize = () => {
 
   speedChartInstance?.resize()
   trafficChartInstance?.resize()
+  siteStatsChartInstance?.resize()
 }
 
 // --- Lifecycle ---
@@ -1025,6 +1183,7 @@ onMounted(async () => {
 
   initSpeedChart()
   initTrafficChart()
+  initSiteStatsChart()
   changeSpeedMode(speedDisplayMode.value)
   changeTrafficMode(trafficDisplayMode.value)
   window.addEventListener('resize', handleWindowResize)
@@ -1037,6 +1196,8 @@ onUnmounted(() => {
     clearInterval(speedUpdateTimer)
   }
   window.removeEventListener('resize', handleWindowResize)
+  siteStatsChartInstance?.dispose()
+  siteStatsChartInstance = null
 })
 </script>
 
@@ -1071,22 +1232,29 @@ onUnmounted(() => {
 .chart-body {
   flex: 1;
   width: 100%;
-  height: 100%;
   min-height: 0;
-}
-
-.chart-scroll-container {
-  flex: 1;
-  min-height: 0;
-  width: 100%;
-  overflow: hidden;
-  display: flex;
 }
 
 .chart-body-inner {
   flex: 1;
   width: 100%;
   min-height: 0;
+}
+
+/* 站点数据统计卡片：图表高度随站点数量自适应，容器可滚动 */
+.site-stats-card {
+  flex: 0 0 auto;
+}
+
+.site-stats-scroll {
+  flex: 0 0 auto;
+  overflow: auto;
+  max-height: 520px;
+}
+
+.site-stats-body {
+  flex: 0 0 auto;
+  height: auto;
 }
 
 .chart-header {
