@@ -44,8 +44,8 @@
     "nickname": "北洋园",
     "base_url": "tjupt.org",
     "special_tracker_domain": null,
-    "group": "-TJTPU",
-    "description": "TJTPU",
+    "group": "-TJUPT",
+    "description": "TJUPT",
     "migration": 2,
     "speed_limit": 90
   },
@@ -179,7 +179,7 @@
     "nickname": "彩虹岛",
     "base_url": "ptchdbits.co",
     "special_tracker_domain": "rainbowisland,ptchdbits,chdbits",
-    "group": "-CHDBits,-CHDWEB,-CHD",
+    "group": "-CHDBits,-CHDWEB,-CHD,-CHDTV",
     "description": "CHDBits",
     "migration": 3,
     "speed_limit": 95
@@ -778,7 +778,7 @@
     "nickname": "AFun",
     "base_url": "www.ptlover.cc",
     "special_tracker_domain": null,
-    "group": "AFWEB",
+    "group": "AFWEB,AFUN",
     "migration": 2,
     "speed_limit": 120
   },

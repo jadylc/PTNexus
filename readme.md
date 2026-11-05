@@ -256,6 +256,11 @@ wget -O - https://github.com/jadylc/PTNexus/releases/latest/download/install-pt-
 
 # 更新日志
 
+### v4.6.10（2026.11.05）
+
+- 修复：官组统计「未知站点」里混入 FRDS/MNHD-FRDS/MTeam 等明显已知官组——制作组值本身命中站点官组清单（含 MNHD-FRDS 这类发布子组变体）时未做二次判定，被当成外部组；现精确匹配 + 长度≥3 部分匹配归回对应站点，未知站点只留真正的清单外组与（无官组），总数与官组统计严格互补
+- 数据：sites_data.json 官组订正——AFun 追加 AFUN、彩虹岛追加 CHDTV、北洋园错误的 -TJTPU 替换为 -TJUPT（description 同步订正）；重启服务后生效
+
 ### v4.6.9（2026.11.05）
 
 - 优化：官组统计「未知站点」行改用现成的 seed_parameters.title_components「制作组」组件作为外部组名来源（不再依赖 torrents.group，无需刷新缓存即可看到 -BMDru/-FLTBK 等清单外组，便于反推站点补进官组清单）——口径为做种种子（扫描 torrents 可见组，与官组统计严格互补）；按 hash 关联抓取参数，组件缺失/NOGROUP 合并为（无官组）

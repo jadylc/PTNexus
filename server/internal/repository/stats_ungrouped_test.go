@@ -75,6 +75,74 @@ func TestQueryUngroupedStatsUsesTitleComponentsTeam(t *testing.T) {
 	}
 }
 
+// TestQueryUngroupedStatsKnownTeamNotInUnknownSite 制作组值本身是已知官组（含
+// MNHD-FRDS 这类发布子组变体）时，不能列进未知站点，应归回对应站点行。
+// 对应真实 case：sp.team=team.frds、title_components.制作组=FRDS/MNHD-FRDS/mUHD-FRDS。
+func TestQueryUngroupedStatsKnownTeamNotInUnknownSite(t *testing.T) {
+	store := newStatsRepositoryTestStore(t)
+	repo := NewStatsRepository(store)
+
+	mustExecStatsTest(t, store.DB, `INSERT INTO sites (site, nickname, "group") VALUES (?, ?, ?)`, "keepfrds", "月月", "-FRDS")
+	mustExecStatsTest(t, store.DB, `INSERT INTO sites (site, nickname, "group") VALUES (?, ?, ?)`, "m-team", "馒头", "-MTeam,-MWeb")
+
+	cases := []struct {
+		hash string
+		name string
+		team string
+	}{
+		{"h-frds", "Release.FRDS", "FRDS"},
+		{"h-mnhd", "Release.MNHD-FRDS", "MNHD-FRDS"},
+		{"h-muhd", "Release.mUHD-FRDS", "mUHD-FRDS"},
+		{"h-mteam", "Release.MTeam", "MTeam"},
+		{"h-ext", "Release.BMDru", "BMDru"}, // 真正的外部组
+	}
+	for _, c := range cases {
+		mustExecStatsTest(t, store.DB, `INSERT INTO torrents (hash, name, size, sites, "group", downloader_id, is_hidden) VALUES (?, ?, ?, ?, ?, ?, 0)`,
+			c.hash, c.name, 100, "", "", "qb-1")
+		mustExecStatsTest(t, store.DB, `INSERT INTO seed_parameters (hash, name, torrent_id, site_name, title_components) VALUES (?, ?, ?, ?, ?)`,
+			c.hash, c.name, c.hash, "", `[{"key":"制作组","value":"`+c.team+`"}]`)
+	}
+
+	rows, err := repo.QueryUngroupedStats()
+	if err != nil {
+		t.Fatalf("QueryUngroupedStats returned error: %v", err)
+	}
+
+	// 未知站点里只应有 BMDru（外加无官组若存在），不应出现 FRDS/MNHD-FRDS/MTeam
+	for _, row := range rows {
+		if row.SiteName == "未知站点" && row.GroupSuffix != "BMDru" && row.GroupSuffix != "（无官组）" {
+			t.Errorf("known group leaked into 未知站点: site=%q group=%q", row.SiteName, row.GroupSuffix)
+		}
+	}
+
+	// 已知官组应归回对应站点
+	bySiteGroup := map[string]int64{}
+	for _, row := range rows {
+		if row.SiteName != "未知站点" {
+			bySiteGroup[row.SiteName+"\x00"+row.GroupSuffix] = row.TorrentCount
+		}
+	}
+	if bySiteGroup["月月\x00FRDS"] != 1 {
+		t.Errorf("expected 月月/FRDS count=1, got %#v", rows)
+	}
+	if bySiteGroup["月月\x00MNHD-FRDS"] != 1 || bySiteGroup["月月\x00mUHD-FRDS"] != 1 {
+		t.Errorf("expected FRDS variants grouped under 月月, got %#v", rows)
+	}
+	if bySiteGroup["馒头\x00MTeam"] != 1 {
+		t.Errorf("expected 馒头/MTeam count=1, got %#v", rows)
+	}
+	// 真正的外部组仍留在未知站点
+	bmdruFound := false
+	for _, row := range rows {
+		if row.SiteName == "未知站点" && row.GroupSuffix == "BMDru" && row.TorrentCount == 1 {
+			bmdruFound = true
+		}
+	}
+	if !bmdruFound {
+		t.Errorf("BMDru should stay in 未知站点 as external group, got %#v", rows)
+	}
+}
+
 // TestQueryUngroupedStatsMultipleHashesSameGroup 同名同 size 的多个 hash 分组时，
 // 制作组关联不能因聚合截断而漏掉（旧 GROUP_CONCAT 在 MySQL 默认 1024 字节会截断）。
 func TestQueryUngroupedStatsMultipleHashesSameGroup(t *testing.T) {

@@ -932,7 +932,9 @@ func (r *StatsRepository) QueryUngroupedStats() ([]GroupStatRow, error) {
 		}
 	}
 
-	// 站点官组清单（Go 侧复刻 FIND_IN_SET 匹配：清理前导 '-'、小写、逗号分隔）。
+	// 站点官组清单：knownGroups 用于复刻 QueryGroupStats 的 FIND_IN_SET 匹配（判断哪些
+	// 做种组已被官组统计覆盖）；groupToSite 用于把"制作组值本身是已知官组"的种子
+	// 归回对应站点（避免 FRDS/MNHD-FRDS 这类明显官组被列进未知站点）。
 	groupColumn := r.store.GroupColumn()
 	siteRows := make([]siteGroupRow, 0)
 	siteQuery := fmt.Sprintf(`SELECT nickname, %s AS site_group FROM sites`, groupColumn)
@@ -942,23 +944,55 @@ func (r *StatsRepository) QueryUngroupedStats() ([]GroupStatRow, error) {
 		}
 	}
 	knownGroups := map[string]struct{}{}
+	groupToSite := map[string]string{}
 	for _, site := range siteRows {
 		for _, part := range strings.Split(site.SiteGroup, ",") {
 			clean := strings.ToLower(strings.TrimLeft(strings.TrimSpace(part), "-"))
 			clean = strings.TrimSpace(clean)
-			if clean != "" {
-				knownGroups[clean] = struct{}{}
+			if clean == "" {
+				continue
+			}
+			knownGroups[clean] = struct{}{}
+			if _, exists := groupToSite[clean]; !exists && strings.TrimSpace(site.Nickname) != "" {
+				groupToSite[clean] = strings.TrimSpace(site.Nickname)
 			}
 		}
 	}
 
-	// 分桶：未归属外部组逐组；无官组合并一行。
+	// matchKnownGroupSite 判断制作组值是否命中站点官组清单，返回归属站点：
+	// 先精确匹配；再做长度≥3 的部分匹配（MNHD-FRDS / mUHD-FRDS 含 frds 应归月月），
+	// 与 refreshGroupMatcher 的 Contains 部分匹配口径一致。
+	matchKnownGroupSite := func(team string) string {
+		norm := strings.ToLower(strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(team), "-")))
+		if norm == "" {
+			return ""
+		}
+		if site, ok := groupToSite[norm]; ok {
+			return site
+		}
+		// 短 token（如 hd / 3d）不许参与部分匹配，避免误归站点
+		if len(norm) < 3 {
+			return ""
+		}
+		for group, site := range groupToSite {
+			if len(group) < 3 {
+				continue
+			}
+			if strings.Contains(norm, group) || strings.Contains(group, norm) {
+				return site
+			}
+		}
+		return ""
+	}
+
+	// 分桶：已归属站点（补进官组统计漏掉的行）/ 未知站点外部组 / 无官组。
 	external := map[string]*GroupStatRow{}
+	siteGroups := map[string]*GroupStatRow{}
 	noGroup := &GroupStatRow{SiteName: "未知站点", GroupSuffix: "（无官组）"}
 	for _, g := range visible {
 		norm := strings.ToLower(strings.TrimSpace(g.GroupSuffix))
 		if _, matched := knownGroups[norm]; matched {
-			continue // 已被官组统计覆盖
+			continue // 已被官组统计覆盖（严格同口径，避免重复计数）
 		}
 		team := ""
 		for _, h := range g.Hashes {
@@ -975,6 +1009,17 @@ func (r *StatsRepository) QueryUngroupedStats() ([]GroupStatRow, error) {
 			noGroup.TotalSize += g.Size
 			continue
 		}
+		// 制作组值本身是已知官组（含变形）→ 归回对应站点，不进未知站点。
+		if site := matchKnownGroupSite(team); site != "" {
+			row, ok := siteGroups[site+"\x00"+team]
+			if !ok {
+				row = &GroupStatRow{SiteName: site, GroupSuffix: team}
+				siteGroups[site+"\x00"+team] = row
+			}
+			row.TorrentCount++
+			row.TotalSize += g.Size
+			continue
+		}
 		row, ok := external[team]
 		if !ok {
 			row = &GroupStatRow{SiteName: "未知站点", GroupSuffix: team}
@@ -984,7 +1029,10 @@ func (r *StatsRepository) QueryUngroupedStats() ([]GroupStatRow, error) {
 		row.TotalSize += g.Size
 	}
 
-	rows := make([]GroupStatRow, 0, len(external)+1)
+	rows := make([]GroupStatRow, 0, len(external)+len(siteGroups)+1)
+	for _, row := range siteGroups {
+		rows = append(rows, *row)
+	}
 	for _, row := range external {
 		rows = append(rows, *row)
 	}
