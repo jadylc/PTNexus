@@ -447,8 +447,18 @@ func (r *TorrentDataRepository) buildTorrentListFromWhere(filters TorrentListFil
 	joins, joinArgs = appendTorrentGroupFilterJoin(joins, joinArgs, "downloader_match", "downloader_id", filters.DownloaderFilters)
 
 	if filters.ExcludeExisting {
+		// 与 ExistingSeedParameterGroups 同口径：按 hash 关联（抓取会规范化
+		// sp.name，如双标题合并/去 .mkv，与下载器显示名不一致，单靠 name 匹配漏排），
+		// 并保留 sp.name 组合兜底；命中任一即视为已抓取。
 		joins += `
 		LEFT JOIN (
+			SELECT DISTINCT t_existing.name AS name, t_existing.size AS size
+			FROM seed_parameters sp_existing
+			INNER JOIN torrents t_existing ON t_existing.hash = sp_existing.hash
+			WHERE TRIM(t_existing.name) != ''
+			  AND t_existing.size > 0
+			  AND COALESCE(t_existing.is_hidden, 0) = 0
+			UNION
 			SELECT DISTINCT sp_existing.name AS name, t_existing.size AS size
 			FROM seed_parameters sp_existing
 			INNER JOIN torrents t_existing ON t_existing.hash = sp_existing.hash
@@ -578,9 +588,9 @@ func (r *TorrentDataRepository) DistinctSeedParameterNames() ([]string, error) {
 // 失败场景：数据库查询失败时返回错误。
 // 副作用：仅读取 seed_parameters/torrents，不写入数据。
 // 说明：排除必须覆盖两种命名差异，否则已抓取种子会一直留在待拉取列表：
-//   1. sp.name 是规范化标题（如「匿杀.XXX」合并双语、去 .mkv 后缀），与
-//      torrents.name（下载器显示名）字面不同 → 按 hash 关联匹配；
-//   2. 同名不同体积的另一个种子不应被误排除 → 仍需 name+size 组合精确匹配。
+//  1. sp.name 是规范化标题（如「匿杀.XXX」合并双语、去 .mkv 后缀），与
+//     torrents.name（下载器显示名）字面不同 → 按 hash 关联匹配；
+//  2. 同名不同体积的另一个种子不应被误排除 → 仍需 name+size 组合精确匹配。
 func (r *TorrentDataRepository) ExistingSeedParameterGroups() ([]TorrentNameSizeKey, error) {
 	rows := make([]TorrentNameSizeKey, 0)
 	err := r.store.DB.Raw(`
