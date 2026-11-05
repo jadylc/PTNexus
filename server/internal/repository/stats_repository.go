@@ -822,6 +822,68 @@ func (r *StatsRepository) QueryGroupStats(siteName string) ([]GroupStatRow, erro
 	return rows, nil
 }
 
+// QueryUngroupedStats 统计官组统计未覆盖的部分，按种子组（name+size）归类：
+//   - 分支一：有 group 但组名匹配不到任何站点的官组清单（未归属官组）→ 逐组统计；
+//   - 分支二：没有 group（无官组）→ 合并为一行，组名固定 "（无官组）"。
+//
+// 参数/返回：无参数；返回与 QueryGroupStats 同构的行，site_name 恒为 "未知站点"。
+// 失败场景：数据库查询失败时返回错误。
+// 副作用：仅读取 torrents/sites。
+// 说明：匹配口径与 QueryGroupStats 一致（DISTINCT name+size 分组、组名规范化、
+// 按站点官组清单 FIND_IN_SET/LIKE 匹配），与官组统计合并后恰好覆盖全部做种组。
+func (r *StatsRepository) QueryUngroupedStats() ([]GroupStatRow, error) {
+	torrentGroupColumn := r.groupColumnRef("t")
+	normalizedTorrentGroup := r.normalizedGroupExpr(torrentGroupColumn)
+	siteGroupColumn := r.groupColumnRef("s")
+	// 与 QueryGroupStats 的 JOIN 条件同构：种子组名命中站点官组清单
+	matchExpr := r.siteGroupMatchExpr("ut.group_suffix", siteGroupColumn)
+
+	query := fmt.Sprintf(`
+		SELECT '未知站点' AS site_name,
+		       ut.group_suffix AS group_suffix,
+		       COUNT(*) AS torrent_count,
+		       SUM(ut.size) AS total_size
+		FROM (
+			SELECT DISTINCT
+			       t.name AS torrent_name,
+			       t.size AS size,
+			       %s AS group_suffix
+			FROM torrents t
+			WHERE t.name IS NOT NULL
+			  AND TRIM(t.name) != ''
+			  AND t.size IS NOT NULL
+			  AND TRIM(%s) != ''
+			  AND (t.is_hidden = 0 OR t.is_hidden IS NULL)
+		) AS ut
+		WHERE NOT EXISTS (
+			SELECT 1 FROM sites AS s WHERE %s
+		)
+		GROUP BY ut.group_suffix
+		UNION ALL
+		SELECT '未知站点' AS site_name,
+		       '（无官组）' AS group_suffix,
+		       COUNT(*) AS torrent_count,
+		       SUM(ut.size) AS total_size
+		FROM (
+			SELECT DISTINCT
+			       t.name AS torrent_name,
+			       t.size AS size
+			FROM torrents t
+			WHERE t.name IS NOT NULL
+			  AND TRIM(t.name) != ''
+			  AND t.size IS NOT NULL
+			  AND (%s IS NULL OR TRIM(%s) = '')
+			  AND (t.is_hidden = 0 OR t.is_hidden IS NULL)
+		) AS ut
+	`, normalizedTorrentGroup, torrentGroupColumn, matchExpr, torrentGroupColumn, torrentGroupColumn)
+
+	rows := make([]GroupStatRow, 0)
+	if err := r.store.DB.Raw(query).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
 func (r *StatsRepository) groupColumnRef(alias string) string {
 	switch r.store.DBType {
 	case "postgresql":
