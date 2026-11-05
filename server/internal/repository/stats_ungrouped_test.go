@@ -143,6 +143,44 @@ func TestQueryUngroupedStatsKnownTeamNotInUnknownSite(t *testing.T) {
 	}
 }
 
+// TestQueryUngroupedStatsUnfetchedNameFallback 未拉取种子（无 seed_parameters）时，
+// 用独立的名字兜底方法从 torrents.name 解析组名：点号 .FRDS 归月月、
+// 清单外 -BMDru 进未知站点外部组、纯技术串才留（无官组）。
+func TestQueryUngroupedStatsUnfetchedNameFallback(t *testing.T) {
+	store := newStatsRepositoryTestStore(t)
+	repo := NewStatsRepository(store)
+
+	mustExecStatsTest(t, store.DB, `INSERT INTO sites (site, nickname, "group") VALUES (?, ?, ?)`, "keepfrds", "月月", "-FRDS")
+
+	// 未拉取 + 点号 .FRDS 合集名 → 归月月（不再落无官组）
+	mustExecStatsTest(t, store.DB, `INSERT INTO torrents (hash, name, size, sites, "group", downloader_id, is_hidden) VALUES (?, ?, ?, ?, ?, ?, 0)`,
+		"h-dot", "DouBan_IMDB.TOP250.Movies.Mixed.Collection.20240501.FRDS", 3659292361595, "", "", "qb-1")
+	// 未拉取 + 清单外 -BMDru → 未知站点外部组
+	mustExecStatsTest(t, store.DB, `INSERT INTO torrents (hash, name, size, sites, "group", downloader_id, is_hidden) VALUES (?, ?, ?, ?, ?, ?, 0)`,
+		"h-ext", "Sleepwalkers.2021.BluRay.1080p.DD5.1.x264-BMDru", 100, "", "", "qb-2")
+	// 未拉取 + 纯技术串 → （无官组）
+	mustExecStatsTest(t, store.DB, `INSERT INTO torrents (hash, name, size, sites, "group", downloader_id, is_hidden) VALUES (?, ?, ?, ?, ?, ?, 0)`,
+		"h-tech", "Movie.2020.1080p.WEB-DL.x265.HDR.DDP5.1", 200, "", "", "qb-3")
+
+	rows, err := repo.QueryUngroupedStats()
+	if err != nil {
+		t.Fatalf("QueryUngroupedStats returned error: %v", err)
+	}
+	byKey := map[string]*GroupStatRow{}
+	for i := range rows {
+		byKey[rows[i].SiteName+"\x00"+rows[i].GroupSuffix] = &rows[i]
+	}
+	if row, ok := byKey["月月\x00FRDS"]; !ok || row.TorrentCount != 1 || row.TotalSize != 3659292361595 {
+		t.Fatalf("expected 月月/FRDS count=1, got %#v", rows)
+	}
+	if row, ok := byKey["未知站点\x00BMDru"]; !ok || row.TorrentCount != 1 {
+		t.Fatalf("expected 未知站点/BMDru count=1, got %#v", rows)
+	}
+	if row, ok := byKey["未知站点\x00（无官组）"]; !ok || row.TorrentCount != 1 {
+		t.Fatalf("expected （无官组） count=1 (tech-only), got %#v", rows)
+	}
+}
+
 // TestQueryUngroupedStatsMultipleHashesSameGroup 同名同 size 的多个 hash 分组时，
 // 制作组关联不能因聚合截断而漏掉（旧 GROUP_CONCAT 在 MySQL 默认 1024 字节会截断）。
 func TestQueryUngroupedStatsMultipleHashesSameGroup(t *testing.T) {

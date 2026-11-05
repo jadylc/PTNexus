@@ -44,16 +44,43 @@ func (s *Service) GetGroupStats(siteName string) ([]map[string]any, error) {
 				if display == "" {
 					continue
 				}
-				result = append(result, map[string]any{
-					"site_name":     row.SiteName,
-					"group_suffix":  display,
-					"torrent_count": row.TorrentCount,
-					"total_size":    row.TotalSize,
-				})
+				// 官组统计与未归属统计可能产生"同站点 + 同组名"的两行
+				// （如月月/FRDS：一列来自 torrents.group，一列来自 title_components
+				//  制作组补归）。合并计数，避免前端展开出现重复明细行。
+				merged := false
+				for _, existing := range result {
+					if existing["site_name"] == row.SiteName && existing["group_suffix"] == display {
+						existing["torrent_count"] = toInt64(existing["torrent_count"]) + row.TorrentCount
+						existing["total_size"] = toInt64(existing["total_size"]) + row.TotalSize
+						merged = true
+						break
+					}
+				}
+				if !merged {
+					result = append(result, map[string]any{
+						"site_name":     row.SiteName,
+						"group_suffix":  display,
+						"torrent_count": row.TorrentCount,
+						"total_size":    row.TotalSize,
+					})
+				}
 			}
 		}
 	}
 	return result, nil
+}
+
+func toInt64(value any) int64 {
+	switch v := value.(type) {
+	case int64:
+		return v
+	case int:
+		return int64(v)
+	case float64:
+		return int64(v)
+	default:
+		return 0
+	}
 }
 
 func normalizeGroupDisplay(value string) string {

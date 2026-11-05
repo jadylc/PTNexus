@@ -1005,6 +1005,31 @@ func (r *StatsRepository) QueryUngroupedStats() ([]GroupStatRow, error) {
 			team = teamByName[strings.TrimSpace(g.TorrentName)]
 		}
 		if team == "" || strings.EqualFold(team, "nogroup") {
+			// 未拉取种子：没有 seed_parameters.title_components，现成链路无从判定组名。
+			// 用独立的名字兜底方法从 torrents.name 解析（不影响其他逻辑）：
+			// 命中官组清单 → 归对应站点；清单外 token → 未知站点外部组；
+			// 都扒不出 → 才计入（无官组）。
+			site, parsedGroup, known := resolveGroupNameFromTorrentName(g.TorrentName, matchKnownGroupSite)
+			if known {
+				row, ok := siteGroups[site+"\x00"+parsedGroup]
+				if !ok {
+					row = &GroupStatRow{SiteName: site, GroupSuffix: parsedGroup}
+					siteGroups[site+"\x00"+parsedGroup] = row
+				}
+				row.TorrentCount++
+				row.TotalSize += g.Size
+				continue
+			}
+			if parsedGroup != "" {
+				row, ok := external[parsedGroup]
+				if !ok {
+					row = &GroupStatRow{SiteName: "未知站点", GroupSuffix: parsedGroup}
+					external[parsedGroup] = row
+				}
+				row.TorrentCount++
+				row.TotalSize += g.Size
+				continue
+			}
 			noGroup.TorrentCount++
 			noGroup.TotalSize += g.Size
 			continue
