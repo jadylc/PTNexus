@@ -1224,7 +1224,18 @@ onUnmounted(() => {
 .chart-body {
   flex: 1;
   width: 100%;
+  height: 100%;
   min-height: 0;
+}
+
+/* 图表滚动容器：撑满卡片剩余高度（v4.4.0 改站点统计卡时曾被误删，
+   导致内部 chart-body 无高度、echarts 渲染为空白） */
+.chart-scroll-container {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
+  display: flex;
 }
 
 .chart-body-inner {
