@@ -573,12 +573,24 @@ func (r *TorrentDataRepository) DistinctSeedParameterNames() ([]string, error) {
 }
 
 // ExistingSeedParameterGroups 查询已存在 seed_parameters 的 name+size 分组。
-// 参数/返回：返回 seed_parameters 关联 torrents 后得到的去重 name+size，用于避免同名不同体积互相误排除。
+// 参数/返回：返回两组键——已抓取 hash 对应的 torrents (name,size)，以及 sp.name 本身与
+// torrents.name 的组合；用于批量获取列表排除已抓取种子。
 // 失败场景：数据库查询失败时返回错误。
 // 副作用：仅读取 seed_parameters/torrents，不写入数据。
+// 说明：排除必须覆盖两种命名差异，否则已抓取种子会一直留在待拉取列表：
+//   1. sp.name 是规范化标题（如「匿杀.XXX」合并双语、去 .mkv 后缀），与
+//      torrents.name（下载器显示名）字面不同 → 按 hash 关联匹配；
+//   2. 同名不同体积的另一个种子不应被误排除 → 仍需 name+size 组合精确匹配。
 func (r *TorrentDataRepository) ExistingSeedParameterGroups() ([]TorrentNameSizeKey, error) {
 	rows := make([]TorrentNameSizeKey, 0)
 	err := r.store.DB.Raw(`
+		SELECT DISTINCT t.name AS name, t.size AS size
+		FROM seed_parameters sp
+		INNER JOIN torrents t ON t.hash = sp.hash
+		WHERE TRIM(t.name) != ''
+		  AND t.size > 0
+		  AND (t.is_hidden = 0 OR t.is_hidden IS NULL)
+		UNION
 		SELECT DISTINCT sp.name AS name, t.size AS size
 		FROM seed_parameters sp
 		INNER JOIN torrents t ON t.hash = sp.hash

@@ -256,6 +256,11 @@ wget -O - https://github.com/jadylc/PTNexus/releases/latest/download/install-pt-
 
 # 更新日志
 
+### v4.6.6（2026.11.05）
+
+- 修复：已抓取种子反复出现在待拉取列表——排除判定用 seed_parameters.name + size 组键，但抓取后会规范化标题（双标题合并加中文前缀、去 .mkv 后缀），与下载器显示名不一致导致永远排除不掉、每次都重拉；现改为按 hash 关联（最可靠）并保留 name+size 组合兜底
+- 修复：日本电视台 WOWOW 不被识别为片源平台、残留「无法识别」——识别词表补充 WOWOW/WOWKOW，重算标题可订正存量
+
 ### v4.6.5（2026.11.05）
 
 - 修复：流量统计页速率/数据量图表始终空白——图表外层容器 .chart-scroll-container 的样式在 v4.4.0 站点统计改表格时被误删，内部 chart-body 失去高度（echarts 渲染高度 0）；现恢复 flex 撑满样式，两张图恢复显示
