@@ -1,7 +1,10 @@
 package repository
 
 import (
+	"encoding/json"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -822,66 +825,213 @@ func (r *StatsRepository) QueryGroupStats(siteName string) ([]GroupStatRow, erro
 	return rows, nil
 }
 
-// QueryUngroupedStats 统计官组统计未覆盖的部分，按种子组（name+size）归类：
-//   - 分支一：有 group 但组名匹配不到任何站点的官组清单（未归属官组）→ 逐组统计；
-//   - 分支二：没有 group（无官组）→ 合并为一行，组名固定 "（无官组）"。
+// QueryUngroupedStats 统计官组统计未覆盖的部分（口径：做种种子，与官组统计严格互补）。
+//
+// 判定流程（每个可见的 DISTINCT name+size 种子组）：
+//  1. torrents.group 命中任一站点官组清单 → 已被 QueryGroupStats 统计，跳过；
+//  2. 未命中，且 seed_parameters.title_components 的「制作组」组件有值（外部组名）
+//     → 按该组名逐组统计（可从组名反推站点并补进官组清单）；
+//  3. 未命中且没有制作组值 → 合并为一行「（无官组）」。
 //
 // 参数/返回：无参数；返回与 QueryGroupStats 同构的行，site_name 恒为 "未知站点"。
-// 失败场景：数据库查询失败时返回错误。
-// 副作用：仅读取 torrents/sites。
-// 说明：匹配口径与 QueryGroupStats 一致（DISTINCT name+size 分组、组名规范化、
-// 按站点官组清单 FIND_IN_SET/LIKE 匹配），与官组统计合并后恰好覆盖全部做种组。
+// 失败场景：读取 torrents/seed_parameters/sites 失败时返回错误（无表时降级为空）。
+// 副作用：仅读取。
+// 说明：title_components 是 JSON 数组 [{"key":"制作组","value":"BMDru"}]，各 DB 方言
+// JSON 函数差异大，统一在 Go 侧解析；官组清单匹配也用 Go 侧 FIND_IN_SET 等价逻辑，
+// 与 QueryGroupStats 的 SQL 口径一致，保证合并后恰好覆盖全部可见种子组、不重不漏。
 func (r *StatsRepository) QueryUngroupedStats() ([]GroupStatRow, error) {
+	type visibleRow struct {
+		TorrentName string `gorm:"column:torrent_name"`
+		Size        int64  `gorm:"column:size"`
+		GroupSuffix string `gorm:"column:group_suffix"`
+		Hash        string `gorm:"column:hash"`
+	}
+	type seedComponentRow struct {
+		Hash            string `gorm:"column:hash"`
+		Name            string `gorm:"column:name"`
+		TitleComponents string `gorm:"column:title_components"`
+	}
+	type siteGroupRow struct {
+		Nickname  string `gorm:"column:nickname"`
+		SiteGroup string `gorm:"column:site_group"`
+	}
+
 	torrentGroupColumn := r.groupColumnRef("t")
 	normalizedTorrentGroup := r.normalizedGroupExpr(torrentGroupColumn)
-	siteGroupColumn := r.groupColumnRef("s")
-	// 与 QueryGroupStats 的 JOIN 条件同构：种子组名命中站点官组清单
-	matchExpr := r.siteGroupMatchExpr("ut.group_suffix", siteGroupColumn)
 
-	query := fmt.Sprintf(`
-		SELECT '未知站点' AS site_name,
-		       ut.group_suffix AS group_suffix,
-		       COUNT(*) AS torrent_count,
-		       SUM(ut.size) AS total_size
-		FROM (
-			SELECT DISTINCT
-			       t.name AS torrent_name,
-			       t.size AS size,
-			       %s AS group_suffix
-			FROM torrents t
-			WHERE t.name IS NOT NULL
-			  AND TRIM(t.name) != ''
-			  AND t.size IS NOT NULL
-			  AND TRIM(%s) != ''
-			  AND (t.is_hidden = 0 OR t.is_hidden IS NULL)
-		) AS ut
-		WHERE NOT EXISTS (
-			SELECT 1 FROM sites AS s WHERE %s
-		)
-		GROUP BY ut.group_suffix
-		UNION ALL
-		SELECT '未知站点' AS site_name,
-		       '（无官组）' AS group_suffix,
-		       COUNT(*) AS torrent_count,
-		       SUM(ut.size) AS total_size
-		FROM (
-			SELECT DISTINCT
-			       t.name AS torrent_name,
-			       t.size AS size
-			FROM torrents t
-			WHERE t.name IS NOT NULL
-			  AND TRIM(t.name) != ''
-			  AND t.size IS NOT NULL
-			  AND (%s IS NULL OR TRIM(%s) = '')
-			  AND (t.is_hidden = 0 OR t.is_hidden IS NULL)
-		) AS ut
-	`, normalizedTorrentGroup, torrentGroupColumn, matchExpr, torrentGroupColumn, torrentGroupColumn)
-
-	rows := make([]GroupStatRow, 0)
-	if err := r.store.DB.Raw(query).Scan(&rows).Error; err != nil {
+	// 可见种子逐行读取（不做 GROUP_CONCAT：MySQL 默认 group_concat_max_len=1024 会
+	// 静默截断多 hash 组，导致关联 seed_parameters 漏掉）。Go 侧按 name+size 去重并
+	// 收集该组全部 hash，与 QueryGroupStats 的 DISTINCT name+size 口径一致。
+	visibleQuery := fmt.Sprintf(`
+		SELECT t.name AS torrent_name,
+		       t.size AS size,
+		       %s AS group_suffix,
+		       t.hash AS hash
+		FROM torrents t
+		WHERE t.name IS NOT NULL
+		  AND TRIM(t.name) != ''
+		  AND t.size IS NOT NULL
+		  AND (t.is_hidden = 0 OR t.is_hidden IS NULL)
+	`, normalizedTorrentGroup)
+	visibleRows := make([]visibleRow, 0)
+	if err := r.store.DB.Raw(visibleQuery).Scan(&visibleRows).Error; err != nil {
+		if isMissingTableError(err) {
+			return []GroupStatRow{}, nil
+		}
 		return nil, err
 	}
+	type visibleGroup struct {
+		TorrentName string
+		Size        int64
+		GroupSuffix string
+		Hashes      []string
+	}
+	visible := make([]visibleGroup, 0)
+	visibleIndex := map[string]int{}
+	for _, row := range visibleRows {
+		key := groupKey(row.TorrentName, row.Size)
+		idx, exists := visibleIndex[key]
+		if !exists {
+			idx = len(visible)
+			visibleIndex[key] = idx
+			visible = append(visible, visibleGroup{
+				TorrentName: row.TorrentName,
+				Size:        row.Size,
+				GroupSuffix: row.GroupSuffix,
+			})
+		}
+		if h := strings.TrimSpace(row.Hash); h != "" {
+			visible[idx].Hashes = append(visible[idx].Hashes, h)
+		}
+	}
+
+	// 制作组来源：seed_parameters.title_components（同一 hash 多站点记录时取任意非空值即可）。
+	componentRows := make([]seedComponentRow, 0)
+	componentQuery := `SELECT hash, name, title_components FROM seed_parameters WHERE title_components IS NOT NULL AND TRIM(title_components) != ''`
+	if err := r.store.DB.Raw(componentQuery).Scan(&componentRows).Error; err != nil {
+		if !isMissingTableError(err) {
+			return nil, err
+		}
+	}
+	teamByHash := map[string]string{}
+	teamByName := map[string]string{}
+	for _, row := range componentRows {
+		team := extractTeamFromTitleComponents(row.TitleComponents)
+		if team == "" {
+			continue
+		}
+		if h := strings.TrimSpace(row.Hash); h != "" {
+			if _, exists := teamByHash[h]; !exists {
+				teamByHash[h] = team
+			}
+		}
+		if n := strings.TrimSpace(row.Name); n != "" {
+			if _, exists := teamByName[n]; !exists {
+				teamByName[n] = team
+			}
+		}
+	}
+
+	// 站点官组清单（Go 侧复刻 FIND_IN_SET 匹配：清理前导 '-'、小写、逗号分隔）。
+	groupColumn := r.store.GroupColumn()
+	siteRows := make([]siteGroupRow, 0)
+	siteQuery := fmt.Sprintf(`SELECT nickname, %s AS site_group FROM sites`, groupColumn)
+	if err := r.store.DB.Raw(siteQuery).Scan(&siteRows).Error; err != nil {
+		if !isMissingTableError(err) {
+			return nil, err
+		}
+	}
+	knownGroups := map[string]struct{}{}
+	for _, site := range siteRows {
+		for _, part := range strings.Split(site.SiteGroup, ",") {
+			clean := strings.ToLower(strings.TrimLeft(strings.TrimSpace(part), "-"))
+			clean = strings.TrimSpace(clean)
+			if clean != "" {
+				knownGroups[clean] = struct{}{}
+			}
+		}
+	}
+
+	// 分桶：未归属外部组逐组；无官组合并一行。
+	external := map[string]*GroupStatRow{}
+	noGroup := &GroupStatRow{SiteName: "未知站点", GroupSuffix: "（无官组）"}
+	for _, g := range visible {
+		norm := strings.ToLower(strings.TrimSpace(g.GroupSuffix))
+		if _, matched := knownGroups[norm]; matched {
+			continue // 已被官组统计覆盖
+		}
+		team := ""
+		for _, h := range g.Hashes {
+			if v, ok := teamByHash[h]; ok {
+				team = v
+				break
+			}
+		}
+		if team == "" {
+			team = teamByName[strings.TrimSpace(g.TorrentName)]
+		}
+		if team == "" || strings.EqualFold(team, "nogroup") {
+			noGroup.TorrentCount++
+			noGroup.TotalSize += g.Size
+			continue
+		}
+		row, ok := external[team]
+		if !ok {
+			row = &GroupStatRow{SiteName: "未知站点", GroupSuffix: team}
+			external[team] = row
+		}
+		row.TorrentCount++
+		row.TotalSize += g.Size
+	}
+
+	rows := make([]GroupStatRow, 0, len(external)+1)
+	for _, row := range external {
+		rows = append(rows, *row)
+	}
+	if noGroup.TorrentCount > 0 {
+		rows = append(rows, *noGroup)
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].TotalSize != rows[j].TotalSize {
+			return rows[i].TotalSize > rows[j].TotalSize
+		}
+		return rows[i].GroupSuffix < rows[j].GroupSuffix
+	})
 	return rows, nil
+}
+
+// hashGroupConcatExpr 已移除：GROUP_CONCAT 在多 hash 分组下会被 MySQL 默认 1024 字节
+// 上限静默截断，改为 Go 侧按 name+size 收集 hash，避免关联 seed_parameters 漏数据。
+
+func groupKey(name string, size int64) string {
+	return strings.TrimSpace(name) + "\x00" + strconv.FormatInt(size, 10)
+}
+
+// extractTeamFromTitleComponents 从标题组件 JSON 数组中提取「制作组」的 value。
+// 参数/返回：raw 为 JSON 文本；找不到或解析失败返回空串。
+func extractTeamFromTitleComponents(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	var items []struct {
+		Key   string `json:"key"`
+		Value any    `json:"value"`
+	}
+	if err := json.Unmarshal([]byte(trimmed), &items); err != nil {
+		return ""
+	}
+	for _, item := range items {
+		if strings.TrimSpace(item.Key) != "制作组" {
+			continue
+		}
+		value := strings.TrimSpace(fmt.Sprint(item.Value))
+		if value == "" || value == "<nil>" || strings.EqualFold(value, "nogroup") {
+			return ""
+		}
+		return value
+	}
+	return ""
 }
 
 func (r *StatsRepository) groupColumnRef(alias string) string {

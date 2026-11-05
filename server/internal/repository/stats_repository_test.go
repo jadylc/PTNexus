@@ -40,6 +40,13 @@ func newStatsRepositoryTestStore(t *testing.T) *Store {
 			downloader_id TEXT,
 			is_hidden INTEGER DEFAULT 0
 		)`,
+		`CREATE TABLE seed_parameters (
+			hash TEXT,
+			name TEXT,
+			torrent_id TEXT,
+			site_name TEXT,
+			title_components TEXT
+		)`,
 	}
 
 	for _, stmt := range statements {
