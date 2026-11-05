@@ -4,6 +4,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/pt-nexus/server/internal/repository"
 )
 
 // 站点每日统计的进程内缓存：重复打开页面直接命中，不再重复计算。
@@ -72,6 +74,44 @@ func (s *Service) computeSiteDailyUploadStats(days int) (map[string]any, error) 
 		}
 	}
 
+	// 今天实时叠加：快照只在跨天/启动时写入，当天白天的上传不会体现在
+	// 今天的快照行里。用 torrent_upload_stats 的当前累计作为"今天"的实时值：
+	// - 最后快照日 < 今天：追加"今天"列（实时累计），今日柱实时反映当天上传
+	// - 最后快照日 == 今天：用实时值覆盖今天列，保证今日柱随刷新实时增长
+	today := time.Now().Format("2006-01-02")
+	if len(dates) == 0 || dates[len(dates)-1] < today {
+		if live, liveErr := s.repo.QuerySiteUploadStats(); liveErr == nil {
+			todayRows := make([]repository.SiteDailyStatRow, 0, len(live))
+			for _, row := range live {
+				todayRows = append(todayRows, repository.SiteDailyStatRow{
+					StatDate:      today,
+					SiteName:      row.SiteName,
+					TotalUploaded: row.TotalUploaded,
+					TorrentCount:  row.TorrentCount,
+				})
+			}
+			rows = append(rows, todayRows...)
+			dates = append(dates, today)
+			for idx := range dates {
+				dateIndex[dates[idx]] = idx
+			}
+		}
+	} else if dates[len(dates)-1] == today {
+		if live, liveErr := s.repo.QuerySiteUploadStats(); liveErr == nil {
+			liveBySite := map[string]int64{}
+			for _, liveRow := range live {
+				liveBySite[liveRow.SiteName] = liveRow.TotalUploaded
+			}
+			for i := range rows {
+				if rows[i].StatDate == today {
+					if uploaded, exists := liveBySite[rows[i].SiteName]; exists {
+						rows[i].TotalUploaded = uploaded
+					}
+				}
+			}
+		}
+	}
+
 	// 每站点各日期的累计值：仅填充真实存在的快照行，缺行在增量阶段沿用前值
 	cumulative := map[string][]int64{}
 	present := map[string][]bool{}
@@ -89,19 +129,32 @@ func (s *Service) computeSiteDailyUploadStats(days int) (map[string]any, error) 
 		torrentCount[row.SiteName] = row.TorrentCount
 	}
 
-	// 每日增量：缺行沿用前值；快照存在但归零说明该站种子已清理，按 0 处理
+	// 每日增量：缺行沿用前值；快照存在但归零说明该站种子已清理，按 0 处理。
+	// 首个快照观测日（站点首次出现在快照表）没有基线，当天记 0——
+	// 否则部署首日的"增量"会等于全部历史累计，虚高到无法解读。
 	daily := map[string][]int64{}
 	for site, arr := range cumulative {
 		deltas := make([]int64, len(dates))
+		presentFlags := present[site]
+		firstSeen := -1
+		for i := range dates {
+			if presentFlags != nil && presentFlags[i] {
+				firstSeen = i
+				break
+			}
+		}
 		prev := int64(0)
 		for i := range dates {
 			current := arr[i]
-			if !present[site][i] {
+			if !presentFlags[i] {
 				current = prev
 			}
-			delta := current - prev
-			if delta < 0 {
-				delta = 0
+			delta := int64(0)
+			if firstSeen >= 0 && i > firstSeen {
+				delta = current - prev
+				if delta < 0 {
+					delta = 0
+				}
 			}
 			deltas[i] = delta
 			prev = current

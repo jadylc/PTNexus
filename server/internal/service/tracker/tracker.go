@@ -53,6 +53,8 @@ type Service struct {
 	aggregationCount int
 	// lastSiteSnapshotDate 记录最近一次站点每日快照的日期（YYYY-MM-DD）
 	lastSiteSnapshotDate string
+	// dailySnapshotFn 跨天快照回调（bootstrap 注入：刷新下载器数据 + 写快照）
+	dailySnapshotFn func() error
 }
 
 // New 创建流量采集服务实例。
@@ -187,17 +189,39 @@ func (s *Service) run() {
 // 参数/返回：无参数；失败仅记录日志，不影响采集循环。
 // 失败场景：聚合查询或写库失败时记录告警。
 // 副作用：写 site_daily_stats 当日快照行。
+// 说明：注入 dailySnapshotFn 后，快照前会先刷新下载器数据（保证快照反映最新
+// 种子级累计，否则数据只在手动"刷新缓存"时更新，每日增量口径失真）。
 func (s *Service) ensureSiteDailySnapshot() {
 	today := time.Now().Format("2006-01-02")
 	if today == s.lastSiteSnapshotDate {
 		return
 	}
-	if err := s.repo.UpsertSiteDailySnapshot(today); err != nil {
-		logx.Warnf(trackerModule, "站点每日快照失败 日期=%s err=%v", today, err)
+	s.lastSiteSnapshotDate = today
+	writeSnapshot := func() {
+		if err := s.repo.UpsertSiteDailySnapshot(today); err != nil {
+			logx.Warnf(trackerModule, "站点每日快照失败 日期=%s err=%v", today, err)
+			return
+		}
+		logx.Debugf(trackerModule, "站点每日快照完成 日期=%s", today)
+	}
+	if s.dailySnapshotFn != nil {
+		// 异步执行：先同步下载器数据再写快照，可能耗时数十秒，不阻塞采集循环
+		go func() {
+			if err := s.dailySnapshotFn(); err != nil {
+				logx.Warnf(trackerModule, "站点每日快照前置刷新失败 日期=%s err=%v", today, err)
+				writeSnapshot()
+				return
+			}
+			writeSnapshot()
+		}()
 		return
 	}
-	s.lastSiteSnapshotDate = today
-	logx.Debugf(trackerModule, "站点每日快照完成 日期=%s", today)
+	writeSnapshot()
+}
+
+// SetDailySnapshotHook 注入跨天快照回调（刷新数据 + 写快照由实现方完成）。
+func (s *Service) SetDailySnapshotHook(fn func() error) {
+	s.dailySnapshotFn = fn
 }
 
 func (s *Service) resolveIntervalSeconds() int {

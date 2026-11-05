@@ -61,10 +61,19 @@ type TorrentDataService struct {
 	iyuuRunning atomic.Bool
 
 	iyuuLog func(level string, message string)
+
+	// snapshotHook 数据刷新成功后的回调：用于把最新种子级累计写入站点每日快照，
+	// 保证站点统计的"每日增量"与数据刷新时刻对齐（由 bootstrap 注入）。
+	snapshotHook func() error
 }
 
 func NewTorrentDataService(repo *repository.TorrentDataRepository, cfg *config.Manager) *TorrentDataService {
 	return &TorrentDataService{repo: repo, cfg: cfg, iyuuTasks: NewIYUUTaskService()}
+}
+
+// SetSnapshotHook 注入数据刷新完成后的站点快照回调。
+func (s *TorrentDataService) SetSnapshotHook(hook func() error) {
+	s.snapshotHook = hook
 }
 
 // SetIYUULogger 设置 IYUU 查询过程的日志回调，便于在设置页展示进度信息。

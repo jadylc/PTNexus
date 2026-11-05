@@ -23,8 +23,8 @@ var (
 )
 
 type refreshSiteMatcher struct {
-	hostMap map[string]string
-	coreMap map[string]string
+	hostMap       map[string]string
+	coreMap       map[string]string
 	uniqueCoreMap map[string]string
 }
 
@@ -171,6 +171,15 @@ func (s *TorrentDataService) refreshFromDownloaders() map[string]any {
 	message := fmt.Sprintf("种子数据更新完成：成功 %d/%d 个下载器", successDownloaders, totalDownloaders)
 	if !success {
 		message = "种子数据更新失败：所有下载器均同步失败"
+	}
+
+	// 数据刷新成功后写站点每日快照：保证"每日增量 = 两次数据刷新之间"的口径
+	// 与刷新时刻对齐，快照不再依赖跨天时机（否则两次手动刷新间隔内的上传
+	// 会全部堆到跨天那根柱子上）。失败静默（快照缺失由查询侧实时叠加兜底）。
+	if success && s.snapshotHook != nil {
+		if hookErr := s.snapshotHook(); hookErr != nil {
+			logx.Warnf(refreshLogModule, "写入站点每日快照失败 err=%v", hookErr)
+		}
 	}
 
 	return map[string]any{

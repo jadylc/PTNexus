@@ -1192,7 +1192,10 @@ onUnmounted(() => {
 
 <style scoped>
 .info-view-container {
+  /* 三张卡（速率/数据量/站点统计）超出视口时整页滚动，
+     避免固定高度下站点卡把前两张图压缩到 0 高度导致图表空白 */
   height: 100%;
+  overflow-y: auto;
   padding: 20px;
   display: flex;
   flex-direction: column;
@@ -1204,12 +1207,12 @@ onUnmounted(() => {
   /* 背景样式已移至 glass-morphism.css (使用 glass-card 和 glass-rounded 类) */
   padding: 16px;
   flex: 1;
-  min-height: 0;
+  min-height: 340px;
   display: flex;
   flex-direction: column;
   position: relative;
   /* 默认z-index，让所有卡片在同一层级 */
-  z-index: 1; 
+  z-index: 1;
 }
 
 /* [核心修改] 移除 :first-child 规则，并添加 :hover 规则 */

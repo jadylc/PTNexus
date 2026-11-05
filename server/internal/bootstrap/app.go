@@ -91,6 +91,16 @@ func NewApp() (*App, error) {
 	torrentDataService.SetIYUULogger(func(level string, message string) {
 		settingsService.AppendIYUULog(level, message)
 	})
+	// 站点每日快照与数据刷新绑定：数据刷新成功即写快照，保证站点统计
+	// "每日增量"的口径与数据更新时刻对齐（否则数据只随手动刷新更新）。
+	torrentDataService.SetSnapshotHook(func() error {
+		return statsRepo.UpsertSiteDailySnapshot(time.Now().Format("2006-01-02"))
+	})
+	// 跨天快照前先刷新一次下载器数据，保证日切分准确；完成后写快照。
+	trackerService.SetDailySnapshotHook(func() error {
+		torrentDataService.RefreshData()
+		return statsRepo.UpsertSiteDailySnapshot(time.Now().Format("2006-01-02"))
+	})
 	localQueryService := service.NewLocalQueryService(repository.NewLocalQueryRepository(store), cfgManager, paths.DataDir)
 	crossSeedService := service.NewCrossSeedService(repository.NewCrossSeedRepository(store))
 
