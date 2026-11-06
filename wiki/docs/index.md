@@ -4,19 +4,22 @@
 
 - Wiki：https://ptn-wiki.sqing33.dpdns.org
 - Github：https://github.com/jadylc/PTNexus
+- Gitee：https://gitee.com/jadylc/PTNexus
 - DockerHub：https://hub.docker.com/r/jadylc/pt-nexus
 - QQ交流群：1057366817
 
 ### 🏗️ 技术架构
 
 - **前端**：Vue 3 + TypeScript + Element Plus，现代化响应式界面。
-- **后端**：Python Flask + Go + SQLite/MySQL/PostgreSQL，支持多数据库。
-- **代理服务**：内置盒子端 Go 代理服务，用于远程获取截图、mediainfo 等消息于和解决网络延迟问题。
+- **后端**：Go（Gin + GORM）+ SQLite/MySQL/PostgreSQL，支持多数据库；Python 旧实现已归档，当前全部功能均为 Go 实现。
+- **站点适配**：NexusPHP 标准结构走公共提取器，结构差异大的站点有专用提取器，自研架构站点（如可乐）走 JSON API 适配；Cloudflare 防护站点经 FlareSolverr 求解。
+- **代理服务**：内置盒子端 Go 代理服务，用于远程获取截图、MediaInfo/BDInfo 等信息并解决网络延迟问题。
+- **在线更新**：Go updater 读取 UPDATE_MANIFEST.json 下载产物、校验后原子切换，不依赖 git。
 - **部署方式**：Docker 容器化部署，支持环境变量配置。
 
 ## 2026 年 1 月 1 日起规范转种功能限制
 
-> 转种限制方案由多位站点管理人员共同制定，转种限制代码使用 Go 编写编译且暂不开源，其他功能均在 Python 代码里实现，感谢各位站点管理人员的支持与配合。
+> 转种限制方案由多位站点管理人员共同制定，限制检查已随主程序用 Go 实现并开源，感谢各位站点管理人员的支持与配合。
 > 代码仅供学习参考使用，严禁用于商业用途。
 
 1. **带有禁转标签一律不可转种。**
@@ -120,6 +123,11 @@
 ---
 
 # 更新日志
+
+### v4.6.14（2026.11.06）
+
+- 修复：可乐抓取时标签漏取——搜索响应的 labelsNew 字段此前未并入合成详情页，导致提取无标签并触发不必要的截图/标签重建修复流程；现正确解析并合成标签行
+- 文档：README 全面重写——反映当前 Go 全栈架构（站点适配体系：公共提取器/专用提取器/API 站点桥接/FlareSolverr）、按页面组织的功能总览、转种限制已开源说明、端口说明（updater 5274 对外 / server 5275 内部）、仓库结构与本地开发/测试/新增站点/发版流程指南；wiki 首页架构描述同步修正（原 Python Flask 描述已过时）
 
 ### v4.6.13（2026.11.06）
 

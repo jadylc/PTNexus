@@ -2,95 +2,99 @@
 
 > [!IMPORTANT]
 > **分支说明（Go 主线）**：本分支（`go`）为当前默认开发主线，后续功能迭代仅在本分支进行。
-> Python 旧实现已迁移到 `python` 分支用于归档。
+> Python 旧实现已迁移到 `python` 分支用于归档；当前全部功能（含转种限制检查）均为 Go 实现并已开源。
 
-**PT Nexus** 是一款支持 Docker 容器化部署、兼容多下载器与多数据库的 **PT 种子聚合管理平台**，可自动提取标准化种子参数、解析标题组件，智能纠错补充 MediaInfo/截图/简介等内容、适配不同站点发布规范，支持批量转种与自动推送下载器做种，还具备禁转检测、已存在种子智能匹配等机制，搭配本地文件检索、IYUU API 查漏种等辅助功能，大幅简化跨站点转种流程，显著提升 PT 转种与管理效率。
+**PT Nexus** 是一款支持 Docker 容器化部署、兼容多下载器与多数据库的 **PT 种子聚合管理平台**。它把散落在各 PT 站的做种数据聚合到统一视图，自动提取与标准化种子参数、解析标题组件，智能纠错补充 MediaInfo/截图/海报/简介，适配不同站点的发布规范，支持批量转种与自动推送下载器做种；内置禁转/限转/分集检测、网段上传限额、已存在种子智能匹配等合规机制，并提供流量统计、做种检索、本地文件扫描、IYUU 查漏种等辅助能力，大幅简化跨站点转种流程，显著提升 PT 转种与管理效率。
 
 - Wiki：https://ptn-wiki.sqing33.dpdns.org
 - Github：https://github.com/jadylc/PTNexus
+- Gitee：https://gitee.com/jadylc/PTNexus
 - DockerHub：https://hub.docker.com/r/jadylc/pt-nexus
 - QQ交流群：1057366817
 
-## 手动触发 Release
+## 功能总览
 
-如需在推送代码后通过命令手动触发 GitHub Release，可直接使用仓库里的发布脚本。
+界面按以下页面组织（Web UI，桌面端与浏览器扩展复用同一前端）：
 
-前置条件：
+| 页面 | 能力 |
+| --- | --- |
+| **首页** | 做种总览与跨站聚合视图；「刷新缓存」同步全部下载器的种子数据（体积/做种状态/站点归属/官组识别） |
+| **流量统计** | 实时速率与历史流量曲线（按下载器/按站点聚合）、数据量统计、站点每日上传统计（快照差值 + 今日实时叠加） |
+| **一种多站** | 跨站检索同一资源的多个版本，选择目标站一键转种；已存在种子智能匹配与补种 |
+| **一站多种** | 单站点多种子的批量发布，队列化执行并记录发种详情 |
+| **维护种子** | 种子维护与**批量获取**：按下载器做种列表筛选待拉取种子，细粒度进度面板（阶段 chips、逐候选尝试明细、失败原因一键复制），抓取结果自动修复收敛后入库 |
+| **发种日志** | 发布/抓取全链路日志检索与导出 |
+| **做种检索** | 站点做种统计、做种官组统计（含未知站点/未归属组明细）、本地文件扫描（缺失文件/孤立文件/正常做种） |
+| **设置** | 下载器（qBittorrent/Transmission）、站点管理与 Cookie 维护、盒子代理、FlareSolverr、IYUU、更新等 |
 
-- 已安装并登录 GitHub CLI：`gh auth login`
-- 已将待发布代码与 `CHANGELOG.json` 推送到目标分支
+### 核心转种能力
 
-推荐在仓库根目录执行，常用命令：
+1. 种源管控：仅允许从有自动种审/人工种审的站点转出种子，保障合规性；
+2. 智能参数处理：自动解析种子标题（主标题、季集、年份、媒介、编码、音频、制作组等），统一不同站点参数格式，便于跨站转种；
+3. 多站点适配：为每个目标站点单独适配发布格式，不支持的参数自动降级；
+4. 自动推送做种：转种成功后自动下载种子并推送至下载器，qBittorrent 支持跳过校验；
+5. 智能种子检测：识别目标站点已存在的种子并自动补种，检测到禁转/限转/分集标签按规则处理；
+6. 批量操作：支持批量获取、检查、转种种子，实时监控进度并记录详情。
 
-```bash
-./scripts/release-manual-dispatch.sh
-./scripts/release-manual-dispatch.sh --dry-run
-./scripts/release-manual-dispatch.sh --all
-./scripts/release-manual-dispatch.sh --ref go --no-desktop
-```
+### 错误参数修正能力
 
-说明：
+1. 自动纠错：修正标题错误、简介错误、截图丢失等问题，解决参数位置错乱（如色深 10bit 与 HDR 参数）；
+2. 内容增强：自动补充缺失的 MediaInfo、截图、简介，获取豆瓣/TMDB 海报并转存图床；
+3. 参数识别优化：修正音频编码（如 TrueHD 7.1 Atmos、DD+5.1）、格式标签（如 UHD BluRay Remux）等识别错误；
+4. 质量校验：转种前检测参数错误/缺失，提供修正建议，确保符合目标站点规范。
 
-- 不显式传入构建开关时，脚本会逐项以 Y/N 询问是否构建在线更新文件、Windows 桌面安装包、盒子端代理、Docker 镜像
-- 传入 `--all` 时，会跳过交互并直接启用全部四项发布
-- 命令会先执行 `git push origin <branch>`，成功后再触发 `.github/workflows/release-manual.yml`
-- 推送到 `go` / `main` 分支，或推送 `v*` 标签时，也会直接触发同一套 GitHub Actions 工作流
-- 默认优先使用 `go` 分支；若仓库不存在 `go`，则回退到远端默认分支
-- 版本号与 Release 文案仍以 `CHANGELOG.json` 最新一条为准
-- 这是仓库级脚本，不需要进入 `webui/`，也不依赖 `npm` / `pnpm`
-- 若未安装 `gh`，脚本会先询问是否尝试自动安装 GitHub CLI
+## 技术架构
+
+- **后端**：Go（Gin + GORM），业务服务默认监听 `5275`；容器入口为 updater（监听 `5274`，即对外访问端口），支持在线更新与原子切换。
+- **前端**：Vue 3 + TypeScript + Element Plus，构建产物由后端托管（`webui/dist`）。
+- **数据库**：SQLite（开箱即用）/ MySQL / PostgreSQL，通过 `DB_TYPE` 切换，表结构自动迁移。
+- **站点适配体系**：
+  - `server/sites_data.json`：站点清单（140 站，含域名/官组/迁移角色），启动时同步进 `sites` 表；
+  - `server/configs/*.yaml`：各站表单字段与标准键映射（发布参数用）；`global_mappings.yaml`：全局标准化映射（类型/媒介/编码/制作组/标签等）；
+  - **公共提取器**：按 NexusPHP 标准详情页结构提取参数，绝大多数站点无需单独适配；
+  - **站点专用提取器**：结构差异大的 NexusPHP 变体单独适配（不可说、人人、憨憨、月月、彩虹岛、天空、猫站、杜比、Depth Studio 等）；
+  - **API 站点**：自研架构站点走 JSON API 适配（如可乐 colapt 的 M-Team 兼容面：x-api-key 认证、搜索定位、genDlToken 换票下载）；
+  - Cloudflare 防护站点经 FlareSolverr 求解（含 cf_clearance 的 UA 一致性处理）。
+- **盒子代理（proxy/）**：部署在 PT 盒子上的 Go 代理服务，解决 NAS 容器无法直接读取盒子视频文件的问题（远程获取截图、MediaInfo/BDInfo）；Transmission 种子文件目录映射配合使用。
+- **桌面端（desktop/）**：Wails 桌面壳工程（开发中）。
+- **浏览器扩展（extension/）**：Chrome 扩展，把浏览器中站点 Cookie 一键同步到 PT Nexus。
+- **更新器（updater/）**：读取 `UPDATE_MANIFEST.json` 下载构建产物、校验后原子切换重启，不依赖 git。
 
 ## 2026 年 1 月 1 日起规范转种功能限制
 
-> 转种限制方案由多位站点管理人员共同制定，转种限制代码使用 Go 编写编译且暂不开源，其他功能均在 Python 代码里实现，感谢各位站点管理人员的支持与配合。
+> 转种限制方案由多位站点管理人员共同制定，限制检查已随主程序用 Go 实现并开源。
 > 代码仅供学习参考使用，严禁用于商业用途。
 
 1. **带有禁转标签一律不可转种。**
-2. **带有限转一律标签不可转种，不会自动检测源站是否取消限转，续后续自行确认后重新获取种子消息。**
-3. **带有分集一律标签不可转种，因为目前有几个站点不允许转分集，且大多数用户下载分集都是在源站下的，大部分源站点在完结后还会删除分集，断种率也高。**
-4. **同一个 ip 网段下的下载器同时最多可以有 15 个在上传的种子，超过 15 个则不可转种。（添加超过 24 小时的种子不计算，做种人数大于 5 人不计算，盒子不受限制）**
-5. **一站多种的批量转种不允许发布小于 1GB 的种子，一种多站的单个转种不受此限制。**
+2. **带有限转一律标签不可转种，不会自动检测源站是否取消限转，需后续自行确认后重新获取种子信息。**
+3. **带有分集一律标签不可转种**（部分站点不允许转分集，且分集断种率高）。
+4. **同一个 IP 网段下的下载器同时最多可以有 15 个在上传的种子**，超过 15 个则不可转种（添加超过 24 小时的种子不计算，做种人数大于 5 人不计算，盒子不受限制）。
+5. **一站多种的批量转种不允许发布小于 1GB 的种子**，一种多站的单个转种不受此限制。
 
-### 一、核心转种功能
+## Docker 部署
 
-1. 种源管控：仅允许从有自动种审/人工种审的站点转出种子，保障合规性；
-2. 智能参数处理：自动解析种子标题（主标题、季集、年份等），统一不同站点参数格式，便于跨站转种；
-3. 多站点适配：为每个目标站点单独适配发布格式，不支持的参数自动降级；
-4. 自动推送做种：转种成功后自动下载种子并推送至下载器，qBittorrent 支持跳过校验；
-5. 智能种子检测：识别目标站点已存在的种子并自动补种，检测到禁转标签则屏蔽转种；
-6. 批量操作：支持批量获取、检查、转种种子，实时监控进度并记录详情。
-
-### 二、错误参数修正相关功能
-
-1. 自动纠错：修正标题错误、简介错误、截图丢失等问题，解决参数位置错乱（如色深 10bit 与 HDR 参数）；
-2. 内容增强：自动补充缺失的 MediaInfo、截图、简介，获取豆瓣海报并转存图床；
-3. 参数识别优化：修正音频编码（如 TrueHD 7.1 Atmos）、格式标签（如 UHD BluRay Remux）等识别错误；
-4. 质量校验：转种前检测参数错误/缺失，提供修正建议，确保符合目标站点规范。
-
-### Docker 部署
-
-#### 环境变量
+### 环境变量
 
 | 分类       | 参数              | 说明                                         | 示例                      |
 | ---------- | ----------------- | -------------------------------------------- | ------------------------- |
 | **通用**   | TZ                | 设置容器时区，确保时间与日志准确。           | Asia/Shanghai             |
 |            | http_proxy        | 设置容器代理，确保能正常访问站点与各种服务。 | http://192.168.1.100:7890 |
 |            | https_proxy       | 设置容器代理，确保能正常访问站点与各种服务。 | http://192.168.1.100:7890 |
-| **数据库** | DB_TYPE           | 选择数据库类型。sqlite、mysql 或 postgres。  | sqlite                    |
+| **数据库** | DB_TYPE           | 选择数据库类型。sqlite、mysql 或 postgresql。 | sqlite                    |
 |            | MYSQL_HOST        | **(MySQL 专用)** 数据库主机地址。            | 192.168.1.100             |
 |            | MYSQL_PORT        | **(MySQL 专用)** 数据库端口。                | 3306                      |
 |            | MYSQL_DATABASE    | **(MySQL 专用)** 数据库名称。                | pt-nexus                  |
 |            | MYSQL_USER        | **(MySQL 专用)** 数据库用户名。              | root                      |
 |            | MYSQL_PASSWORD    | **(MySQL 专用)** 数据库密码。                | your_password             |
 |            | POSTGRES_HOST     | **(PostgreSQL 专用)** 数据库主机地址。       | 192.168.1.100             |
-|            | POSTGRES_PORT     | **(PostgreSQL 专用)** 数据库端口。           | 5432                      |
+|            | POSTGRES_PORT     | **(PostgreSQL 专用)** 数据库端口。           | 5433                      |
 |            | POSTGRES_DATABASE | **(PostgreSQL 专用)** 数据库名称。           | pt-nexus                  |
 |            | POSTGRES_USER     | **(PostgreSQL 专用)** 数据库用户名。         | root                      |
 |            | POSTGRES_PASSWORD | **(PostgreSQL 专用)** 数据库密码。           | your_password             |
 
-#### Docker Compose 示例
+### Docker Compose 示例
 
-> **注：** 旧版本更新到 v3.0.0 版本因为数据库有很大变化，需要删除原来的数据库的所有表，然后代码会重新创建新的表，可以使用`docker run -p 8080:8080 adminer`进行修改。
+> **注：** 旧版本更新到 v3.0.0 版本因为数据库有很大变化，需要删除原来的数据库的所有表，然后代码会重新创建新的表，可以使用 `docker run -p 8080:8080 adminer` 进行修改。
 
 1. 创建 `docker-compose.yml` 文件
 
@@ -111,7 +115,7 @@
 >
 > 宿主机需提前具备可用的 `loop` 设备；若设备数量不足，可继续映射更多 `/dev/loopN`。该能力仅保证原生 Linux Docker，不适用于 Docker Desktop / WSL。
 
-##### 无需额外部署数据库，开箱即用
+#### 无需额外部署数据库，开箱即用
 
 ```yaml
 services:
@@ -143,7 +147,7 @@ services:
       - /dev/loop3:/dev/loop3
 ```
 
-##### 使用 MySQL 数据库
+#### 使用 MySQL 数据库
 
 ```yaml
 services:
@@ -180,7 +184,7 @@ services:
       - /dev/loop3:/dev/loop3
 ```
 
-##### 使用 PostgreSQL 数据库
+#### 使用 PostgreSQL 数据库
 
 ```yaml
 services:
@@ -217,17 +221,17 @@ services:
       - /dev/loop3:/dev/loop3
 ```
 
-2.  在与 `docker-compose.yml` 相同的目录下，运行以下命令启动服务：
-    `docker-compose up -d`
+2. 在与 `docker-compose.yml` 相同的目录下，运行以下命令启动服务：
+   `docker-compose up -d`
 
-3.  服务启动后，通过 `http://<你的服务器IP>:5274` 访问 PT Nexus 界面。
+3. 服务启动后，通过 `http://<你的服务器IP>:5274` 访问 PT Nexus 界面。
 
-# 盒子
+## 盒子
 
-> 用于解决在 NAS 部署 ptn 无法获取到盒子上的视频信息，如截图与 mediainfo 等，使用`go`语言编写。
+> 用于解决在 NAS 部署 ptn 无法获取到盒子上的视频信息（截图、MediaInfo/BDInfo 等），使用 Go 编写。
 
 1. **安装**
-   使用`ssh`连接到盒子上，然后执行如下命令，会自动安装所需的依赖
+   使用 `ssh` 连接到盒子上，然后执行如下命令，会自动安装所需的依赖
 
 ```bash
 # 使用 curl
@@ -237,24 +241,112 @@ wget -O - https://github.com/jadylc/PTNexus/releases/latest/download/install-pt-
 ```
 
 2. **设置端口**
-   在安装过程中，脚本会提示您输入代理服务需要监听的端口（默认为  9090），您可以直接回车使用默认值，或输入自定义端口后回车。
+   在安装过程中，脚本会提示您输入代理服务需要监听的端口（默认为 9090），您可以直接回车使用默认值，或输入自定义端口后回车。
 
 - **安装目录**：`/opt/pt-nexus-proxy`
 - **启动服务**：`cd /opt/pt-nexus-proxy && sudo ./start.sh`
 - **停止服务**：`cd /opt/pt-nexus-proxy && sudo ./stop.sh`
 - **查看日志**：`tail -f /var/run/pt-nexus-box-proxy.log`
 
-# 更新
+## 在线更新
 
 > 通过 Docker 部署的 PT Nexus 支持在线更新：updater 会读取 `UPDATE_MANIFEST.json`，下载对应平台的构建产物（artifact），完成校验后原子切换并重启服务。整个流程不依赖 git 拉取源码。
 
-> **提示：** 若使用“在线更新”把新代码同步进旧镜像，可能会出现依赖缺失（例如 `supervisord`、`libicu`）导致无法启动。新版启动脚本会在启动时自动检测并尝试安装缺失的系统依赖（需要容器以 root 运行且可联网）。如需关闭：
+> **提示：** 若使用"在线更新"把新代码同步进旧镜像，可能会出现依赖缺失（例如 `supervisord`、`libicu`）导致无法启动。新版启动脚本会在启动时自动检测并尝试安装缺失的系统依赖（需要容器以 root 运行且可联网）。如需关闭：
 >
 > - `AUTO_INSTALL_SYSTEM_DEPS=false`（不自动安装系统依赖）
 
 ![更新](https://img1.pixhost.to/images/10201/661470654_79517501-6fc3-4d37-9f44-440ef15b7ac7.png)
 
+## 手动触发 Release
+
+如需在推送代码后通过命令手动触发 GitHub Release，可直接使用仓库里的发布脚本。
+
+前置条件：
+
+- 已安装并登录 GitHub CLI：`gh auth login`
+- 已将待发布代码与 `CHANGELOG.json` 推送到目标分支
+
+推荐在仓库根目录执行，常用命令：
+
+```bash
+./scripts/release-manual-dispatch.sh
+./scripts/release-manual-dispatch.sh --dry-run
+./scripts/release-manual-dispatch.sh --all
+./scripts/release-manual-dispatch.sh --ref go --no-desktop
+```
+
+说明：
+
+- 不显式传入构建开关时，脚本会逐项以 Y/N 询问是否构建在线更新文件、Windows 桌面安装包、盒子端代理、Docker 镜像
+- 传入 `--all` 时，会跳过交互并直接启用全部四项发布
+- 命令会先执行 `git push origin <branch>`，成功后再触发 `.github/workflows/release-manual.yml`
+- 推送到 `go` / `main` 分支，或推送 `v*` 标签时，也会直接触发同一套 GitHub Actions 工作流
+- 默认优先使用 `go` 分支；若仓库不存在 `go`，则回退到远端默认分支
+- 版本号与 Release 文案仍以 `CHANGELOG.json` 最新一条为准
+- 这是仓库级脚本，不需要进入 `webui/`，也不依赖 `npm` / `pnpm`
+- 若未安装 `gh`，脚本会先询问是否尝试自动安装 GitHub CLI
+
+## 开发
+
+### 仓库结构
+
+```
+server/     Go 后端（入口 server/cmd/server；站点配置 server/configs/*.yaml、
+            server/sites_data.json；运行时数据 server/data/）
+webui/      Vue 3 + TypeScript 前端（页面 webui/src/views/，组件 webui/src/components/）
+proxy/      盒子端 Go 代理（截图/MediaInfo/BDInfo 远程获取）
+updater/    Go 在线更新器（镜像入口，对外 5274 端口）
+desktop/    Wails 桌面壳（开发中）
+extension/  Chrome Cookie 同步扩展
+scripts/    发布与构建脚本
+wiki/       文档站
+```
+
+### 本地开发
+
+```bash
+# 后端（Go）
+cd server
+go run ./cmd/server        # 默认监听 5275；DEV_ENV=true 时自动定位本地目录
+
+# 前端（Node 20+ / pnpm）
+cd webui
+pnpm install
+pnpm run dev               # 本地 UI 在 5173
+pnpm run build             # 输出到 webui/dist（发版需一并提交）
+
+# 其他 Go 服务
+./proxy/build.sh
+./updater/build.sh
+```
+
+### 测试与检查
+
+```bash
+cd server && go test ./...          # 后端全量测试
+cd webui && pnpm run type-check     # 前端类型检查
+cd webui && pnpm run lint           # 前端 lint
+```
+
+### 新增站点
+
+1. `server/sites_data.json` 增加站点条目（site/nickname/base_url/group/migration 等），重启服务后同步进数据库；
+2. NexusPHP 标准结构站点通常**公共提取器直接可用**，无需写代码；结构差异大的站点在 `server/internal/service/acquire/extract/sites/` 增加专用提取器并在 `engine.go` 注册；自研 API 站点参考 `colapt_api.go` 在 fetch 层做 API 桥接；
+3. 作为目标站发布时，在 `server/configs/<site>.yaml` 配置表单字段与标准键映射。
+
+### 发版流程
+
+1. 更新 `CHANGELOG.json`（版本号与变更条目）；
+2. `python sync_changelog.py`（同步 readme.md / wiki / UPDATE_MANIFEST.json）；
+3. 提交（含 `webui/dist` 构建产物）并推送到 `go` 分支，GitHub Actions（`release-manual.yml`）自动构建发布，或按上文「手动触发 Release」执行脚本。
+
 # 更新日志
+
+### v4.6.14（2026.11.06）
+
+- 修复：可乐抓取时标签漏取——搜索响应的 labelsNew 字段此前未并入合成详情页，导致提取无标签并触发不必要的截图/标签重建修复流程；现正确解析并合成标签行
+- 文档：README 全面重写——反映当前 Go 全栈架构（站点适配体系：公共提取器/专用提取器/API 站点桥接/FlareSolverr）、按页面组织的功能总览、转种限制已开源说明、端口说明（updater 5274 对外 / server 5275 内部）、仓库结构与本地开发/测试/新增站点/发版流程指南；wiki 首页架构描述同步修正（原 Python Flask 描述已过时）
 
 ### v4.6.13（2026.11.06）
 

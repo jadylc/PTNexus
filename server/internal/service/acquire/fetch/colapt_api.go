@@ -375,6 +375,7 @@ func matchColaptSearchEntry(body, torrentName string) (map[string]string, error)
 				Size       any    `json:"size"`
 				Category   string `json:"category"`
 				IMDb       string `json:"imdb"`
+				LabelsNew  []any  `json:"labelsNew"`
 			} `json:"data"`
 		} `json:"data"`
 	}
@@ -399,6 +400,19 @@ func matchColaptSearchEntry(body, torrentName string) (map[string]string, error)
 			}
 			if size := fmt.Sprint(item.Size); size != "" && size != "<nil>" {
 				entry["size"] = size
+			}
+			// labelsNew 是站内标签数组（如 ["中字","国配"]），此前漏取导致
+			// 提取结果无标签、触发不必要的截图/标签重建修复流程。
+			labels := make([]string, 0, len(item.LabelsNew))
+			for _, raw := range item.LabelsNew {
+				label := strings.TrimSpace(fmt.Sprint(raw))
+				if label == "" || label == "<nil>" {
+					continue
+				}
+				labels = append(labels, label)
+			}
+			if len(labels) > 0 {
+				entry["labels"] = strings.Join(labels, ",")
 			}
 			return entry, nil
 		}
@@ -436,6 +450,17 @@ func colaptEntryToDetailHTML(entry map[string]string) string {
 	builder.WriteString("<table>")
 	if subtitle != "" {
 		builder.WriteString("<tr><td class=\"rowhead\">副标题</td><td class=\"rowfollow\">" + stdhtml.EscapeString(subtitle) + "</td></tr>")
+	}
+	if labels := strings.TrimSpace(entry["labels"]); labels != "" {
+		builder.WriteString("<tr><td class=\"rowhead\">标签</td><td class=\"rowfollow\">")
+		for _, label := range strings.Split(labels, ",") {
+			label = strings.TrimSpace(label)
+			if label == "" {
+				continue
+			}
+			builder.WriteString("<span>" + stdhtml.EscapeString(label) + "</span>")
+		}
+		builder.WriteString("</td></tr>")
 	}
 	if category != "" || team != "" {
 		builder.WriteString("<tr><td class=\"rowhead\">基本信息</td><td class=\"rowfollow\">")

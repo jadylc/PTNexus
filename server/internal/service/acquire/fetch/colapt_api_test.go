@@ -31,6 +31,26 @@ func TestMatchColaptSearchEntry(t *testing.T) {
 	}
 }
 
+// TestMatchColaptSearchEntryParsesLabels labelsNew 必须进入 entry（此前漏取导致
+// 提取无标签、触发不必要的修复流程）。
+func TestMatchColaptSearchEntryParsesLabels(t *testing.T) {
+	body := `{"code":0,"data":{"data":[
+		{"id":1,"name":"Some.Seed.2024.1080p-WEB","smallDescr":"","size":"100","category":"401","labelsNew":["中字","国配","HDR10+"]}
+	]}}`
+	entry, err := matchColaptSearchEntry(body, "Some.Seed.2024.1080p-WEB")
+	if err != nil {
+		t.Fatalf("match failed: %v", err)
+	}
+	if entry["labels"] != "中字,国配,HDR10+" {
+		t.Errorf("labels = %q, want 中字,国配,HDR10+", entry["labels"])
+	}
+
+	html := colaptEntryToDetailHTML(entry)
+	if !strings.Contains(html, "<td class=\"rowhead\">标签</td>") || !strings.Contains(html, "<span>中字</span>") {
+		t.Errorf("synthesized html missing tags row: %s", html)
+	}
+}
+
 // TestColaptEntryToDetailHTML 合成伪详情页应包含公共提取器需要的全部锚点。
 func TestColaptEntryToDetailHTML(t *testing.T) {
 	html := colaptEntryToDetailHTML(map[string]string{
