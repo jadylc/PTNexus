@@ -121,6 +121,12 @@
 
 # 更新日志
 
+### v4.6.12（2026.11.06）
+
+- 新增：接入源站 Depth Studio（dstudio.me，NexusPHP ModernLight 主题改版）——详情页/下载链接为标准 details.php/download.php，fetch 层零改动；新增专用提取器（标题取 Hero 区而非网页 title、类型/制作组/媒介等按基本信息行解析、简介正文重建并剔除站点免责声明与 logo、截图过滤站点 logo），global_mappings 补 DepWeb→team.depweb 与站点 logo 过滤 URL
+- 新增：接入源站 可乐（colapt，www.colapt.com，自研 SPA 架构）——详情页为前端外壳无 HTML 可抓，改走其 M-Team 兼容 API（x-api-key 认证）：搜索定位种子（按下载器种子名匹配）→ 合成标准结构伪详情页供公共提取器解析 → genDlToken 换票下载 .torrent（实测闭环）；API Key 填站点 Cookie 框，Pass Key 可选备用（IYUU 兼容下载端点）
+- 优化：批量获取源站可用性判定放宽为 Cookie 或 Pass Key 任一非空（自研站可能不支持 Cookie 认证）；sites_data.json 新增两站（共 140 站），Depth Studio 官组 -DS,-DStudio,-DepWeb,-DSAudio、可乐 -COLAWEB
+
 ### v4.6.11（2026.11.05）
 
 - 新增：未拉取种子的标题兜底解析——没有 seed_parameters.title_components 的种子（如点号合集名 ...Collection.20240501.FRDS）此前因两个组名数据源都缺而直接落入（无官组）；现用独立新方法按种子名切 token、命中官组清单归对应站点、清单外 token 归未知站点外部组、全扒不出才留（无官组）。新方法独立于 BuildSimpleTitleComponents，不改动任何现有解析/持久化链路

@@ -670,6 +670,7 @@ global_standard_keys:
     "CSPT": "team.cspt"
     "CSWEB": "team.csweb"
     "DBTV": "team.dbtv"
+    "DepWeb": "team.depweb"
     "DIC": "team.dic"
     "DJWEB": "team.djweb"
     "Dream": "team.dream"
@@ -1124,6 +1125,8 @@ content_filtering:
     - "https://wawawa.me/team/frogteam.svg"
     - "https://img93.pixhost.to/images/86/435614074_c5134549f13c2c087d67c9fa4089c49e-removebg-preview.png"
     - "https://pic.imgdb.cn/item/6170004c2ab3f51d91c7782a.png"
+    # Depth Studio 站点 logo（简介尾部模板图）
+    - "https://chevereto.dstudio.me/images/2026/07/21/dstudiov4.png"
     # 旧版本的PTer图片URL
     - "https://pterclub.net/pic/CS.png"
     - "https://pterclub.net/pic/GDJT.png"

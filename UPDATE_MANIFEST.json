@@ -2,38 +2,47 @@
   "schema": 2,
   "note": "repo-root metadata only; production updater must use release UPDATE_MANIFEST.json",
   "latest": {
-    "version": "v4.6.11",
+    "version": "v4.6.12",
     "artifacts": [
       {
         "os": "linux",
         "arch": "amd64",
-        "url": "https://github.com/jadylc/PTNexus/releases/download/v4.6.11/ptnexus-runtime-linux-amd64.tar.gz",
+        "url": "https://github.com/jadylc/PTNexus/releases/download/v4.6.12/ptnexus-runtime-linux-amd64.tar.gz",
         "sha256": "",
         "size": 11163781,
         "format": "tar.gz",
         "mirror_urls": [
-          "https://gitee.com/jadylc/PTNexus/releases/download/v4.6.11/ptnexus-runtime-linux-amd64.tar.gz",
-          "https://gh.ddlc.top/https://github.com/jadylc/PTNexus/releases/download/v4.6.11/ptnexus-runtime-linux-amd64.tar.gz",
-          "https://ghproxy.net/https://github.com/jadylc/PTNexus/releases/download/v4.6.11/ptnexus-runtime-linux-amd64.tar.gz"
+          "https://gitee.com/jadylc/PTNexus/releases/download/v4.6.12/ptnexus-runtime-linux-amd64.tar.gz",
+          "https://gh.ddlc.top/https://github.com/jadylc/PTNexus/releases/download/v4.6.12/ptnexus-runtime-linux-amd64.tar.gz",
+          "https://ghproxy.net/https://github.com/jadylc/PTNexus/releases/download/v4.6.12/ptnexus-runtime-linux-amd64.tar.gz"
         ]
       },
       {
         "os": "linux",
         "arch": "arm64",
-        "url": "https://github.com/jadylc/PTNexus/releases/download/v4.6.11/ptnexus-runtime-linux-arm64.tar.gz",
+        "url": "https://github.com/jadylc/PTNexus/releases/download/v4.6.12/ptnexus-runtime-linux-arm64.tar.gz",
         "sha256": "",
         "size": 10104449,
         "format": "tar.gz",
         "mirror_urls": [
-          "https://gitee.com/jadylc/PTNexus/releases/download/v4.6.11/ptnexus-runtime-linux-arm64.tar.gz",
-          "https://gh.ddlc.top/https://github.com/jadylc/PTNexus/releases/download/v4.6.11/ptnexus-runtime-linux-arm64.tar.gz",
-          "https://ghproxy.net/https://github.com/jadylc/PTNexus/releases/download/v4.6.11/ptnexus-runtime-linux-arm64.tar.gz"
+          "https://gitee.com/jadylc/PTNexus/releases/download/v4.6.12/ptnexus-runtime-linux-arm64.tar.gz",
+          "https://gh.ddlc.top/https://github.com/jadylc/PTNexus/releases/download/v4.6.12/ptnexus-runtime-linux-arm64.tar.gz",
+          "https://ghproxy.net/https://github.com/jadylc/PTNexus/releases/download/v4.6.12/ptnexus-runtime-linux-arm64.tar.gz"
         ]
       }
     ],
-    "date": "2026.11.05"
+    "date": "2026.11.06"
   },
   "history": [
+    {
+      "version": "v4.6.12",
+      "date": "2026.11.06",
+      "changes": [
+        "新增：接入源站 Depth Studio（dstudio.me，NexusPHP ModernLight 主题改版）——详情页/下载链接为标准 details.php/download.php，fetch 层零改动；新增专用提取器（标题取 Hero 区而非网页 title、类型/制作组/媒介等按基本信息行解析、简介正文重建并剔除站点免责声明与 logo、截图过滤站点 logo），global_mappings 补 DepWeb→team.depweb 与站点 logo 过滤 URL",
+        "新增：接入源站 可乐（colapt，www.colapt.com，自研 SPA 架构）——详情页为前端外壳无 HTML 可抓，改走其 M-Team 兼容 API（x-api-key 认证）：搜索定位种子（按下载器种子名匹配）→ 合成标准结构伪详情页供公共提取器解析 → genDlToken 换票下载 .torrent（实测闭环）；API Key 填站点 Cookie 框，Pass Key 可选备用（IYUU 兼容下载端点）",
+        "优化：批量获取源站可用性判定放宽为 Cookie 或 Pass Key 任一非空（自研站可能不支持 Cookie 认证）；sites_data.json 新增两站（共 140 站），Depth Studio 官组 -DS,-DStudio,-DepWeb,-DSAudio、可乐 -COLAWEB"
+      ]
+    },
     {
       "version": "v4.6.11",
       "date": "2026.11.05",

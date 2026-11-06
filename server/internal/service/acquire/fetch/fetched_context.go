@@ -89,15 +89,28 @@ func EnrichFetchedContext(repo CurrentTorrentLookupRepo, input EnrichFetchedCont
 		if timeout <= 0 {
 			timeout = 45 * time.Second
 		}
-		page, pageErr := FetchPageWithCookie(
-			detailURL,
-			strings.TrimSpace(toStringAny(input.SourceInfo["cookie"], "")),
-			timeout,
-		)
-		if pageErr != nil {
-			detailFetchError = pageErr
+		// 可乐（colapt）：SPA 架构抓不到详情 HTML，改走 M-Team 兼容搜索 API，
+		// 把结果合成标准结构的伪详情页供公共提取器解析。
+		if strings.Contains(strings.ToLower(siteIdentifier), "colapt") {
+			baseURL := normalizeSiteBaseURL(toStringAny(input.SourceInfo["base_url"], ""))
+			apiKey := strings.TrimSpace(toStringAny(input.SourceInfo["cookie"], ""))
+			html, apiErr := buildColaptDetailHTML(baseURL, apiKey, torrentName)
+			if apiErr != nil {
+				detailFetchError = apiErr
+			} else {
+				detailHTML = html
+			}
 		} else {
-			detailHTML = page
+			page, pageErr := FetchPageWithCookie(
+				detailURL,
+				strings.TrimSpace(toStringAny(input.SourceInfo["cookie"], "")),
+				timeout,
+			)
+			if pageErr != nil {
+				detailFetchError = pageErr
+			} else {
+				detailHTML = page
+			}
 		}
 	}
 

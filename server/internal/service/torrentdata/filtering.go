@@ -162,8 +162,13 @@ func torrentNameSizeKey(name string, size int64) string {
 // 参数/返回：siteName 为站点昵称，cfg 为 sites 表配置；返回 true 表示列表会展示为可用源站点。
 // 失败场景：无。
 // 副作用：无。
+// 说明：Cookie 与 Pass Key 均视为有效凭据——可乐（colapt）等自研站不支持 Cookie
+// 认证，仅凭 Pass Key 走 IYUU 兼容下载端点即可作为源站。
 func isAvailableBatchFetchSourceSite(siteName string, cfg repository.SiteConfig) bool {
-	return (cfg.Migration == 1 || cfg.Migration == 3) && strings.TrimSpace(cfg.Cookie) != ""
+	if cfg.Migration != 1 && cfg.Migration != 3 {
+		return false
+	}
+	return strings.TrimSpace(cfg.Cookie) != "" || strings.TrimSpace(cfg.Passkey) != ""
 }
 
 func (s *TorrentDataService) sortData(data []map[string]any, sortProp, sortOrder string) {

@@ -15,6 +15,7 @@ type SiteConfig struct {
 	Nickname  string
 	Migration int
 	Cookie    string
+	Passkey   string
 }
 
 type SiteLinkRuleRow struct {
@@ -73,7 +74,7 @@ func NewTorrentDataRepository(store *Store) *TorrentDataRepository {
 
 func (r *TorrentDataRepository) ListSiteConfigs(ctx context.Context) ([]SiteConfig, error) {
 	rows := make([]SiteConfig, 0)
-	err := r.store.DB.WithContext(ctx).Raw("SELECT nickname, migration, cookie FROM sites").Scan(&rows).Error
+	err := r.store.DB.WithContext(ctx).Raw("SELECT nickname, migration, cookie, passkey FROM sites").Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}

@@ -131,14 +131,30 @@ func DownloadTorrentForSourceWithHint(sourceInfo map[string]any, torrentID, name
 	logx.Infof(sourceDownloadLogModule, "详情页地址已确定 source_site=%s torrent_id=%s detail_url=%s", siteName, trimmedID, detailURL)
 
 	downloadCandidates := make([]string, 0)
-	if direct := buildDirectDownloadURL(baseURL, siteCode, detailURL, trimmedID, passkey); direct != "" {
+	// 可乐（colapt）：SPA 空壳页无下载链接可解析，下载候选全部来自 API
+	// （genDlToken 换票优先、Pass Key 端点备用）；后续沿用公共候选下载与
+	// torrent 校验/落盘逻辑，跳过对 SPA 页面的无谓抓取。
+	isColapt := strings.Contains(strings.ToLower(siteCode), "colapt")
+	if isColapt {
+		apiKey := strings.TrimSpace(toStringAny(sourceInfo["cookie"], ""))
+		downloadCandidates = append(downloadCandidates, colaptDownloadCandidates(baseURL, apiKey, passkey, detailURL, trimmedID)...)
+	} else if direct := buildDirectDownloadURL(baseURL, siteCode, detailURL, trimmedID, passkey); direct != "" {
 		downloadCandidates = append(downloadCandidates, direct)
 	}
 
 	// userAgent 在整条下载链路中贯穿复用：cf_clearance 绑定 UA，
 	// 详情页求解得到的 UA 必须同样用于后续下载候选请求。
 	userAgent := ""
-	htmlBytes, cookie, userAgent, htmlErr := fetchBinarySmart(detailURL, "", cookie, userAgent, 45*time.Second)
+	var htmlBytes []byte
+	htmlErr := error(nil)
+	if !isColapt {
+		// colapt 的详情页是 SPA 应用外壳（无下载链接、无登录标记），
+		// 抓取无意义且可能被前端网关挂起，直接跳过。
+		var solvedCookie, solvedUA string
+		htmlBytes, solvedCookie, solvedUA, htmlErr = fetchBinarySmart(detailURL, "", cookie, userAgent, 45*time.Second)
+		cookie = solvedCookie
+		userAgent = solvedUA
+	}
 	html := string(htmlBytes)
 	if htmlErr != nil && errors.Is(htmlErr, ErrSourceCookieExpired) && strings.TrimSpace(passkey) == "" {
 		logx.Warnf(sourceDownloadLogModule, "详情页鉴权失败 source_site=%s torrent_id=%s detail_url=%s err=%v", siteName, trimmedID, detailURL, htmlErr)
@@ -545,6 +561,18 @@ func buildDirectDownloadURL(baseURL, siteCode, detailURL, torrentID, passkey str
 		return ""
 	}
 	trimmedPasskey := strings.TrimSpace(passkey)
+	// 可乐（colapt）：自研 SPA 架构，不支持 Cookie 认证；
+	// 下载走 IYUU 兼容单种下载端点，凭 Pass Key（站点 Key 管理页的 Pass Key）。
+	if strings.Contains(strings.ToLower(siteCode), "colapt") {
+		if trimmedPasskey == "" {
+			return ""
+		}
+		id := extractDownloadID(siteCode, detailURL, torrentID)
+		if id == "" {
+			return ""
+		}
+		return fmt.Sprintf("%s/api/v1/iyuu/download?id=%s&passkey=%s", strings.TrimRight(baseURL, "/"), neturl.QueryEscape(id), neturl.QueryEscape(trimmedPasskey))
+	}
 	if strings.Contains(strings.ToLower(siteCode), "rousi") && trimmedPasskey != "" {
 		uuid := reUUIDInURL.FindString(detailURL)
 		if uuid != "" {
@@ -599,6 +627,13 @@ func extractDownloadID(siteCode, detailURL, torrentID string) string {
 			return id
 		}
 		if id := extractTorrentIDParam(torrentID); id != "" {
+			return id
+		}
+	}
+	// 可乐（colapt）：详情链接形如 /media/rc983（作品页）、/torrents/14522、
+	// /downloads/{infohash}/14522，从路径段提取数字种子 id。
+	if strings.Contains(trimmedSiteCode, "colapt") {
+		if id := extractColaptTorrentID(detailURL, torrentID); id != "" {
 			return id
 		}
 	}

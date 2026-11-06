@@ -1304,5 +1304,25 @@
     "group": null,
     "migration": 2,
     "speed_limit": 10
+  },
+  {
+    "site": "dstudio",
+    "nickname": "Depth Studio",
+    "base_url": "dstudio.me",
+    "special_tracker_domain": null,
+    "group": "-DS,-DStudio,-DepWeb,-DSAudio",
+    "description": "Depth Studio",
+    "migration": 1,
+    "speed_limit": 50
+  },
+  {
+    "site": "colapt",
+    "nickname": "可乐",
+    "base_url": "www.colapt.com",
+    "special_tracker_domain": null,
+    "group": "-COLAWEB",
+    "description": "ColaPT",
+    "migration": 1,
+    "speed_limit": 50
   }
 ]

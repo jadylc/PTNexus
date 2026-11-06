@@ -54,6 +54,7 @@ func NewDefaultEngine(publicExtractor Extractor, runtimeFactory RuntimeFactory) 
 	hdskyExtractor := NewHDSkySpecialExtractor(publicExtractor, runtimeFactory)
 	pterclubExtractor := NewPTerClubSpecialExtractor(publicExtractor, runtimeFactory)
 	hddolbyExtractor := NewHDDolbySpecialExtractor(publicExtractor, runtimeFactory)
+	dstudioExtractor := NewDStudioSpecialExtractor(publicExtractor, runtimeFactory)
 
 	return NewEngine(
 		publicExtractor,
@@ -66,16 +67,18 @@ func NewDefaultEngine(publicExtractor Extractor, runtimeFactory RuntimeFactory) 
 			"hdsky":     hdskyExtractor,
 			"pterclub":  pterclubExtractor,
 			"hddolby":   hddolbyExtractor,
+			"dstudio":   dstudioExtractor,
 		},
 		map[string]Extractor{
-			"不可说": ssdExtractor,
-			"人人":  audiencesExtractor,
-			"憨憨":  hhclubExtractor,
-			"月月":  keepfrdsExtractor,
-			"彩虹岛": chdbitsExtractor,
-			"天空":  hdskyExtractor,
-			"猫站":  pterclubExtractor,
-			"杜比":  hddolbyExtractor,
+			"不可说":          ssdExtractor,
+			"人人":           audiencesExtractor,
+			"憨憨":           hhclubExtractor,
+			"月月":           keepfrdsExtractor,
+			"彩虹岛":          chdbitsExtractor,
+			"天空":           hdskyExtractor,
+			"猫站":           pterclubExtractor,
+			"杜比":           hddolbyExtractor,
+			"Depth Studio": dstudioExtractor,
 		},
 	)
 }
