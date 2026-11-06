@@ -106,7 +106,15 @@ func DownloadTorrentForSourceWithHint(sourceInfo map[string]any, torrentID, name
 	siteName := strings.TrimSpace(toStringAny(sourceInfo["nickname"], siteCode))
 
 	if isInfohash(trimmedID) {
-		resolvedID, resolveErr := resolveTorrentIDBySearch(baseURL, cookie, passkey, nameHint, trimmedID)
+		var resolvedID string
+		var resolveErr error
+		if strings.Contains(strings.ToLower(siteCode), "colapt") {
+			// 可乐（colapt）：SPA 站点无 torrents.php，改走 M-Team 兼容搜索 API 定位。
+			apiKey := strings.TrimSpace(toStringAny(sourceInfo["cookie"], ""))
+			resolvedID, resolveErr = resolveColaptTorrentID(baseURL, apiKey, passkey, nameHint, trimmedID)
+		} else {
+			resolvedID, resolveErr = resolveTorrentIDBySearch(baseURL, cookie, passkey, nameHint, trimmedID)
+		}
 		if resolveErr != nil {
 			logx.Warnf(sourceDownloadLogModule, "按名称定位站点种子ID失败 source_site=%s torrent_id=%s err=%v", siteName, trimmedID, resolveErr)
 			if strings.TrimSpace(nameHint) == "" {
@@ -536,6 +544,13 @@ func buildDetailURL(baseURL, siteCode, torrentID string) string {
 	trimmed := strings.TrimSpace(torrentID)
 	if trimmed == "" {
 		return baseURL
+	}
+	// 可乐（colapt）：种子页为 /torrents/{数字id}（SPA 路由），
+	// 不存在 details.php；存库的详情页地址按站内可打开的形式构造。
+	if strings.Contains(strings.ToLower(siteCode), "colapt") && !strings.Contains(trimmed, "/") {
+		if _, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
+			return fmt.Sprintf("%s/torrents/%s", strings.TrimRight(baseURL, "/"), trimmed)
+		}
 	}
 	if strings.Contains(trimmed, "details.php") || strings.Contains(trimmed, "torrent/") {
 		if strings.HasPrefix(strings.ToLower(trimmed), "http://") || strings.HasPrefix(strings.ToLower(trimmed), "https://") {

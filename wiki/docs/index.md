@@ -121,6 +121,10 @@
 
 # 更新日志
 
+### v4.6.13（2026.11.06）
+
+- 修复：可乐（colapt）批量获取抓取失败「搜索请求失败: HTTP 404」——v4.6.12 只把详情与下载接了 API，漏了 infohash→站点数字 id 的定位仍走 NexusPHP torrents.php HTML 搜索（SPA 站点无此页面必然 404）；现按名称定位也走 M-Team 兼容搜索 API，三级降级（整串→拆词→主词）+ 多候选按 infohash 换票下载验证；详情链接改生成站内可打开的 /torrents/{id}；纯 IP 主机不再误加 api. 子域前缀
+
 ### v4.6.12（2026.11.06）
 
 - 新增：接入源站 Depth Studio（dstudio.me，NexusPHP ModernLight 主题改版）——详情页/下载链接为标准 details.php/download.php，fetch 层零改动；新增专用提取器（标题取 Hero 区而非网页 title、类型/制作组/媒介等按基本信息行解析、简介正文重建并剔除站点免责声明与 logo、截图过滤站点 logo），global_mappings 补 DepWeb→team.depweb 与站点 logo 过滤 URL

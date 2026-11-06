@@ -5,12 +5,15 @@ import (
 	"fmt"
 	stdhtml "html"
 	"io"
+	"net"
 	"net/http"
 	neturl "net/url"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/pt-nexus/server/internal/platform/logx"
 )
 
 // colapt（可乐，www.colapt.com）是自研 SPA 架构：详情页为前端应用外壳，
@@ -43,6 +46,10 @@ func colaptAPIBase(baseURL string) string {
 		return strings.TrimRight(normalizeSiteBaseURL(baseURL), "/")
 	}
 	host := parsed.Hostname()
+	// 纯 IP 主机不存在 api. 子域，保持原样（测试与直连场景）。
+	if ip := net.ParseIP(host); ip != nil {
+		return strings.TrimRight(normalizeSiteBaseURL(baseURL), "/")
+	}
 	if strings.HasPrefix(host, "www.") {
 		host = "api." + strings.TrimPrefix(host, "www.")
 	} else if !strings.HasPrefix(host, "api.") {
@@ -129,6 +136,169 @@ func colaptHTTPRequest(method, targetURL, apiKey, contentType, payload string) (
 		return "", fmt.Errorf("colapt 接口返回 HTTP %d: %s", response.StatusCode, trimmed)
 	}
 	return text, nil
+}
+
+// colaptSearchEntry 搜索 API 返回的单条结果（仅定位用字段）。
+type colaptSearchEntry struct {
+	ID   string
+	Name string
+}
+
+// colaptSearchEntries 调 colapt 搜索 API 返回条目列表（id/name）。
+// 参数/返回：baseURL 站点主域；apiKey 为 x-api-key；keyword 搜索词。
+// 失败场景：网络失败、业务码非 0。
+// 副作用：发起网络请求。
+func colaptSearchEntries(baseURL, apiKey, keyword string) ([]colaptSearchEntry, error) {
+	if strings.TrimSpace(apiKey) == "" {
+		return nil, fmt.Errorf("colapt 缺少 API Key（请填入站点 Cookie 框）")
+	}
+	searchURL := colaptAPIBase(baseURL) + "/api/torrent/search"
+	payload := fmt.Sprintf(`{"keyword":%q,"categories":[],"pageNumber":1,"pageSize":20}`, strings.TrimSpace(keyword))
+	body, err := colaptPostJSON(searchURL, apiKey, payload)
+	if err != nil {
+		return nil, err
+	}
+	var parsed struct {
+		Code any `json:"code"`
+		Data struct {
+			Data []struct {
+				ID   any    `json:"id"`
+				Name string `json:"name"`
+			} `json:"data"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
+		return nil, fmt.Errorf("colapt 搜索响应解析失败: %w", err)
+	}
+	if codeText := fmt.Sprint(parsed.Code); codeText != "0" {
+		return nil, fmt.Errorf("colapt 搜索业务码异常: %v", parsed.Code)
+	}
+	entries := make([]colaptSearchEntry, 0, len(parsed.Data.Data))
+	for _, item := range parsed.Data.Data {
+		id := strings.TrimSpace(fmt.Sprint(item.ID))
+		if id == "" || id == "<nil>" {
+			continue
+		}
+		entries = append(entries, colaptSearchEntry{ID: id, Name: item.Name})
+	}
+	return entries, nil
+}
+
+// resolveColaptTorrentID 在 colapt 按种子名搜索并定位站点数字种子 id。
+// 参数/返回：baseURL 站点主域；apiKey 为 x-api-key；passkey 备用下载凭据；
+// torrentName 为下载器种子名；expectedHash 为期望 infohash（候选验证用）。返回数字 id。
+// 失败场景：搜索无结果且候选验证均未命中。
+// 副作用：发起搜索请求；名称无法唯一命中时逐个候选换票下载验证 infohash（上限 24）。
+// 说明：可乐是 SPA 站点，NexusPHP 的 torrents.php HTML 搜索必然 404，
+// 批量获取传入的 torrent_id 常是 infohash，只能靠"搜索名匹配 + infohash 验证"定位。
+func resolveColaptTorrentID(baseURL, apiKey, passkey, torrentName, expectedHash string) (string, error) {
+	name := strings.TrimSpace(torrentName)
+	if name == "" {
+		return "", fmt.Errorf("colapt 缺少用于搜索的种子名")
+	}
+	entries, err := colaptSearchEntries(baseURL, apiKey, name)
+	if err != nil {
+		return "", err
+	}
+	// 整串无结果时拆词降级（下载器名与站点名分隔符差异较大）。
+	if len(entries) == 0 {
+		terms := searchTerms(name)
+		if len(terms) > 1 {
+			logx.Warnf(sourceDownloadLogModule, "colapt 整串搜索无结果，降级为拆词搜索")
+			entries, err = colaptSearchEntries(baseURL, apiKey, strings.Join(terms, " "))
+			if err != nil {
+				return "", err
+			}
+		}
+	}
+	if len(entries) == 0 && len(searchTerms(name)) > 0 {
+		entries, err = colaptSearchEntries(baseURL, apiKey, searchTerms(name)[0])
+		if err != nil {
+			return "", err
+		}
+	}
+	if len(entries) == 0 {
+		return "", fmt.Errorf("colapt 搜索结果为空 keyword=%q", truncateForLog(name, 60))
+	}
+
+	want := normalizeColaptName(name)
+	for _, entry := range entries {
+		if normalizeColaptName(entry.Name) == want {
+			return entry.ID, nil
+		}
+	}
+	if len(entries) == 1 {
+		return entries[0].ID, nil
+	}
+
+	// 多候选：按 infohash 逐个换票下载验证。
+	ids := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		ids = append(ids, entry.ID)
+	}
+	if verified, verifyErr := verifyColaptCandidatesByInfohash(baseURL, apiKey, passkey, ids, expectedHash); verifyErr == nil {
+		logx.Infof(sourceDownloadLogModule, "colapt 按infohash验证命中种子ID torrent_id=%s", verified)
+		return verified, nil
+	} else {
+		logx.Warnf(sourceDownloadLogModule, "colapt infohash 候选验证未命中 err=%v", verifyErr)
+	}
+	return "", fmt.Errorf("colapt 搜索命中 %d 个候选且无法唯一定位（预览: %s）", len(entries), colaptCandidatePreview(entries))
+}
+
+// verifyColaptCandidatesByInfohash 逐个候选换票下载并比对 infohash。
+// 参数/返回：baseURL/apiKey/passkey 站点凭据；ids 候选；expectedHash 期望值。
+// 失败场景：全部候选下载失败或均不匹配。
+// 副作用：每个候选发起一次换票+下载请求（上限 24）。
+func verifyColaptCandidatesByInfohash(baseURL, apiKey, passkey string, ids []string, expectedHash string) (string, error) {
+	expected := strings.ToLower(strings.TrimSpace(expectedHash))
+	if expected == "" {
+		return "", fmt.Errorf("缺少期望的 infohash")
+	}
+	if len(ids) == 0 {
+		return "", fmt.Errorf("没有可验证的候选")
+	}
+	const maxVerify = 24
+	if len(ids) > maxVerify {
+		ids = ids[:maxVerify]
+	}
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		candidates := colaptDownloadCandidates(baseURL, apiKey, passkey, "", id)
+		if len(candidates) == 0 {
+			continue
+		}
+		body, _, _, err := fetchBinarySmart(candidates[0], "", "", "", 60*time.Second)
+		if err != nil || !isLikelyTorrent(body) {
+			continue
+		}
+		meta, metaErr := ParseTorrentMeta(body)
+		if metaErr != nil {
+			continue
+		}
+		if strings.EqualFold(meta.InfoHash, expected) {
+			return id, nil
+		}
+	}
+	return "", fmt.Errorf("候选均未命中期望 infohash")
+}
+
+// colaptCandidatePreview 候选预览文本（诊断用）。
+func colaptCandidatePreview(entries []colaptSearchEntry) string {
+	preview := make([]string, 0, 3)
+	for i, entry := range entries {
+		if i >= 3 {
+			break
+		}
+		label := entry.Name
+		if len([]rune(label)) > 24 {
+			label = string([]rune(label)[:24]) + "…"
+		}
+		preview = append(preview, fmt.Sprintf("#%s(%s)", entry.ID, label))
+	}
+	return strings.Join(preview, ", ")
 }
 
 // colaptGenDlToken 调 genDlToken 换取带签名的短时下载 URL（需 torrent.download 权限）。

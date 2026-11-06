@@ -1,6 +1,9 @@
 package fetch
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -98,5 +101,89 @@ func TestExtractColaptTorrentID(t *testing.T) {
 		if got := extractColaptTorrentID(tc.detailURL, tc.torrentID); got != tc.want {
 			t.Errorf("extractColaptTorrentID(%q,%q) = %q, want %q", tc.detailURL, tc.torrentID, got, tc.want)
 		}
+	}
+}
+
+// TestResolveColaptTorrentIDExactNameMatch 搜索命中同名条目时直接返回其 id。
+func TestResolveColaptTorrentIDExactNameMatch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/torrent/search" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code": 0,
+			"data": map[string]any{
+				"data": []map[string]any{
+					{"id": 11972, "name": "Renegade Immortal S01E165 2023 2160p TX WEB-DL H.265 AAC2.0-COLAWEB"},
+					{"id": 11971, "name": "Other.Seed.2023.1080p-WEB"},
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	got, err := resolveColaptTorrentID(server.URL, "test-key", "", "Renegade Immortal S01E165 2023 2160p TX WEB-DL H.265 AAC2.0-COLAWEB", "deadbeef")
+	if err != nil {
+		t.Fatalf("resolve failed: %v", err)
+	}
+	if got != "11972" {
+		t.Fatalf("expected 11972, got %q", got)
+	}
+}
+
+// TestResolveColaptTorrentIDSingleCandidate 唯一候选直接采用（名称不完全一致场景）。
+func TestResolveColaptTorrentIDSingleCandidate(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code": 0,
+			"data": map[string]any{
+				"data": []map[string]any{
+					{"id": 5370, "name": "Awkwafina The Unlikely Cook 2026 S01E02 2160p ATVP WEB-DL DDP5.1 Atmos HDR10P H.265-DepWeb"},
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	got, err := resolveColaptTorrentID(server.URL, "test-key", "", "Awkwafina The Unlikely Cook 2026 S01E02 2160p ATVP WEB-DL DDP5.1 Atmos HDR10P H.265-DepWeb", "cafebabe")
+	if err != nil {
+		t.Fatalf("resolve failed: %v", err)
+	}
+	if got != "5370" {
+		t.Fatalf("expected 5370, got %q", got)
+	}
+}
+
+// TestResolveColaptTorrentIDEmptyResult 搜索无结果时报错清晰。
+func TestResolveColaptTorrentIDEmptyResult(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"data": []any{}}})
+	}))
+	defer server.Close()
+
+	_, err := resolveColaptTorrentID(server.URL, "test-key", "", "Missing.Seed.2026", "aa")
+	if err == nil || !strings.Contains(err.Error(), "搜索结果为空") {
+		t.Fatalf("expected empty result error, got %v", err)
+	}
+}
+
+// TestColaptSearchEntriesStringCode 业务码为字符串"0"也能解析，且空 id 条目被跳过。
+func TestColaptSearchEntriesStringCode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":"0","data":{"data":[{"id":123,"name":"A.B-C"},{"id":null,"name":"skip"}]}}`))
+	}))
+	defer server.Close()
+
+	entries, err := colaptSearchEntries(server.URL, "k", "A.B")
+	if err != nil {
+		t.Fatalf("entries failed: %v", err)
+	}
+	if len(entries) != 1 || entries[0].ID != "123" {
+		t.Fatalf("unexpected entries: %#v", entries)
 	}
 }

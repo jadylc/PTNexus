@@ -19,6 +19,13 @@
   ],
   "history": [
     {
+      "version": "v4.6.13",
+      "date": "2026.11.06",
+      "changes": [
+        "修复：可乐（colapt）批量获取抓取失败「搜索请求失败: HTTP 404」——v4.6.12 只把详情与下载接了 API，漏了 infohash→站点数字 id 的定位仍走 NexusPHP torrents.php HTML 搜索（SPA 站点无此页面必然 404）；现按名称定位也走 M-Team 兼容搜索 API，三级降级（整串→拆词→主词）+ 多候选按 infohash 换票下载验证；详情链接改生成站内可打开的 /torrents/{id}；纯 IP 主机不再误加 api. 子域前缀"
+      ]
+    },
+    {
       "version": "v4.6.12",
       "date": "2026.11.06",
       "changes": [
