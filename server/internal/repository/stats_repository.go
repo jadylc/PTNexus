@@ -825,6 +825,34 @@ func (r *StatsRepository) QueryGroupStats(siteName string) ([]GroupStatRow, erro
 	return rows, nil
 }
 
+// splitGroupTokenSegments 把组名 token 按常见分隔符切段并小写化，用于段级精确匹配。
+// 参数/返回：raw 为原始 token；返回去重后的段列表（保持顺序）。
+// 失败场景：不适用。
+// 副作用：无。
+func splitGroupTokenSegments(raw string) []string {
+	trimmed := strings.ToLower(strings.TrimSpace(raw))
+	if trimmed == "" {
+		return nil
+	}
+	parts := strings.FieldsFunc(trimmed, func(r rune) bool {
+		return r == '-' || r == '.' || r == '_' || r == ' ' || r == '@' || r == '+' || r == '[' || r == ']'
+	})
+	segments := make([]string, 0, len(parts))
+	seen := map[string]struct{}{}
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if _, exists := seen[part]; exists {
+			continue
+		}
+		seen[part] = struct{}{}
+		segments = append(segments, part)
+	}
+	return segments
+}
+
 // QueryUngroupedStats 统计官组统计未覆盖的部分（口径：做种种子，与官组统计严格互补）。
 //
 // 判定流程（每个可见的 DISTINCT name+size 种子组）：
@@ -960,8 +988,8 @@ func (r *StatsRepository) QueryUngroupedStats() ([]GroupStatRow, error) {
 	}
 
 	// matchKnownGroupSite 判断制作组值是否命中站点官组清单，返回归属站点：
-	// 先精确匹配；再做长度≥3 的部分匹配（MNHD-FRDS / mUHD-FRDS 含 frds 应归月月），
-	// 与 refreshGroupMatcher 的 Contains 部分匹配口径一致。
+	// 先精确匹配整值；再做段级精确匹配（MNHD-FRDS 切段后 [mnhd, frds] 命中月月的
+	// FRDS），与 refreshGroupMatcher 的分段 Contains 口径一致但不裸匹配。
 	matchKnownGroupSite := func(team string) string {
 		norm := strings.ToLower(strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(team), "-")))
 		if norm == "" {
@@ -970,16 +998,17 @@ func (r *StatsRepository) QueryUngroupedStats() ([]GroupStatRow, error) {
 		if site, ok := groupToSite[norm]; ok {
 			return site
 		}
-		// 短 token（如 hd / 3d）不许参与部分匹配，避免误归站点
-		if len(norm) < 3 {
-			return ""
-		}
+		// 段级精确匹配：制作组值与官组 token 都按分隔符切段，任一段精确相等才命中。
+		// 不能用裸 Contains 双向匹配——"Madeline" 会误命中人人的 ADE、
+		// "Book" 误命中 ADEbook、"Ream" 误命中杜比的 Dream（2026.11 用户实测误归）。
+		normSegs := splitGroupTokenSegments(norm)
 		for group, site := range groupToSite {
-			if len(group) < 3 {
-				continue
-			}
-			if strings.Contains(norm, group) || strings.Contains(group, norm) {
-				return site
+			for _, seg := range splitGroupTokenSegments(group) {
+				for _, nseg := range normSegs {
+					if nseg == seg {
+						return site
+					}
+				}
 			}
 		}
 		return ""

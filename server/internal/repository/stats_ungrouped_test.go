@@ -181,6 +181,58 @@ func TestQueryUngroupedStatsUnfetchedNameFallback(t *testing.T) {
 	}
 }
 
+// TestQueryUngroupedStatsNoSubstringMismatch 子串误归回归（2026.11 用户实测）：
+// Madeline 含 ADE、Book 含 ADEbook（人人）、Ream 含 Dream（杜比），
+// 段级精确匹配下都应留在未知站点外部组；而 MNHD-FRDS 切段后命中 FRDS 仍归月月。
+func TestQueryUngroupedStatsNoSubstringMismatch(t *testing.T) {
+	store := newStatsRepositoryTestStore(t)
+	repo := NewStatsRepository(store)
+
+	mustExecStatsTest(t, store.DB, `INSERT INTO sites (site, nickname, "group") VALUES (?, ?, ?)`, "audiences", "人人", "-ADE,-Audies,-ADWeb,-ADEbook,-ADAudio")
+	mustExecStatsTest(t, store.DB, `INSERT INTO sites (site, nickname, "group") VALUES (?, ?, ?)`, "hddolby", "杜比", "-QHstudIo,-Dream,-DBTV,-CornerMV")
+	mustExecStatsTest(t, store.DB, `INSERT INTO sites (site, nickname, "group") VALUES (?, ?, ?)`, "keepfrds", "月月", "-FRDS")
+
+	cases := []struct {
+		hash string
+		name string
+		team string
+	}{
+		{"h-madeline", "Some.Show.S01.Madeline", "Madeline"},
+		{"h-book", "Some.Book.Collection", "Book"},
+		{"h-ream", "Some.Movie.2024.Ream", "Ream"},
+		{"h-frds-variant", "Some.Movie.2024.MNHD-FRDS", "MNHD-FRDS"},
+	}
+	for _, c := range cases {
+		mustExecStatsTest(t, store.DB, `INSERT INTO torrents (hash, name, size, sites, "group", downloader_id, is_hidden) VALUES (?, ?, ?, ?, ?, ?, 0)`,
+			c.hash, c.name, 100, "", "", "qb-1")
+		mustExecStatsTest(t, store.DB, `INSERT INTO seed_parameters (hash, name, torrent_id, site_name, title_components) VALUES (?, ?, ?, ?, ?)`,
+			c.hash, c.name, c.hash, "", `[{"key":"制作组","value":"`+c.team+`"}]`)
+	}
+
+	rows, err := repo.QueryUngroupedStats()
+	if err != nil {
+		t.Fatalf("QueryUngroupedStats returned error: %v", err)
+	}
+
+	for _, row := range rows {
+		if row.SiteName == "人人" || row.SiteName == "杜比" {
+			t.Errorf("substring mismatch leaked into known site: site=%q group=%q", row.SiteName, row.GroupSuffix)
+		}
+	}
+	bySiteGroup := map[string]int64{}
+	for _, row := range rows {
+		bySiteGroup[row.SiteName+"\x00"+row.GroupSuffix] = row.TorrentCount
+	}
+	if bySiteGroup["月月\x00MNHD-FRDS"] != 1 {
+		t.Errorf("expected MNHD-FRDS under 月月, got %#v", rows)
+	}
+	for _, external := range []string{"Madeline", "Book", "Ream"} {
+		if bySiteGroup["未知站点\x00"+external] != 1 {
+			t.Errorf("expected %q in 未知站点, got %#v", external, rows)
+		}
+	}
+}
+
 // TestQueryUngroupedStatsMultipleHashesSameGroup 同名同 size 的多个 hash 分组时，
 // 制作组关联不能因聚合截断而漏掉（旧 GROUP_CONCAT 在 MySQL 默认 1024 字节会截断）。
 func TestQueryUngroupedStatsMultipleHashesSameGroup(t *testing.T) {
