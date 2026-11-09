@@ -184,6 +184,8 @@ func TestQueryUngroupedStatsUnfetchedNameFallback(t *testing.T) {
 // TestQueryUngroupedStatsNoSubstringMismatch 子串误归回归（2026.11 用户实测）：
 // Madeline 含 ADE、Book 含 ADEbook（人人）、Ream 含 Dream（杜比），
 // 段级精确匹配下都应留在未知站点外部组；而 MNHD-FRDS 切段后命中 FRDS 仍归月月。
+// 另：劳改所官组含 DYZ-WEB，单独的 WEB/Web 不是独立官组条目，不得误归劳改所；
+// 但完整 token DYZ-Movie 应精确命中劳改所。
 func TestQueryUngroupedStatsNoSubstringMismatch(t *testing.T) {
 	store := newStatsRepositoryTestStore(t)
 	repo := NewStatsRepository(store)
@@ -191,6 +193,7 @@ func TestQueryUngroupedStatsNoSubstringMismatch(t *testing.T) {
 	mustExecStatsTest(t, store.DB, `INSERT INTO sites (site, nickname, "group") VALUES (?, ?, ?)`, "audiences", "人人", "-ADE,-Audies,-ADWeb,-ADEbook,-ADAudio")
 	mustExecStatsTest(t, store.DB, `INSERT INTO sites (site, nickname, "group") VALUES (?, ?, ?)`, "hddolby", "杜比", "-QHstudIo,-Dream,-DBTV,-CornerMV")
 	mustExecStatsTest(t, store.DB, `INSERT INTO sites (site, nickname, "group") VALUES (?, ?, ?)`, "keepfrds", "月月", "-FRDS")
+	mustExecStatsTest(t, store.DB, `INSERT INTO sites (site, nickname, "group") VALUES (?, ?, ?)`, "laogaosuo", "劳改所", "-DYZ-Movie,-DYZ-WEB,-DYZ-TV,-DJWEB")
 
 	cases := []struct {
 		hash string
@@ -200,6 +203,9 @@ func TestQueryUngroupedStatsNoSubstringMismatch(t *testing.T) {
 		{"h-madeline", "Some.Show.S01.Madeline", "Madeline"},
 		{"h-book", "Some.Book.Collection", "Book"},
 		{"h-ream", "Some.Movie.2024.Ream", "Ream"},
+		{"h-web-upper", "Some.Movie.2024.WEB", "WEB"},
+		{"h-web-mixed", "Some.Movie.2024.Web", "Web"},
+		{"h-dyz-movie", "Some.Movie.2024.DYZ-Movie", "DYZ-Movie"},
 		{"h-frds-variant", "Some.Movie.2024.MNHD-FRDS", "MNHD-FRDS"},
 	}
 	for _, c := range cases {
@@ -218,6 +224,11 @@ func TestQueryUngroupedStatsNoSubstringMismatch(t *testing.T) {
 		if row.SiteName == "人人" || row.SiteName == "杜比" {
 			t.Errorf("substring mismatch leaked into known site: site=%q group=%q", row.SiteName, row.GroupSuffix)
 		}
+		// 劳改所只允许精确命中的完整官组 token（DYZ-Movie）；
+		// WEB/Web 不是独立官组条目，不得通过 DYZ-WEB 的子段误归进来。
+		if row.SiteName == "劳改所" && row.GroupSuffix != "DYZ-Movie" {
+			t.Errorf("劳改所 only DYZ-Movie expected, got group=%q", row.GroupSuffix)
+		}
 	}
 	bySiteGroup := map[string]int64{}
 	for _, row := range rows {
@@ -226,7 +237,10 @@ func TestQueryUngroupedStatsNoSubstringMismatch(t *testing.T) {
 	if bySiteGroup["月月\x00MNHD-FRDS"] != 1 {
 		t.Errorf("expected MNHD-FRDS under 月月, got %#v", rows)
 	}
-	for _, external := range []string{"Madeline", "Book", "Ream"} {
+	if bySiteGroup["劳改所\x00DYZ-Movie"] != 1 {
+		t.Errorf("expected DYZ-Movie under 劳改所, got %#v", rows)
+	}
+	for _, external := range []string{"Madeline", "Book", "Ream", "WEB", "Web"} {
 		if bySiteGroup["未知站点\x00"+external] != 1 {
 			t.Errorf("expected %q in 未知站点, got %#v", external, rows)
 		}

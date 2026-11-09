@@ -988,8 +988,11 @@ func (r *StatsRepository) QueryUngroupedStats() ([]GroupStatRow, error) {
 	}
 
 	// matchKnownGroupSite 判断制作组值是否命中站点官组清单，返回归属站点：
-	// 先精确匹配整值；再做段级精确匹配（MNHD-FRDS 切段后 [mnhd, frds] 命中月月的
-	// FRDS），与 refreshGroupMatcher 的分段 Contains 口径一致但不裸匹配。
+	// ① 精确匹配整值（MNHD-FRDS 这类完整 token）；
+	// ② 制作组值切段后，**段本身必须是某站点的独立官组条目**才命中
+	//   （MNHD-FRDS 切段后 frds 是月月清单里的独立条目 → 命中）。
+	// 不能做双向段交集——劳改所的 DYZ-WEB 切出 web 段，会让单独的 WEB/Web
+	// 被误归到劳改所（2026.11 用户实测）；裸 Contains 更会误伤 Madeline/Book/Ream。
 	matchKnownGroupSite := func(team string) string {
 		norm := strings.ToLower(strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(team), "-")))
 		if norm == "" {
@@ -998,17 +1001,9 @@ func (r *StatsRepository) QueryUngroupedStats() ([]GroupStatRow, error) {
 		if site, ok := groupToSite[norm]; ok {
 			return site
 		}
-		// 段级精确匹配：制作组值与官组 token 都按分隔符切段，任一段精确相等才命中。
-		// 不能用裸 Contains 双向匹配——"Madeline" 会误命中人人的 ADE、
-		// "Book" 误命中 ADEbook、"Ream" 误命中杜比的 Dream（2026.11 用户实测误归）。
-		normSegs := splitGroupTokenSegments(norm)
-		for group, site := range groupToSite {
-			for _, seg := range splitGroupTokenSegments(group) {
-				for _, nseg := range normSegs {
-					if nseg == seg {
-						return site
-					}
-				}
+		for _, seg := range splitGroupTokenSegments(norm) {
+			if site, ok := groupToSite[seg]; ok {
+				return site
 			}
 		}
 		return ""
