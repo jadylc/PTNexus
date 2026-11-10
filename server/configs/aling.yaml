@@ -171,6 +171,7 @@ mappings:
     "source.korea": "5"
     "source.india": "6"
     "source.western": "10"
+    "source.uk": "10"
     "source.other": "11"
     "default": "11"
 

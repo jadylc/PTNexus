@@ -1012,11 +1012,11 @@ const saveUiSettings = async () => {
     const settingsToSave = {
       page_size: pageSize.value,
       search_query: searchQuery.value,
-      active_filters: {
-        ...activeFilters.value,
-        isDeleted: isMaintenanceMode.value ? activeFilters.value.isDeleted : '',
-        excludeTargetSites: isCrossSeedMode.value ? activeFilters.value.excludeTargetSites : '',
-      },
+      // 跨种模式与维护种子模式共用同一份 ui_settings 存储；
+      // 请求参数已按模式隔离（fetchData 里 is_deleted/exclude_target_sites
+      // 各自按模式传），因此这里保留两种模式的筛选值不清空，
+      // 避免在维护种子页搜索后把跨种模式的目标站点筛选覆盖为空。
+      active_filters: { ...activeFilters.value },
     }
     await axios.post('/api/ui_settings/cross_seed', settingsToSave)
   } catch (e: unknown) {
@@ -1036,12 +1036,12 @@ const loadUiSettings = async () => {
     pageSize.value = settings.page_size ?? 20
     searchQuery.value = settings.search_query ?? ''
     if (settings.active_filters) {
+      // 两种模式共用存储：完整恢复筛选值（含另一模式设置的），
+      // 请求时各自按模式取用，避免切换页面后目标站点筛选丢失。
       activeFilters.value = {
         paths: Array.isArray(settings.active_filters.paths) ? settings.active_filters.paths : [],
-        isDeleted: isMaintenanceMode.value ? String(settings.active_filters.isDeleted || '').trim() : '',
-        excludeTargetSites: isCrossSeedMode.value
-          ? String(settings.active_filters.excludeTargetSites || '').trim()
-          : '',
+        isDeleted: String(settings.active_filters.isDeleted || '').trim(),
+        excludeTargetSites: String(settings.active_filters.excludeTargetSites || '').trim(),
       }
     }
   } catch (e) {

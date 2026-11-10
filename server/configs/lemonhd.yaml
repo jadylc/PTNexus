@@ -163,6 +163,7 @@ mappings:
 
   source:
     "source.western": "1"
+    "source.uk": "1"
     "source.hongkong": "2"
     "source.china": "3"
     "source.japan": "4"

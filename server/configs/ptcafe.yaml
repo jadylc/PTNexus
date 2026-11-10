@@ -233,6 +233,7 @@ mappings:
     "source.china": "1"
     "source.hongkong": "2"
     "source.western": "3"
+    "source.uk": "3"
     "source.japan": "4"
     "source.korea": "5"
     "source.india": "6"

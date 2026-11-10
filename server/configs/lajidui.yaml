@@ -252,6 +252,7 @@ mappings:
     "source.japan": "10"
     "source.korea": "11"
     "source.western": "1"
+    "source.uk": "1"
     "source.india": "3"
     "source.other": "6"
     "default": "6"
