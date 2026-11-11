@@ -26,6 +26,10 @@ type refreshSiteMatcher struct {
 	hostMap       map[string]string
 	coreMap       map[string]string
 	uniqueCoreMap map[string]string
+	// wordSites 存放 special_tracker_domain 里的裸词域名主体（如 rainbowisland），
+	// 用于匹配"core 以该词为子域前缀"的 tracker（如 tracker.rainbowisland.co →
+	// core rainbowisland.co，与裸词差一个 .co 后缀）。多站点共用同词时置空防误归。
+	wordSites map[string]string
 }
 
 type refreshGroupEntry struct {
@@ -518,16 +522,52 @@ func newRefreshSiteMatcher(rows []repository.SiteIdentity) refreshSiteMatcher {
 		hostMap:       map[string]string{},
 		coreMap:       map[string]string{},
 		uniqueCoreMap: map[string]string{},
+		wordSites:     map[string]string{},
 	}
 	for _, row := range rows {
 		nickname := strings.TrimSpace(row.Nickname)
 		if nickname == "" {
 			continue
 		}
-		candidates := []string{row.BaseURL, row.SpecialTrackerDomain, row.Site}
+		// special_tracker_domain 支持逗号分隔多域名（如彩虹岛
+		// "rainbowisland,ptchdbits,chdbits"），此前整串当单个 host 存表，
+		// 导致该站 tracker（tracker.rainbowisland.co）永远识别不出站点。
+		specialCandidates := make([]string, 0, 4)
+		for _, sp := range strings.Split(row.SpecialTrackerDomain, ",") {
+			if trimmed := strings.TrimSpace(sp); trimmed != "" {
+				specialCandidates = append(specialCandidates, trimmed)
+			}
+		}
+		for _, sp := range specialCandidates {
+			// 裸词候选（无 TLD 后缀，如 "rainbowisland"）额外进 wordSites，
+			// 用于子域前缀匹配（tracker.rainbowisland.co → core rainbowisland.co
+			// 以 "rainbowisland." 开头）。
+			if !strings.Contains(sp, ".") {
+				word := normalizeHostForMatch(sp)
+				if word != "" {
+					if existing, exists := matcher.wordSites[word]; exists && existing != nickname {
+						matcher.wordSites[word] = "" // 多站点共用同词，放弃匹配防误归
+					} else if !exists {
+						matcher.wordSites[word] = nickname
+					}
+				}
+			}
+		}
+		candidates := append([]string{row.BaseURL}, specialCandidates...)
+		candidates = append(candidates, row.Site)
 		for _, candidate := range candidates {
 			host := parseHostCandidate(candidate)
 			if host == "" {
+				// 裸词候选（如 "rainbowisland"，无 TLD 后缀）不产出 host/core，
+				// 进 wordSites 用于子域前缀匹配。
+				word := normalizeHostForMatch(strings.TrimSpace(candidate))
+				if word != "" && !strings.Contains(word, ".") {
+					if existing, exists := matcher.wordSites[word]; exists && existing != nickname {
+						matcher.wordSites[word] = "" // 多站点共用同词，放弃匹配防误归
+					} else if !exists {
+						matcher.wordSites[word] = nickname
+					}
+				}
 				continue
 			}
 			if _, exists := matcher.hostMap[host]; !exists {
@@ -582,6 +622,30 @@ func (m refreshSiteMatcher) Match(trackers []string, detail string, comment stri
 			continue
 		}
 		if nickname, exists := m.uniqueCoreMap[core]; exists {
+			return nickname
+		}
+		// 裸词域名主体兜底：special_tracker_domain 配置 "rainbowisland" 这类
+		// 无 TLD 裸词时，tracker（tracker.rainbowisland.co）的 core 是
+		// rainbowisland.co——以 "rainbowisland." 为前缀即视为同一站点。
+		if nickname := m.matchWordSite(core); nickname != "" {
+			return nickname
+		}
+	}
+	return ""
+}
+
+// matchWordSite 用 special 裸词匹配 core 的子域前缀关系：
+// word "rainbowisland" 命中 core "rainbowisland.co"（前缀 word + "."）。
+// 多站点共用同词的 word 已在构建时置空，此处查不到即不命中。
+func (m refreshSiteMatcher) matchWordSite(core string) string {
+	if core == "" || len(m.wordSites) == 0 {
+		return ""
+	}
+	for word, nickname := range m.wordSites {
+		if nickname == "" || word == "" {
+			continue
+		}
+		if core == word || strings.HasPrefix(core, word+".") {
 			return nickname
 		}
 	}
