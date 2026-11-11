@@ -383,6 +383,11 @@
             </div>
           </template>
         </el-table-column>
+        <el-table-column label="大小" width="100" align="center" sortable :sort-by="sizeSortKey">
+          <template #default="scope">
+            <div class="mapped-cell">{{ formatBytes(Number(scope.row.size) || 0) }}</div>
+          </template>
+        </el-table-column>
         <el-table-column prop="unrecognized" label="无法识别" width="120" align="center">
           <template #default="scope">
             <div class="mapped-cell" :class="{ 'invalid-value': scope.row.unrecognized }">
@@ -455,6 +460,7 @@ interface SeedParameter {
   nickname: string
   save_path: string
   downloader_id?: string
+  size?: number
   title: string
   subtitle: string
   imdb_link: string
@@ -707,6 +713,15 @@ const normalizeAndSortTags = (tags: string[] | string): string[] => {
 }
 
 const getTagsSortKey = (row: SeedParameter) => normalizeAndSortTags(row.tags).join('|').toLowerCase()
+
+// 大小列：原始字节数格式化（与一种多站页口径一致），排序按数字字节值。
+const formatBytes = (b: number | null): string => {
+  if (b == null || b <= 0) return '0 B'
+  const s = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
+  const i = Math.floor(Math.log(b) / Math.log(1024))
+  return `${(b / Math.pow(1024, i)).toFixed(2)} ${s[i]}`
+}
+const sizeSortKey = (row: SeedParameter) => Number(row.size) || 0
 
 const getMappedTags = (tags: string[] | string) => {
   const tagList = normalizeAndSortTags(tags)

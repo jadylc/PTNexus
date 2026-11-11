@@ -239,6 +239,7 @@ func (s *CrossSeedService) queryDataUncached(params CrossSeedQueryParams) (map[s
 			SELECT sp.hash, sp.torrent_id, sp.site_name, sp.nickname,
 			       COALESCE(ct.save_path, '') AS save_path,
 			       ct.downloader_id AS downloader_id,
+			       COALESCE(ct.size, 0) AS size,
 			       sp.title, sp.subtitle, sp.type, sp.medium, sp.video_codec,
 			       sp.audio_codec, sp.resolution, sp.team, sp.source, sp.tags,
 			       sp.title_components, sp.screenshot_review_status,
