@@ -36,9 +36,15 @@ func (s *TorrentDataService) GetData(ctx context.Context, params TorrentsDataPar
 	targetSites := map[string]struct{}{}
 	for _, item := range siteConfigs {
 		siteConfigMap[item.Nickname] = item
-		if item.Migration == 2 || item.Migration == 3 {
-			targetSites[item.Nickname] = struct{}{}
+		if item.Migration != 2 && item.Migration != 3 {
+			continue
 		}
+		// 可转种目标站要求凭据可用：Cookie 或 Pass Key 任一非空（与目标站
+		// 下拉过滤同口径）——未配置凭据的站发布必失败，不计入可转种数量。
+		if strings.TrimSpace(item.Cookie) == "" && strings.TrimSpace(item.Passkey) == "" {
+			continue
+		}
+		targetSites[item.Nickname] = struct{}{}
 	}
 
 	allDiscoveredSites, err := s.repo.ListAllDiscoveredSites(ctx)

@@ -980,8 +980,10 @@ const siteDataStore = useSiteDataStore()
 
 // 从 store 获取选中的种子信息
 const selectedTorrentForMigration = computed(() => crossSeedStore.workingParams as Torrent | null)
+// 目标站可用性：Cookie 或 Pass Key 任一非空（未配置凭据的站发布必失败，不显示）
+const isTargetSiteAvailable = (site: SiteStatus) => site.has_cookie || site.has_passkey
 const directTransferTargetSites = computed(() =>
-  allSitesStatus.value.filter((site) => site.is_target),
+  allSitesStatus.value.filter((site) => site.is_target && isTargetSiteAvailable(site)),
 )
 
 const autoAddExistingToDownloader = ref(true)
