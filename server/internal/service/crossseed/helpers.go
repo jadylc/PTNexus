@@ -38,6 +38,9 @@ func parseStringArray(value any) []string {
 			}
 		}
 		return result
+	case []byte:
+		// MariaDB/MySQL driver 把 TEXT 列 Scan 成 []byte——按字节转字符串后再解析。
+		return parseStringArray(string(typed))
 	case string:
 		trimmed := strings.TrimSpace(typed)
 		if trimmed == "" {
@@ -80,6 +83,10 @@ func parseAnyArray(value any) []any {
 	}
 	if typed, ok := value.([]any); ok {
 		return typed
+	}
+	if typed, ok := value.([]byte); ok {
+		// MariaDB/MySQL driver 把 TEXT 列 Scan 成 []byte。
+		return parseAnyArray(string(typed))
 	}
 	if typed, ok := value.(string); ok {
 		trimmed := strings.TrimSpace(typed)
