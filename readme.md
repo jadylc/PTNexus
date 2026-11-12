@@ -342,6 +342,11 @@ cd webui && pnpm run lint           # 前端 lint
 
 # 更新日志
 
+### v4.6.24（2026.11.12）
+
+- 修复：MariaDB 下 torrentdata 包的类型转换函数缺 []byte 分支导致筛选/排序全面失效——stringValue 落到 default 直接返回 fallback：一种多站的名称搜索/路径筛选/状态筛选/下载器筛选/存在站点筛选全部失效（筛选保存路径变 0 的根因）、排序值归零、聚合取值失败；stringValue/numberValue/int64Value 统一补 []byte 分支（按字节转字符串后解析）
+- 修复：crossseed 行解析残留 []byte 风险——parseStringArray/parseAnyArray 补字节分支（tags/title_components 在 MariaDB 下丢失）
+
 ### v4.6.23（2026.11.12）
 
 - 修复：MariaDB/MySQL 部署下一种多站页面全空——数据库 driver 把 TEXT 列 Scan 成 []byte，而新增的可发布判定按 fmt.Sprint 转字符串，[]byte 被输出成 [104 97 ...] 数组字面量：reviewedParams 的 hash key 全部失配（组全灭）、mediainfo/body 文本乱码（格式判定必败）、tags/title_components 解析丢失；现对 hash/文本/JSON/布尔四类单元格统一增加 []byte 分支（按字节转字符串），SQLite 不受影响（本地测试全绿而生产全空的 driver 差异根因）；crossseed 共用判定同步修复

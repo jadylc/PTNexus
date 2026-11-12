@@ -51,6 +51,15 @@ func stringValue(value any, fallback string) string {
 	switch typed := value.(type) {
 	case string:
 		return typed
+	case []byte:
+		// MariaDB/MySQL driver 把 TEXT/VARCHAR 列 Scan 成 []byte——直接按字节转
+		// 字符串；落到 default 会永远返回 fallback，导致名称/路径/状态等全部
+		// 筛选失效（2026.11 一种多站筛选路径变 0 的根因）。
+		text := strings.TrimSpace(string(typed))
+		if text == "" {
+			return fallback
+		}
+		return text
 	case fmt.Stringer:
 		return typed.String()
 	case float64:
@@ -94,6 +103,9 @@ func int64Value(value any, fallback int64) int64 {
 		return typed
 	case float64:
 		return int64(typed)
+	case []byte:
+		// MariaDB/MySQL driver 数字列 Scan 成 []byte——按字符串解析。
+		return int64Value(strings.TrimSpace(string(typed)), fallback)
 	case string:
 		trimmed := strings.TrimSpace(typed)
 		if trimmed == "" {
@@ -119,6 +131,9 @@ func numberValue(value any) float64 {
 		return typed
 	case float32:
 		return float64(typed)
+	case []byte:
+		// MariaDB/MySQL driver 数字列 Scan 成 []byte——按字符串解析。
+		return numberValue(strings.TrimSpace(string(typed)))
 	case string:
 		trimmed := strings.TrimSpace(typed)
 		if trimmed == "" {
