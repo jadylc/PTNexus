@@ -27,6 +27,10 @@ type TorrentsDataParams struct {
 	OnlyCompleted       bool
 	SkipMetadata        bool
 	MetadataOnly        bool
+	// OnlyPublishable 只显示"维护通过"的种子：组内至少一个站点副本的抓取参数
+	// 通过可发布判定（字段齐全/简介规范/MediaInfo 规范，口径与跨种列表 is_publishable
+	// 同源）。一种多站页面（转种入口）开启；批量获取面板不传（它专取未抓取的）。
+	OnlyPublishable bool
 }
 
 type siteSummary struct {
@@ -35,6 +39,9 @@ type siteSummary struct {
 	Migration int
 	State     string
 	Seeders   int64
+	// Reviewed 该站点副本的抓取参数是否"维护通过"（可发布），仅在
+	// OnlyPublishable 查询中填充；转种源站选择据此限定候选。
+	Reviewed bool
 }
 
 type torrentSummary struct {

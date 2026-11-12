@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/pt-nexus/server/internal/repository"
+	processingpersist "github.com/pt-nexus/server/internal/service/processing/persist"
+	"github.com/pt-nexus/server/internal/service/reversemapping"
 )
 
 // GetData 聚合维护种子列表数据并按查询条件分页返回。
@@ -59,8 +61,11 @@ func (s *TorrentDataService) GetData(ctx context.Context, params TorrentsDataPar
 		StateFilters:      params.StateFilters,
 		DownloaderFilters: params.DownloaderFilters,
 		ExcludeExisting:   params.ExcludeExisting,
+		// 只显示维护通过的种子：SQL 预筛"组内存在 is_reviewed=1 副本"，
+		// 精确判定（映射/简介/MediaInfo）在聚合后于 Go 侧完成。
+		RequirePublishableCopy: params.OnlyPublishable,
 	}
-	databasePaginated := canPrePaginateTorrentGroups(params)
+	databasePaginated := canPrePaginateTorrentGroups(params) && !params.OnlyPublishable
 	databasePaginatedTotal := 0
 	if databasePaginated {
 		groupKeys, groupErr := s.repo.ListTorrentGroupKeysWithFilters(ctx, listFilters)
@@ -88,6 +93,20 @@ func (s *TorrentDataService) GetData(ctx context.Context, params TorrentsDataPar
 	uploadTotals, err := s.repo.UploadTotalsByHashes(ctx, torrentRecordHashes(torrentRows))
 	if err != nil {
 		uploadTotals = map[string]int64{}
+	}
+
+	// OnlyPublishable：按 hash 批量取已审核参数行，供逐副本精确判定
+	// （is_reviewed 只是必要条件；映射/简介/MediaInfo 的判定在 Go 侧完成）。
+	reviewedParams := map[string][]map[string]any{}
+	if params.OnlyPublishable {
+		reviewedParams, err = s.repo.ListReviewedSeedParamsByHashes(ctx, torrentRecordHashes(torrentRows))
+		if err != nil {
+			return nil, fmt.Errorf("load reviewed seed params failed: %w", err)
+		}
+	}
+	reverseMappings := map[string]any{}
+	if params.OnlyPublishable {
+		reverseMappings = reversemapping.Build(nil)
 	}
 
 	aggregated := map[string]*torrentSummary{}
@@ -140,6 +159,14 @@ func (s *TorrentDataService) GetData(ctx context.Context, params TorrentsDataPar
 			siteItem = &siteSummary{Migration: migration}
 			item.Sites[siteName] = siteItem
 		}
+		if params.OnlyPublishable {
+			for _, paramRow := range reviewedParams[row.Hash] {
+				if processingpersist.IsRowPublishableData(paramRow, reverseMappings) {
+					siteItem.Reviewed = true
+					break
+				}
+			}
+		}
 		siteItem.Uploaded += uploaded
 		siteItem.Comment = row.Details
 		siteItem.State = row.State
@@ -163,13 +190,19 @@ func (s *TorrentDataService) GetData(ctx context.Context, params TorrentsDataPar
 		existingSites := map[string]struct{}{}
 		for siteName, details := range value.Sites {
 			existingSites[siteName] = struct{}{}
-			sites[siteName] = map[string]any{
+			siteData := map[string]any{
 				"uploaded":  details.Uploaded,
 				"comment":   details.Comment,
 				"migration": details.Migration,
 				"state":     details.State,
 				"seeders":   details.Seeders,
 			}
+			// OnlyPublishable 查询时附带每个站点副本的"维护通过"标记，
+			// 供前端源站选择限定候选。
+			if params.OnlyPublishable {
+				siteData["reviewed"] = details.Reviewed
+			}
+			sites[siteName] = siteData
 		}
 		targetSiteCount := 0
 		for target := range targetSites {
@@ -203,6 +236,27 @@ func (s *TorrentDataService) GetData(ctx context.Context, params TorrentsDataPar
 	postFilterParams := params
 	postFilterParams.ExcludeExisting = false
 	filtered := s.applyFilters(allItems, postFilterParams, siteConfigMap)
+
+	// OnlyPublishable 精确判定：组内必须存在"维护通过"的站点副本
+	// （SQL 预筛只保证存在 is_reviewed=1 的副本，映射/简介/MediaInfo 在此把关）。
+	if params.OnlyPublishable {
+		publishable := make([]map[string]any, 0, len(filtered))
+		for _, item := range filtered {
+			sites, _ := item["sites"].(map[string]any)
+			for _, site := range sites {
+				siteMap, ok := site.(map[string]any)
+				if !ok {
+					continue
+				}
+				if reviewed, _ := siteMap["reviewed"].(bool); reviewed {
+					publishable = append(publishable, item)
+					break
+				}
+			}
+		}
+		filtered = publishable
+	}
+
 	s.sortData(filtered, params.SortProp, params.SortOrder)
 
 	total := len(filtered)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -56,6 +57,9 @@ type TorrentListFilters struct {
 	DownloaderFilters []string
 	ExcludeExisting   bool
 	Groups            []TorrentNameSizeKey
+	// RequirePublishableCopy 只保留"存在维护通过副本（seed_parameters.is_reviewed=1）
+	// 的分组"——SQL 层必要条件预筛，精确判定（映射/简介/MediaInfo）在 Go 侧完成。
+	RequirePublishableCopy bool
 }
 
 // TorrentNameSizeKey 表示按种子名与体积聚合后的唯一业务分组。
@@ -367,6 +371,36 @@ func (r *TorrentDataRepository) ListTorrents(onlyCompleted bool) ([]TorrentRecor
 	return r.ListTorrentsWithFilters(context.Background(), TorrentListFilters{OnlyCompleted: onlyCompleted})
 }
 
+// ListReviewedSeedParamsByHashes 按 hash 批量读取"已审核（is_reviewed=1）"的参数行。
+// 参数/返回：hashes 为种子 hash 集合；返回 hash → 该 hash 已审核参数行列表
+// （标准化字段 + tags + title_components + mediainfo + body），供"维护通过"
+// 精确判定使用；无命中时对应 hash 缺席。
+// 失败场景：数据库查询失败时返回错误。
+// 副作用：仅读取 seed_parameters，不写入数据。
+func (r *TorrentDataRepository) ListReviewedSeedParamsByHashes(ctx context.Context, hashes []string) (map[string][]map[string]any, error) {
+	result := map[string][]map[string]any{}
+	if len(hashes) == 0 {
+		return result, nil
+	}
+	query := `
+		SELECT hash, type, medium, video_codec, audio_codec, resolution, team, source,
+		       tags, title_components, mediainfo, body, is_reviewed
+		FROM seed_parameters
+		WHERE is_reviewed = 1 AND hash IN (?)`
+	rows := make([]map[string]any, 0)
+	if err := r.store.DB.WithContext(ctx).Raw(query, hashes).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		hash := strings.TrimSpace(fmt.Sprint(row["hash"]))
+		if hash == "" {
+			continue
+		}
+		result[hash] = append(result[hash], row)
+	}
+	return result, nil
+}
+
 // ListTorrentsWithFilters 按维护列表查询条件读取可展示的下载器种子记录。
 // 参数/返回：ctx 为调用方请求上下文，客户端断开后查询可取消；filters 中的名称、路径、状态、下载器和已存在排除会在 SQL 层先收敛；返回值仍是原始 torrents 行，聚合由 Service 层完成。
 // 失败场景：数据库查询失败时返回错误。
@@ -446,6 +480,20 @@ func (r *TorrentDataRepository) buildTorrentListFromWhere(filters TorrentListFil
 	joins, joinArgs = appendTorrentGroupFilterJoin(joins, joinArgs, "path_match", "save_path", filters.PathFilters)
 	joins, joinArgs = appendTorrentGroupFilterJoin(joins, joinArgs, "state_match", "state", filters.StateFilters)
 	joins, joinArgs = appendTorrentGroupFilterJoin(joins, joinArgs, "downloader_match", "downloader_id", filters.DownloaderFilters)
+
+	if filters.RequirePublishableCopy {
+		// 只保留"存在维护通过副本"的分组（SQL 必要条件预筛：is_reviewed=1）。
+		joins += `
+		INNER JOIN (
+			SELECT DISTINCT t_rev.name AS name, t_rev.size AS size
+			FROM seed_parameters sp_rev
+			INNER JOIN torrents t_rev ON t_rev.hash = sp_rev.hash
+			WHERE sp_rev.is_reviewed = 1
+			  AND COALESCE(t_rev.is_hidden, 0) = 0
+			  AND TRIM(t_rev.name) != ''
+			  AND t_rev.size > 0
+		) publishable_groups ON publishable_groups.name = t.name AND publishable_groups.size = t.size`
+	}
 
 	if filters.ExcludeExisting {
 		// 与 ExistingSeedParameterGroups 同口径：按 hash 关联（抓取会规范化

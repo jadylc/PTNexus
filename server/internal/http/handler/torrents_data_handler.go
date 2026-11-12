@@ -42,6 +42,7 @@ func (h *TorrentDataHandler) Data(c *gin.Context) {
 		SortOrder:                 c.Query("sortOrder"),
 		ExcludeExisting:           boolQuery(c, "exclude_existing"),
 		OnlyCompleted:             boolQuery(c, "only_completed"),
+		OnlyPublishable:           boolQuery(c, "only_publishable"),
 		SkipMetadata:              boolQuery(c, "skip_metadata") || strings.EqualFold(strings.TrimSpace(c.Query("include_metadata")), "false"),
 		MetadataOnly:              boolQuery(c, "metadata_only"),
 	}

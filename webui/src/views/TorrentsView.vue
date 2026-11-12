@@ -34,16 +34,10 @@
           <div class="expand-content">
             <template v-for="siteName in sorted_all_sites" :key="siteName">
               <template v-if="props.row.sites[siteName]">
-                <!-- 对于未做种状态的站点，使用可点击的div而不是链接 -->
+                <!-- 未做种站点：有链接时由下方 <a> 分支渲染跳转，无链接时仅展示标签 -->
                 <div
                   v-if="props.row.sites[siteName].state === '未做种'"
-                  style="cursor: pointer; display: inline-block; width: 100%; text-align: center"
-                  @click.stop="
-                    handleSiteClick(props.row.name, {
-                      name: siteName,
-                      data: props.row.sites[siteName],
-                    })
-                  "
+                  style="display: inline-block; width: 100%; text-align: center"
                 >
                   <el-tag
                     effect="dark"
@@ -72,16 +66,10 @@
                     <div>({{ formatBytes(props.row.sites[siteName].uploaded) }})</div>
                   </el-tag>
                 </a>
-                <!-- 对于其他站点，使用可点击的div -->
+                <!-- 其他站点：仅展示标签 -->
                 <div
                   v-else
-                  style="cursor: pointer; display: inline-block; width: 100%; text-align: center"
-                  @click.stop="
-                    handleSiteClick(props.row.name, {
-                      name: siteName,
-                      data: props.row.sites[siteName],
-                    })
-                  "
+                  style="display: inline-block; width: 100%; text-align: center"
                 >
                   <el-tag
                     effect="dark"
@@ -285,7 +273,9 @@
               type="primary"
               size="small"
               @click.stop="startCrossSeed(scope.row)"
-              :disabled="!isDevEnv && scope.row.progress < 100"
+              :disabled="
+                (!isDevEnv && scope.row.progress < 100) || Number(scope.row.site_count) === 0
+              "
             >
               转种
             </el-button>
@@ -464,78 +454,6 @@
           <el-button @click="clearFilters">清除筛选</el-button>
           <el-button @click="filterDialogVisible = false">取消</el-button>
           <el-button type="primary" @click="applyFilters">确认</el-button>
-        </div>
-      </el-card>
-    </div>
-
-    <!-- 站点操作弹窗 -->
-    <div
-      v-if="siteOperationDialogVisible"
-      class="filter-overlay"
-      @click.self="siteOperationDialogVisible = false"
-    >
-      <el-card class="filter-card" style="max-width: 500px">
-        <template #header>
-          <div class="filter-card-header">
-            <span>站点操作</span>
-            <el-button type="danger" circle @click="siteOperationDialogVisible = false" plain
-              >X</el-button
-            >
-          </div>
-        </template>
-        <div class="site-operation-body">
-          <div class="torrent-name-container">
-            <p class="label">种子名称:</p>
-            <p class="torrent-name">{{ selectedTorrentName }}</p>
-          </div>
-          <p>站点名称: {{ selectedSite?.name }}</p>
-          <p>当前状态: {{ selectedSite?.data.state }}</p>
-          <div
-            v-if="
-              selectedSite && selectedSite.data && hasLink(selectedSite.data, selectedSite.name)
-            "
-            class="site-operation-link"
-          >
-            <p class="label">详情页链接:</p>
-            <el-link
-              :href="getLink(selectedSite.data, selectedSite.name)!"
-              target="_blank"
-              type="primary"
-              :underline="false"
-            >
-              {{ getLink(selectedSite.data, selectedSite.name) }}
-            </el-link>
-          </div>
-          <div v-else class="site-operation-input">
-            <p class="label">添加详情页链接或种子ID:</p>
-            <el-input
-              v-model="newCommentInput"
-              placeholder="请输入完整的详情页链接或种子ID"
-              clearable
-              @keyup.enter="updateSiteComment"
-            />
-            <p class="input-hint">
-              支持输入完整链接（如：https://example.com/details.php?id=123）或仅输入数字ID（如：9999999996）
-            </p>
-          </div>
-          <div class="site-operation-buttons">
-            <el-button @click="siteOperationDialogVisible = false">取消</el-button>
-            <el-button
-              v-if="!hasLink(selectedSite?.data, selectedSite?.name)"
-              type="success"
-              @click="updateSiteComment"
-              :disabled="!newCommentInput || newCommentInput.trim() === ''"
-            >
-              添加链接
-            </el-button>
-            <el-button
-              v-if="hasLink(selectedSite?.data, selectedSite?.name)"
-              type="primary"
-              @click="setSiteNotExist"
-            >
-              设为不存在
-            </el-button>
-          </div>
         </div>
       </el-card>
     </div>
@@ -788,10 +706,6 @@ const emits = defineEmits(['ready'])
 
 const torrentsViewState = useTorrentsViewState()
 
-interface OtherSite {
-  name: string
-  data: SiteData
-}
 interface SiteStatus {
   name: string
   site: string // IYUU中的站点标识符，例如 'tjupt'
@@ -988,12 +902,6 @@ const directTransferTargetSites = computed(() =>
 
 const autoAddExistingToDownloader = ref(true)
 const autoUpdateExistingTorrent = ref(false)
-
-// 站点操作弹窗相关
-const siteOperationDialogVisible = ref<boolean>(false)
-const selectedTorrentName = ref<string>('')
-const selectedSite = ref<OtherSite | null>(null)
-const newCommentInput = ref<string>('')
 
 // 用于跟踪在源站点选择弹窗中进行IYUU查询的站点
 const sourceSiteQueryLoading = ref<Record<string, boolean>>({})
@@ -1257,6 +1165,9 @@ const fetchDataWithoutLoadingControl = async (options: FetchDataOptions = {}) =>
       path_filters: JSON.stringify(activeFilters.paths || []),
       state_filters: JSON.stringify(activeFilters.states),
       downloader_filters: JSON.stringify(activeFilters.downloaderIds),
+      // 转种页面只显示维护通过的种子：组内至少一个站点副本通过可发布判定
+      // （后端 SQL 预筛 is_reviewed + Go 侧精确判定，行内站点带 reviewed 标记）。
+      only_publishable: 'true',
       include_metadata: includeMetadata ? 'true' : 'false',
     })
 
@@ -1307,6 +1218,9 @@ const startCrossSeed = async (row: Torrent) => {
     .filter((site) => {
       const isSourceSite = site.migration === 1 || site.migration === 3
       if (!isSourceSite) return false
+      // 列表已按"维护通过"过滤（only_publishable），站点副本带 reviewed 标记；
+      // 源站候选限定为通过维护的副本——转种用的参数必须是现成且规范的。
+      if (site.reviewed === false) return false
       return !!resolveSourceTorrentId({ siteDetails: site })
     })
 
@@ -1533,80 +1447,6 @@ const isSourceSiteSelectable = (siteName: string): boolean => {
   }
 
   return true
-}
-
-// 处理站点点击事件
-const handleSiteClick = (torrentName: string, site: OtherSite) => {
-  selectedTorrentName.value = torrentName
-  selectedSite.value = site
-  newCommentInput.value = '' // 清空输入框
-  siteOperationDialogVisible.value = true
-}
-
-// 更新站点详情页链接
-const updateSiteComment = async () => {
-  if (!selectedTorrentName.value || !selectedSite.value) {
-    ElMessage.error('缺少必要的参数')
-    return
-  }
-
-  if (!newCommentInput.value || newCommentInput.value.trim() === '') {
-    ElMessage.error('请输入详情页链接或ID')
-    return
-  }
-
-  try {
-    const response = await axios.post('/api/sites/update_comment', {
-      torrent_name: selectedTorrentName.value,
-      site_name: selectedSite.value.name,
-      comment: newCommentInput.value.trim(),
-    })
-
-    const result = response.data
-
-    if (result.success) {
-      ElMessage.success('详情页链接已成功添加')
-      siteOperationDialogVisible.value = false
-      newCommentInput.value = ''
-      // 重新加载数据以反映更改
-      await fetchData()
-    } else {
-      ElMessage.error(result.error || '添加详情页链接失败')
-    }
-  } catch (error) {
-    console.error('添加详情页链接时出错:', error)
-    ElMessage.error('添加详情页链接时发生网络错误')
-  }
-}
-
-// 设置站点为不存在
-const setSiteNotExist = async () => {
-  if (!selectedTorrentName.value || !selectedSite.value) {
-    ElMessage.error('缺少必要的参数')
-    return
-  }
-
-  try {
-    await axios.post('/api/sites/set_not_exist', {
-      torrent_name: selectedTorrentName.value,
-      site_name: selectedSite.value.name,
-    })
-
-    ElMessage.success('站点状态已成功设置为不存在')
-    siteOperationDialogVisible.value = false
-    // 重新加载数据以反映更改
-    fetchData()
-  } catch (error: unknown) {
-    console.error('设置站点状态时出错:', error)
-    const message = axios.isAxiosError(error)
-      ? (error.response?.data as { error?: string; message?: string } | undefined)?.error ||
-        (error.response?.data as { error?: string; message?: string } | undefined)?.message ||
-        error.message
-      : error instanceof Error
-        ? error.message
-        : '设置站点状态时发生错误'
-    ElMessage.error(message)
-  }
 }
 
 const enqueueDirectTransfer = async () => {

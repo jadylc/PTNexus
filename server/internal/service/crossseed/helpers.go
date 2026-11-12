@@ -8,8 +8,7 @@ import (
 	"strings"
 	"time"
 
-	processingmedia "github.com/pt-nexus/server/internal/service/processing/media"
-	processingrepair "github.com/pt-nexus/server/internal/service/processing/repair"
+	processingpersist "github.com/pt-nexus/server/internal/service/processing/persist"
 )
 
 func parseISOTime(raw string) (time.Time, error) {
@@ -152,54 +151,10 @@ func hasUnrecognizedValue(titleComponents []any) bool {
 	return strings.TrimSpace(extractUnrecognized(titleComponents)) != ""
 }
 
+// isRowPublishable 判断行是否可发布（维护通过），核心判定在 persist 包统一提供
+// （与一种多站列表的过滤口径同源）。
 func isRowPublishable(item map[string]any, reverseMappings map[string]any) bool {
-	if boolFromAny(item["is_deleted"]) || !boolFromAny(item["is_reviewed"]) {
-		return false
-	}
-
-	fieldCategories := []string{"type", "medium", "video_codec", "audio_codec", "resolution", "team", "source"}
-	for _, category := range fieldCategories {
-		value := strings.TrimSpace(toString(item[category], ""))
-		if value == "" {
-			continue
-		}
-		if !isValidStandardValue(value) || !isStandardValueMapped(reverseMappings, category, value) {
-			return false
-		}
-	}
-
-	// MediaInfo 规范性：空或格式无效（既非 MediaInfo 也非 BDInfo，含命中禁止模式）
-	// 视为不规范，不允许发布——与抓取修复的"不规范"判定同源
-	// （processingmedia.ValidateMediaInfoFormat）。
-	mediainfo := strings.TrimSpace(toString(item["mediainfo"], ""))
-	if mediainfo == "" {
-		return false
-	}
-	if isMediainfo, isBDInfo, _ := processingmedia.ValidateMediaInfoFormat(mediainfo); !isMediainfo && !isBDInfo {
-		return false
-	}
-
-	// 简介规范性：正文为空，或缺少关键字段（片名/产地/简介）视为不规范，
-	// 与维护面板批转检测（CheckIntroBodyCompleteness）同口径。
-	body := strings.TrimSpace(toString(item["body"], ""))
-	if body == "" {
-		return false
-	}
-	if completeness := processingrepair.CheckIntroBodyCompleteness(body); !completeness.IsComplete {
-		return false
-	}
-
-	tags := parseStringArray(item["tags"])
-	if hasRestrictedStandardTag(tags) {
-		return false
-	}
-	for _, tag := range tags {
-		if !isValidStandardValue(tag) || !isStandardValueMapped(reverseMappings, "tags", tag) {
-			return false
-		}
-	}
-
-	return !hasUnrecognizedValue(parseAnyArray(item["title_components"]))
+	return processingpersist.IsRowPublishableData(item, reverseMappings)
 }
 
 func isStandardValueMapped(reverseMappings map[string]any, category string, standardValue string) bool {
@@ -248,36 +203,15 @@ func normalizeQueryRow(item map[string]any, reverseMappings map[string]any) {
 // 或已填写的标准字段值非法/无法反向映射（映射缺失）。
 // 禁转/限转/分集属业务约束而非数据错误，不计入问题；它们落回"待检查"由人工判断。
 func hasRowDataProblem(titleComponents []any, item map[string]any, reverseMappings map[string]any) bool {
+	// 与发布判定同源（persist 包统一口径）。
 	if hasUnrecognizedValue(titleComponents) {
 		return true
 	}
-
-	fieldCategories := []string{"type", "medium", "video_codec", "audio_codec", "resolution", "team", "source"}
-	for _, category := range fieldCategories {
-		value := strings.TrimSpace(toString(item[category], ""))
-		if value == "" {
-			continue
-		}
-		if !isValidStandardValue(value) || !isStandardValueMapped(reverseMappings, category, value) {
-			return true
-		}
-	}
-
-	// MediaInfo / 简介不规范同样计入数据问题（与 isRowPublishable 同口径）。
-	mediainfo := strings.TrimSpace(toString(item["mediainfo"], ""))
-	if mediainfo == "" {
+	if processingpersist.HasRowDataProblemData(item, reverseMappings) {
 		return true
 	}
-	if isMediainfo, isBDInfo, _ := processingmedia.ValidateMediaInfoFormat(mediainfo); !isMediainfo && !isBDInfo {
-		return true
-	}
-	body := strings.TrimSpace(toString(item["body"], ""))
-	if body == "" {
-		return true
-	}
-	if completeness := processingrepair.CheckIntroBodyCompleteness(body); !completeness.IsComplete {
-		return true
-	}
+	// hasRowDataProblem 的入参已单独解析过 titleComponents，HasRowDataProblemData
+	// 内部会再次解析 item["title_components"]，两处任一命中即算问题。
 	return false
 }
 

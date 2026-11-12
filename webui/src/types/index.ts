@@ -7,6 +7,9 @@ export interface SiteData {
   torrentId?: string
   site?: string
   site_name?: string
+  // 该站点副本的抓取参数是否"维护通过"（可发布）——仅一种多站
+  // only_publishable 查询返回；转种源站候选据此限定。
+  reviewed?: boolean
 }
 
 export interface Torrent {
