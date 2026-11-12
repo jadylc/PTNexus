@@ -172,5 +172,85 @@ class UploadReleaseAssetsTest(unittest.TestCase):
         upload.assert_not_called()
 
 
+class PruneOldReleaseAssetsTest(unittest.TestCase):
+    """仓库附件配额按累计占用计算，上传前必须清理旧版本 runtime 资产。"""
+
+    @staticmethod
+    def _release(release_id: int, tag: str) -> dict:
+        return {"id": release_id, "tag_name": tag}
+
+    def test_keeps_recent_releases_and_deletes_older_runtime_assets(self) -> None:
+        releases = [self._release(i, f"v4.6.{30 - i}") for i in range(15)]
+        # 最近 10 版：v4.6.30..v4.6.21；旧版 5 个（v4.6.20..v4.6.16）要清。
+        older_ids = list(range(10, 15))
+
+        with mock.patch.object(MODULE, "list_releases", return_value=releases), \
+             mock.patch.object(MODULE, "list_release_assets") as list_assets, \
+             mock.patch.object(MODULE, "delete_release_asset") as delete:
+            list_assets.return_value = [
+                {"name": MODULE.RUNTIME_NAMES[0], "id": 9001},
+                {"name": MODULE.RUNTIME_NAMES[1], "id": 9002},
+                {"name": MODULE.MANIFEST_NAME, "id": 9003},
+            ]
+            removed = MODULE.prune_old_release_assets(
+                "owner", "repo", current_release_id=0, current_tag="v4.6.30", token="t"
+            )
+
+        self.assertEqual(delete.call_count, len(older_ids) * 3)
+        for release_id in older_ids:
+            # delete_release_asset(owner, repo, release_id, asset_id, token)
+            called_ids = {
+                call.args[3] for call in delete.call_args_list if call.args[2] == release_id
+            }
+            self.assertEqual(called_ids, {9001, 9002, 9003})
+        self.assertEqual(len(removed), len(older_ids) * 3)
+
+    def test_current_release_and_recent_tags_are_never_deleted(self) -> None:
+        releases = [self._release(1, "v4.6.30"), self._release(2, "v4.6.29")]
+        with mock.patch.object(MODULE, "list_releases", return_value=releases), \
+             mock.patch.object(MODULE, "list_release_assets", return_value=[]), \
+             mock.patch.object(MODULE, "delete_release_asset") as delete:
+            MODULE.prune_old_release_assets(
+                "owner", "repo", current_release_id=1, current_tag="v4.6.30", token="t",
+                keep_releases=10,
+            )
+        delete.assert_not_called()
+
+    def test_unrelated_assets_are_not_touched(self) -> None:
+        # 15 个 release：只清 11 个之外的旧版（第 12 个 v4.6.19 起的资产），
+        # 验证无关资产（浏览器扩展 zip）不被触碰。
+        releases = [self._release(i, f"v4.6.{30 - i}") for i in range(15)]
+        with mock.patch.object(MODULE, "list_releases", return_value=releases), \
+             mock.patch.object(MODULE, "list_release_assets") as list_assets, \
+             mock.patch.object(MODULE, "delete_release_asset") as delete:
+            list_assets.return_value = [
+                {"name": "pt-nexus-browser-extension.zip", "id": 8888},
+                {"name": MODULE.RUNTIME_NAMES[0], "id": 9001},
+            ]
+            removed = MODULE.prune_old_release_assets(
+                "owner", "repo", current_release_id=0, current_tag="v4.6.30", token="t"
+            )
+        # 只删 runtime 包，浏览器扩展不动（每版 3 资产 = 5 旧版 × 3 - 扩展跳过）。
+        self.assertEqual(delete.call_count, 5)
+        for call in delete.call_args_list:
+            self.assertNotEqual(call.args[3], 8888)
+        self.assertEqual(len(removed), 5)
+
+    def test_delete_failure_does_not_raise(self) -> None:
+        releases = [self._release(i, f"v4.6.{30 - i}") for i in range(12)]
+        with mock.patch.object(MODULE, "list_releases", return_value=releases), \
+             mock.patch.object(MODULE, "list_release_assets", return_value=[
+                 {"name": MODULE.RUNTIME_NAMES[0], "id": 9001}
+             ]), \
+             mock.patch.object(
+                 MODULE, "delete_release_asset", side_effect=RuntimeError("HTTP 403")
+             ):
+            removed = MODULE.prune_old_release_assets(
+                "owner", "repo", current_release_id=0, current_tag="v4.6.30", token="t"
+            )
+        self.assertEqual(len(removed), 2)
+        self.assertTrue(all("failed" in item for item in removed))
+
+
 if __name__ == "__main__":
     unittest.main()

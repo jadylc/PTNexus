@@ -16,6 +16,10 @@ if hasattr(sys.stdout, "reconfigure"):
 
 API_BASE = "https://gitee.com/api/v5"
 DEFAULT_MAX_BYTES = 100 * 1024 * 1024
+# 仓库附件总配额按累计占用计算（免费版 1GB）：runtime 包每版约 22MB，
+# 无限累积会打爆配额导致后续版本上传失败（400 文件大小已超出仓库附件配额）。
+# 上传前自动清理旧 release 的 runtime 资产，仅保留最近 KEEP_RELEASES 个版本。
+KEEP_RELEASES = 10
 MANIFEST_NAME = "UPDATE_MANIFEST.json"
 RUNTIME_NAMES = (
     "ptnexus-runtime-linux-amd64.tar.gz",
@@ -164,6 +168,100 @@ def list_release_assets(owner: str, repo: str, release_id: int, token: str) -> l
     if not isinstance(result, list):
         raise RuntimeError(f"unexpected list assets response: {result!r}")
     return result
+
+
+def list_releases(owner: str, repo: str, token: str, page_size: int = 100) -> list[dict[str, Any]]:
+    """列出仓库全部 release（分页拉取，按创建时间倒序返回）。"""
+    releases: list[dict[str, Any]] = []
+    page = 1
+    while True:
+        url = (
+            f"{API_BASE}/repos/{urllib.parse.quote(owner)}/{urllib.parse.quote(repo)}/releases"
+            f"?page={page}&per_page={page_size}&direction=desc"
+        )
+        result = api_request("GET", url, token)
+        if not isinstance(result, list) or not result:
+            break
+        releases.extend(item for item in result if isinstance(item, dict))
+        if len(result) < page_size:
+            break
+        page += 1
+        if page > 100:  # 防御上限：100 页 × 100 条足够覆盖任何仓库
+            break
+    return releases
+
+
+def delete_release_asset(owner: str, repo: str, release_id: int, asset_id: int, token: str) -> None:
+    url = (
+        f"{API_BASE}/repos/{urllib.parse.quote(owner)}/{urllib.parse.quote(repo)}"
+        f"/releases/{release_id}/attach_files/{asset_id}"
+    )
+    api_request("DELETE", url, token)
+
+
+def prune_old_release_assets(
+    owner: str,
+    repo: str,
+    current_release_id: int,
+    current_tag: str,
+    token: str,
+    keep_releases: int = KEEP_RELEASES,
+) -> list[str]:
+    """清理旧 release 的 runtime 资产，只保留最近 keep_releases 个版本。
+
+    UPDATE_MANIFEST.json 同样清理——更新清单通过 GitHub raw / 分支文件获取，
+    历史 release 上的旧 manifest 无消费方，留着只占配额。
+    参数/返回：返回清理动作描述列表（供日志输出）。
+    失败场景：删除失败不抛错，记录为警告（不阻塞本次上传）。
+    副作用：调用 Gitee API 删除附件。
+    """
+    removed: list[str] = []
+    try:
+        releases = list_releases(owner, repo, token)
+    except RuntimeError as exc:
+        return [f"list releases failed, skip pruning: {exc}"]
+
+    # 目标版本及其前 keep_releases-1 个（按 tag 名排序不可靠，用 API 返回顺序，
+    # Gitee 按创建时间倒序）；当前 release 无论多旧都保留（正在上传）。
+    keep_tags: set[str] = set()
+    for item in releases[:keep_releases]:
+        tag = str(item.get("tag_name", "")).strip()
+        if tag:
+            keep_tags.add(tag)
+    keep_tags.add(current_tag)
+
+    deletable = [
+        item
+        for item in releases
+        if str(item.get("tag_name", "")).strip() not in keep_tags
+        and int(item.get("id", 0) or 0) != current_release_id
+    ]
+
+    for item in deletable:
+        release_id = int(item.get("id", 0) or 0)
+        tag = str(item.get("tag_name", "")).strip()
+        if release_id <= 0:
+            continue
+        try:
+            assets = list_release_assets(owner, repo, release_id, token)
+        except RuntimeError as exc:
+            removed.append(f"{tag}: list assets failed ({exc})")
+            continue
+        for asset in assets:
+            name = str(asset.get("name", "")).strip()
+            asset_id = asset.get("id")
+            # 只清理 runtime 包与 manifest（浏览器扩展/桌面安装包等大文件
+            # 不在此列——它们由 GitHub Release 提供，Gitee 从不上传）。
+            if name not in RUNTIME_NAMES and name != MANIFEST_NAME:
+                continue
+            if asset_id is None:
+                continue
+            try:
+                delete_release_asset(owner, repo, release_id, int(asset_id), token)
+                removed.append(f"{tag}: deleted {name} (id={asset_id})")
+            except RuntimeError as exc:
+                removed.append(f"{tag}: delete {name} failed ({exc})")
+    return removed
 
 
 def upload_release_asset(
@@ -374,6 +472,12 @@ def main() -> int:
         for item in existing_assets
         if str(item.get("name", "")).strip() and item.get("id") is not None
     }
+
+    # 上传前清理旧版本资产，防止仓库附件累计超出配额（保留最近 KEEP_RELEASES 版）。
+    for message in prune_old_release_assets(
+        args.owner, args.repo, release_id, args.tag, args.token
+    ):
+        print(f"[gitee-release] prune: {message}")
 
     upload_warnings = upload_release_assets(
         args.owner,
