@@ -6,14 +6,14 @@ import (
 )
 
 type stubSeedQueryRepo struct {
-	seedRow       map[string]any
-	hashRow       map[string]any
-	nameRow       map[string]any
-	hashLookups   int
-	nameLookups   int
-	seedErr       error
-	hashErr       error
-	nameErr       error
+	seedRow     map[string]any
+	hashRow     map[string]any
+	nameRow     map[string]any
+	hashLookups int
+	nameLookups int
+	seedErr     error
+	hashErr     error
+	nameErr     error
 }
 
 func (s *stubSeedQueryRepo) GetSeedParameter(torrentID, siteName string) (map[string]any, error) {
@@ -42,11 +42,11 @@ func (s *stubSeedQueryRepo) GetCurrentTorrentByName(name string) (map[string]any
 func TestQueryAndNormalizeSeedPrefersHashLookup(t *testing.T) {
 	repo := &stubSeedQueryRepo{
 		seedRow: map[string]any{
-			"hash":      "abc123",
+			"hash":       "abc123",
 			"torrent_id": "tid",
-			"site_name": "mteam",
-			"name":      "Same.Name",
-			"title":     "Same.Name",
+			"site_name":  "mteam",
+			"name":       "Same.Name",
+			"title":      "Same.Name",
 		},
 		hashRow: map[string]any{
 			"save_path":     "/wanted/path",
@@ -76,11 +76,11 @@ func TestQueryAndNormalizeSeedPrefersHashLookup(t *testing.T) {
 func TestQueryAndNormalizeSeedFallsBackToNameLookup(t *testing.T) {
 	repo := &stubSeedQueryRepo{
 		seedRow: map[string]any{
-			"hash":      "abc123",
+			"hash":       "abc123",
 			"torrent_id": "tid",
-			"site_name": "mteam",
-			"name":      "Same.Name",
-			"title":     "Same.Name",
+			"site_name":  "mteam",
+			"name":       "Same.Name",
+			"title":      "Same.Name",
 		},
 		hashErr: errors.New("not found"),
 		nameRow: map[string]any{

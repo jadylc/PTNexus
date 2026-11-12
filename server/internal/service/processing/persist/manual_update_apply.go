@@ -59,10 +59,11 @@ func ApplyManualUpdateFromPayload(
 	standardized := buildResult.Standardized
 	record := buildResult.Record
 
-	// 维护通过的规范性把关（v4.6.20 需求：简介/媒体信息不规范不允许通过）：
-	// is_reviewed 置 true 前校验 MediaInfo 与简介，不合规拒绝保存——
-	// 用户在面板里修复后再点完成。
-	if problems := ValidateMaintenanceCompletion(record); len(problems) > 0 {
+	// 维护通过的规范性把关（与批量检测同一口径）：面板保存的产物先过
+	// NormalizeSeedRow（得到与批量检测同形态的行），再跑统一校验——
+	// 不合规拒绝保存并提示具体问题，用户修复后再点完成。
+	normalizedRecord := NormalizeSeedRow(record)
+	if problems := CheckSeedMaintainability(normalizedRecord); len(problems) > 0 {
 		return map[string]any{
 			"success": false,
 			"message": "维护未通过，无法保存：" + strings.Join(problems, "；"),
