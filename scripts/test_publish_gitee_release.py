@@ -172,103 +172,68 @@ class UploadReleaseAssetsTest(unittest.TestCase):
         upload.assert_not_called()
 
 
-class PruneOldReleaseAssetsTest(unittest.TestCase):
-    """仓库附件配额按累计占用计算，上传前必须清理旧版本 runtime 资产。"""
+class PruneOldReleasesTest(unittest.TestCase):
+    """仓库附件配额按累计占用计算，上传前必须删除旧版本【整个发行版】。"""
 
     @staticmethod
     def _release(release_id: int, tag: str) -> dict:
         return {"id": release_id, "tag_name": tag}
 
-    def test_keeps_recent_releases_and_deletes_older_runtime_assets(self) -> None:
+    @mock.patch.object(MODULE, "api_request")
+    def test_keeps_recent_releases_and_deletes_older_whole_releases(self, api: mock.Mock) -> None:
         releases = [self._release(i, f"v4.6.{30 - i}") for i in range(15)]
-        # 最近 10 版：v4.6.30..v4.6.21；旧版 5 个（v4.6.20..v4.6.16）要清。
+        # 最近 10 版：v4.6.30..v4.6.21；旧版 5 个（v4.6.20..v4.6.16）整个删掉。
         older_ids = list(range(10, 15))
 
-        with mock.patch.object(MODULE, "list_releases", return_value=releases), \
-             mock.patch.object(MODULE, "list_release_assets") as list_assets, \
-             mock.patch.object(MODULE, "delete_release_asset") as delete:
-            list_assets.return_value = [
-                {"name": MODULE.RUNTIME_NAMES[0], "id": 9001},
-                {"name": MODULE.RUNTIME_NAMES[1], "id": 9002},
-                {"name": MODULE.MANIFEST_NAME, "id": 9003},
-            ]
-            removed = MODULE.prune_old_release_assets(
+        with mock.patch.object(MODULE, "list_releases", return_value=releases):
+            removed = MODULE.prune_old_releases(
                 "owner", "repo", current_release_id=0, current_tag="v4.6.30", token="t"
             )
 
-        self.assertEqual(delete.call_count, len(older_ids) * 3)
+        # 每个旧版一次 DELETE（删发行版本体，不是逐个删附件）。
+        delete_urls = [c.args[1] for c in api.call_args_list if c.args[0] == "DELETE"]
+        self.assertEqual(len(delete_urls), len(older_ids))
         for release_id in older_ids:
-            # delete_release_asset(owner, repo, release_id, asset_id, token)
-            called_ids = {
-                call.args[3] for call in delete.call_args_list if call.args[2] == release_id
-            }
-            self.assertEqual(called_ids, {9001, 9002, 9003})
-        self.assertEqual(len(removed), len(older_ids) * 3)
+            self.assertTrue(any(f"/releases/{release_id}" in url for url in delete_urls))
+        self.assertEqual(len(removed), len(older_ids))
 
     def test_prune_survives_api_returning_oldest_first(self) -> None:
-        """复现 2026.11 清理未生效：Gitee releases 列表默认按创建时间正序
-        返回（最老在前），按返回顺序取 keep 集合会保住最老版本、放过新版。
-        现按 tag 版本号排序，乱序返回也能正确保留最近 N 版。"""
+        """Gitee releases 列表排序不可靠：按 tag 版本号排序取保留集。"""
         versions = list(range(10, 25))  # v4.6.10..v4.6.24
         releases = [self._release(i, f"v4.6.{v}") for i, v in enumerate(reversed(versions))]
         # reversed → API 正序返回：id=0 是 v4.6.24（最新）… id=14 是 v4.6.10（最老）
 
         with mock.patch.object(MODULE, "list_releases", return_value=releases), \
-             mock.patch.object(MODULE, "list_release_assets", return_value=[
-                 {"name": MODULE.RUNTIME_NAMES[0], "id": 9001}
-             ]), \
-             mock.patch.object(MODULE, "delete_release_asset") as delete:
-            removed = MODULE.prune_old_release_assets(
+             mock.patch.object(MODULE, "api_request") as api:
+            removed = MODULE.prune_old_releases(
                 "owner", "repo", current_release_id=0, current_tag="v4.6.24", token="t"
             )
 
         # 应删掉最老的 5 版（v4.6.10..v4.6.14），保留 v4.6.15..v4.6.24。
-        deleted_release_ids = {call.args[2] for call in delete.call_args_list}
-        # reversed 列表里 v4.6.10..v4.6.14 对应 id 14..10
+        delete_urls = [c.args[1] for c in api.call_args_list if c.args[0] == "DELETE"]
+        deleted_release_ids = {
+            int(url.rstrip("/").rsplit("/", 1)[-1]) for url in delete_urls
+        }
         self.assertEqual(deleted_release_ids, set(range(10, 15)))
         self.assertEqual(len(removed), 5)
 
     def test_current_release_and_recent_tags_are_never_deleted(self) -> None:
         releases = [self._release(1, "v4.6.30"), self._release(2, "v4.6.29")]
         with mock.patch.object(MODULE, "list_releases", return_value=releases), \
-             mock.patch.object(MODULE, "list_release_assets", return_value=[]), \
-             mock.patch.object(MODULE, "delete_release_asset") as delete:
-            MODULE.prune_old_release_assets(
+             mock.patch.object(MODULE, "api_request") as api:
+            MODULE.prune_old_releases(
                 "owner", "repo", current_release_id=1, current_tag="v4.6.30", token="t",
                 keep_releases=10,
             )
-        delete.assert_not_called()
-
-    def test_unrelated_assets_are_not_touched(self) -> None:
-        # 15 个 release：只清 11 个之外的旧版（第 12 个 v4.6.19 起的资产），
-        # 验证无关资产（浏览器扩展 zip）不被触碰。
-        releases = [self._release(i, f"v4.6.{30 - i}") for i in range(15)]
-        with mock.patch.object(MODULE, "list_releases", return_value=releases), \
-             mock.patch.object(MODULE, "list_release_assets") as list_assets, \
-             mock.patch.object(MODULE, "delete_release_asset") as delete:
-            list_assets.return_value = [
-                {"name": "pt-nexus-browser-extension.zip", "id": 8888},
-                {"name": MODULE.RUNTIME_NAMES[0], "id": 9001},
-            ]
-            removed = MODULE.prune_old_release_assets(
-                "owner", "repo", current_release_id=0, current_tag="v4.6.30", token="t"
-            )
-        # 只删 runtime 包，浏览器扩展不动（每版 3 资产 = 5 旧版 × 3 - 扩展跳过）。
-        self.assertEqual(delete.call_count, 5)
-        for call in delete.call_args_list:
-            self.assertNotEqual(call.args[3], 8888)
-        self.assertEqual(len(removed), 5)
+        api.assert_not_called()
 
     def test_delete_failure_does_not_raise(self) -> None:
         releases = [self._release(i, f"v4.6.{30 - i}") for i in range(12)]
         with mock.patch.object(MODULE, "list_releases", return_value=releases), \
-             mock.patch.object(MODULE, "list_release_assets", return_value=[
-                 {"name": MODULE.RUNTIME_NAMES[0], "id": 9001}
-             ]), \
              mock.patch.object(
-                 MODULE, "delete_release_asset", side_effect=RuntimeError("HTTP 403")
+                 MODULE, "api_request", side_effect=RuntimeError("HTTP 403")
              ):
-            removed = MODULE.prune_old_release_assets(
+            removed = MODULE.prune_old_releases(
                 "owner", "repo", current_release_id=0, current_tag="v4.6.30", token="t"
             )
         self.assertEqual(len(removed), 2)
