@@ -7,8 +7,6 @@ import (
 
 	"github.com/glebarez/sqlite"
 	"github.com/pt-nexus/server/internal/repository"
-	processingpersist "github.com/pt-nexus/server/internal/service/processing/persist"
-	"github.com/pt-nexus/server/internal/service/reversemapping"
 	"gorm.io/gorm"
 )
 
@@ -77,29 +75,17 @@ func TestGetDataOnlyPublishableShowsReviewedGroups(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetData returned error: %v", err)
 	}
-	// 二分第一步：分组键查询层（不再有 SQL 预筛 join，所有分组都应返回）。
+	// 二分：已审核 hash 集合（新链路的唯一判据，纯字符串集合）。
 	repo := repository.NewTorrentDataRepository(&repository.Store{DB: db, DBType: "sqlite"})
-	groupKeys, groupErr := repo.ListTorrentGroupKeysWithFilters(context.Background(), repository.TorrentListFilters{})
-	if groupErr != nil {
-		t.Fatalf("ListTorrentGroupKeysWithFilters failed: %v", groupErr)
-	}
-	if len(groupKeys) != 2 {
-		t.Fatalf("expected 2 group keys (prefilter removed), got %#v", groupKeys)
-	}
-
-	// 二分第二步：Go 精确判定层（reviewedParams + IsRowPublishableData）。
-	reviewed, revErr := repo.ListReviewedSeedParamsByHashes(context.Background(), []string{"hash-a"})
+	reviewed, revErr := repo.ListReviewedHashes(context.Background())
 	if revErr != nil {
-		t.Fatalf("ListReviewedSeedParamsByHashes failed: %v", revErr)
+		t.Fatalf("ListReviewedHashes failed: %v", revErr)
 	}
-	if len(reviewed["hash-a"]) != 1 {
-		t.Fatalf("expected 1 reviewed param row for hash-a, got %d", len(reviewed["hash-a"]))
+	if _, ok := reviewed["hash-a"]; !ok {
+		t.Fatalf("expected hash-a in reviewed set, got %#v", reviewed)
 	}
-
-	// 二分第三步：判定函数对 fixture 行是否放行。
-	reverseMappings := reversemapping.Build(nil)
-	if !processingpersist.IsRowPublishableData(reviewed["hash-a"][0], reverseMappings) {
-		t.Fatalf("IsRowPublishableData rejected fixture row: %#v", reviewed["hash-a"][0])
+	if _, ok := reviewed["hash-b"]; ok {
+		t.Fatalf("hash-b (no params) should not be reviewed")
 	}
 
 	total := result["total"].(int)

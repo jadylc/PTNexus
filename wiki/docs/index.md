@@ -124,6 +124,10 @@
 
 # 更新日志
 
+### v4.6.28（2026.11.12）
+
+- 修复：一种多站页面持续空白——only_publishable 判定链路过度复杂（按 hash 查全字段参数行 + 反向映射表 + 逐字段判定），在 MariaDB 下多处 driver 行形态差异导致全灭；现简化为直接查询 is_reviewed=1 的 hash 集合做纯字符串匹配（维护通过的权威标记由修改完成/批量检测两入口写入，与跨种页 reviewed 页签同口径），不再依赖字段扫描/映射表/类型转换
+
 ### v4.6.27（2026.11.12）
 
 - 修复：一种多站页面所有查询（含空搜）持续空白——only_publishable 的 SQL 预筛 INNER JOIN publishable_groups 按 name+size 等值关联，在 MariaDB 下因排序规则/尾随空格差异匹配不上，把主查询的 torrents 行全部滤空（而 metadata 查询无此 join 仍能返回 unique_paths，形成「有路径无数据」）；现移除该冗余预筛，维护通过判定完全由 Go 层按 hash 精确完成（reviewedParams + IsRowPublishableData），主查询与 metadata 口径一致

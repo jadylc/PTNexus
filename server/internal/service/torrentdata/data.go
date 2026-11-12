@@ -6,10 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/pt-nexus/server/internal/platform/logx"
 	"github.com/pt-nexus/server/internal/repository"
-	processingpersist "github.com/pt-nexus/server/internal/service/processing/persist"
-	"github.com/pt-nexus/server/internal/service/reversemapping"
 )
 
 // GetData 聚合维护种子列表数据并按查询条件分页返回。
@@ -62,9 +59,6 @@ func (s *TorrentDataService) GetData(ctx context.Context, params TorrentsDataPar
 		StateFilters:      params.StateFilters,
 		DownloaderFilters: params.DownloaderFilters,
 		ExcludeExisting:   params.ExcludeExisting,
-		// OnlyPublishable 的过滤完全在 Go 层按 hash 精确判定（reviewedParams +
-		// IsRowPublishableData），不依赖 SQL 预筛 join——避免 MariaDB 下
-		// name/size 等值关联（排序规则/空格差异）把分组全滤掉。
 	}
 	databasePaginated := canPrePaginateTorrentGroups(params) && !params.OnlyPublishable
 	databasePaginatedTotal := 0
@@ -96,24 +90,17 @@ func (s *TorrentDataService) GetData(ctx context.Context, params TorrentsDataPar
 		uploadTotals = map[string]int64{}
 	}
 
-	// OnlyPublishable：按 hash 批量取已审核参数行，供逐副本精确判定
-	// （is_reviewed 只是必要条件；映射/简介/MediaInfo 的判定在 Go 侧完成）。
-	reviewedParams := map[string][]map[string]any{}
+	// OnlyPublishable：只显示"维护通过"的种子。维护通过的权威标记就是
+	// seed_parameters.is_reviewed=1（用户点修改完成/批量检测通过时写入，
+	// 两处共用同一校验口径），据此建立 hash 集合，组内任一副本命中即显示。
+	// 判定只做纯字符串集合查找，不做字段/映射/类型转换，避免 MariaDB driver
+	// 行形态差异影响结果。
+	reviewedHashes := map[string]struct{}{}
 	if params.OnlyPublishable {
-		reviewedParams, err = s.repo.ListReviewedSeedParamsByHashes(ctx, torrentRecordHashes(torrentRows))
+		reviewedHashes, err = s.repo.ListReviewedHashes(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("load reviewed seed params failed: %w", err)
+			return nil, fmt.Errorf("load reviewed hashes failed: %w", err)
 		}
-	}
-	reverseMappings := map[string]any{}
-	if params.OnlyPublishable {
-		reverseMappings = reversemapping.Build(nil)
-	}
-	if params.OnlyPublishable {
-		reverseType, _ := reverseMappings["type"].(map[string]any)
-		logx.Infof("转种过滤诊断",
-			"rows=%d reviewedKeys=%d reverseTypeKeys=%d",
-			len(torrentRows), len(reviewedParams), len(reverseType))
 	}
 
 	aggregated := map[string]*torrentSummary{}
@@ -167,11 +154,8 @@ func (s *TorrentDataService) GetData(ctx context.Context, params TorrentsDataPar
 			item.Sites[siteName] = siteItem
 		}
 		if params.OnlyPublishable {
-			for _, paramRow := range reviewedParams[row.Hash] {
-				if processingpersist.IsRowPublishableData(paramRow, reverseMappings) {
-					siteItem.Reviewed = true
-					break
-				}
+			if _, ok := reviewedHashes[row.Hash]; ok {
+				siteItem.Reviewed = true
 			}
 		}
 		siteItem.Uploaded += uploaded

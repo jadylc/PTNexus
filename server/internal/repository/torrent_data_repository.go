@@ -368,6 +368,29 @@ func (r *TorrentDataRepository) ListTorrents(onlyCompleted bool) ([]TorrentRecor
 	return r.ListTorrentsWithFilters(context.Background(), TorrentListFilters{OnlyCompleted: onlyCompleted})
 }
 
+// ListReviewedHashes 返回所有已审核（is_reviewed=1）参数行的 hash 集合。
+// 参数/返回：ctx 为请求上下文；返回 hash 集合（无命中时为空 map）。
+// 失败场景：数据库查询失败时返回错误。
+// 副作用：仅读取 seed_parameters，不写入数据。
+// 说明：用于一种多站"只显示维护通过种子"——维护通过的权威标记是
+// is_reviewed=1（维护面板修改完成/批量检测通过时写入），纯字符串集合，
+// 不依赖行字段形态，兼容 MariaDB/SQLite 各 driver。
+func (r *TorrentDataRepository) ListReviewedHashes(ctx context.Context) (map[string]struct{}, error) {
+	result := map[string]struct{}{}
+	rows := make([]map[string]any, 0)
+	if err := r.store.DB.WithContext(ctx).Raw(
+		`SELECT DISTINCT hash FROM seed_parameters WHERE is_reviewed = 1`,
+	).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		if hash := stringValueFromCell(row["hash"]); hash != "" {
+			result[hash] = struct{}{}
+		}
+	}
+	return result, nil
+}
+
 // ListReviewedSeedParamsByHashes 按 hash 批量读取"已审核（is_reviewed=1）"的参数行。
 // 参数/返回：hashes 为种子 hash 集合；返回 hash → 该 hash 已审核参数行列表
 // （标准化字段 + tags + title_components + mediainfo + body），供"维护通过"
