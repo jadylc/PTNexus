@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/pt-nexus/server/internal/platform/logx"
 	"github.com/pt-nexus/server/internal/repository"
 	processingpersist "github.com/pt-nexus/server/internal/service/processing/persist"
 	"github.com/pt-nexus/server/internal/service/reversemapping"
@@ -107,6 +108,12 @@ func (s *TorrentDataService) GetData(ctx context.Context, params TorrentsDataPar
 	reverseMappings := map[string]any{}
 	if params.OnlyPublishable {
 		reverseMappings = reversemapping.Build(nil)
+	}
+	if params.OnlyPublishable {
+		reverseType, _ := reverseMappings["type"].(map[string]any)
+		logx.Infof("转种过滤诊断",
+			"rows=%d reviewedKeys=%d reverseTypeKeys=%d",
+			len(torrentRows), len(reviewedParams), len(reverseType))
 	}
 
 	aggregated := map[string]*torrentSummary{}

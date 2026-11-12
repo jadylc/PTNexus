@@ -1,12 +1,16 @@
 package persist
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/pt-nexus/server/internal/service/reversemapping"
+)
 
 // TestIsRowPublishableMariaDBRowShape 复现生产"一种多站空搜空白"：
 // MariaDB driver 把 ListReviewedSeedParamsByHashes 的所有列 Scan 成 []byte，
-// 验证 v4.6.26 发布判定在该形态下是否放行（应放行——已审核+映射有效）。
+// 用生产同款真实 global_mappings.yaml 验证 v4.6.27 发布判定是否放行。
 func TestIsRowPublishableMariaDBRowShape(t *testing.T) {
-	// 与生产一致：is_reviewed=1 的行，各列为 []byte
+	// 与生产 /k 那 57 行一致：is_reviewed=1 的行，各列为 []byte
 	row := map[string]any{
 		"hash":             []byte("abc123"),
 		"type":             []byte("category.animation"),
@@ -23,33 +27,8 @@ func TestIsRowPublishableMariaDBRowShape(t *testing.T) {
 		"is_reviewed":      []byte("1"),
 	}
 
-	// 用真实映射表（与生产同路径）
-	reverse := buildTestReverseMappings()
+	reverse := reversemapping.Build(nil)
 	if !IsRowPublishableData(row, reverse) {
-		t.Fatalf("MariaDB []byte 行应放行，但判定为 false")
+		t.Fatalf("MariaDB []byte 行 + 真实映射表应放行，但判定为 false")
 	}
-}
-
-func buildTestReverseMappings() map[string]any {
-	// 复用 reversemapping.Build 的等价最小结构
-	cats := []string{"type", "medium", "video_codec", "audio_codec", "resolution", "team", "source", "tags"}
-	values := map[string][]string{
-		"type":        {"category.animation"},
-		"medium":      {"medium.webdl"},
-		"video_codec": {"video.h264"},
-		"audio_codec": {"audio.ddp"},
-		"resolution":  {"resolution.r1080p"},
-		"team":        {"team.hhweb"},
-		"source":      {"source.china"},
-		"tags":        {"tag.动画", "tag.完结"},
-	}
-	result := map[string]any{}
-	for _, cat := range cats {
-		m := map[string]any{}
-		for _, v := range values[cat] {
-			m[v] = v
-		}
-		result[cat] = m
-	}
-	return result
 }
