@@ -392,13 +392,34 @@ func (r *TorrentDataRepository) ListReviewedSeedParamsByHashes(ctx context.Conte
 		return nil, err
 	}
 	for _, row := range rows {
-		hash := strings.TrimSpace(fmt.Sprint(row["hash"]))
+		hash := stringValueFromCell(row["hash"])
 		if hash == "" {
 			continue
 		}
 		result[hash] = append(result[hash], row)
 	}
 	return result, nil
+}
+
+// stringValueFromCell 把数据库扫描出的单元格值安全转为字符串。
+// 参数/返回：value 为 Scan 到 map 的任意单元格值；返回字符串（[]byte 按字节转字符串
+// 而非 fmt.Sprint 的数组字面量；nil 返回空串）。
+// 失败场景：不适用。
+// 副作用：无。
+// 说明：MariaDB/MySQL driver 会把 TEXT 列 Scan 成 []byte——fmt.Sprint 对它输出
+// "[104 97 ...]" 字节数组字面量，导致按 hash 做 map key 的查找永远失配
+// （2026.11 一种多站 only_publishable 全空的根因）；SQLite 返回 string 不受影响。
+func stringValueFromCell(value any) string {
+	switch typed := value.(type) {
+	case nil:
+		return ""
+	case []byte:
+		return strings.TrimSpace(string(typed))
+	case string:
+		return strings.TrimSpace(typed)
+	default:
+		return strings.TrimSpace(fmt.Sprint(typed))
+	}
 }
 
 // ListTorrentsWithFilters 按维护列表查询条件读取可展示的下载器种子记录。

@@ -55,8 +55,7 @@ func (h *TorrentDataHandler) Data(c *gin.Context) {
 }
 
 func (h *TorrentDataHandler) RefreshData(c *gin.Context) {
-	c.JSON(http.StatusOK, h.service.RefreshData())
-}
+	c.JSON(http.StatusOK, h.service.RefreshData())}
 
 func (h *TorrentDataHandler) CachedSites(c *gin.Context) {
 	name := c.Query("name")

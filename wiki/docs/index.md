@@ -124,6 +124,10 @@
 
 # 更新日志
 
+### v4.6.23（2026.11.12）
+
+- 修复：MariaDB/MySQL 部署下一种多站页面全空——数据库 driver 把 TEXT 列 Scan 成 []byte，而新增的可发布判定按 fmt.Sprint 转字符串，[]byte 被输出成 [104 97 ...] 数组字面量：reviewedParams 的 hash key 全部失配（组全灭）、mediainfo/body 文本乱码（格式判定必败）、tags/title_components 解析丢失；现对 hash/文本/JSON/布尔四类单元格统一增加 []byte 分支（按字节转字符串），SQLite 不受影响（本地测试全绿而生产全空的 driver 差异根因）；crossseed 共用判定同步修复
+
 ### v4.6.22（2026.11.12）
 
 - 新增：一种多站页面只显示维护通过的种子——列表按「组内至少一颗种子的参数通过可发布判定」过滤（SQL 预筛 is_reviewed=1 + Go 侧精确判定映射/简介/MediaInfo，only_publishable 参数开关），转种源站候选限定为通过的副本；可发布判定抽为 persist 包公共函数，跨种列表与一种多站列表共用同一口径

@@ -184,6 +184,9 @@ func parseStringArrayData(value any) []string {
 			}
 		}
 		return result
+	case []byte:
+		// MariaDB/MySQL driver 把 TEXT 列 Scan 成 []byte——按 JSON 解析。
+		return parseStringArrayData(string(typed))
 	case string:
 		trimmed := strings.TrimSpace(typed)
 		if trimmed == "" {
@@ -206,6 +209,10 @@ func parseAnyArrayData(value any) []any {
 	if typed, ok := value.([]any); ok {
 		return typed
 	}
+	if typed, ok := value.([]byte); ok {
+		// MariaDB/MySQL driver 把 TEXT 列 Scan 成 []byte。
+		return parseAnyArrayData(string(typed))
+	}
 	if typed, ok := value.(string); ok {
 		trimmed := strings.TrimSpace(typed)
 		if trimmed == "" {
@@ -223,6 +230,9 @@ func boolFromAnyData(value any) bool {
 	switch typed := value.(type) {
 	case bool:
 		return typed
+	case []byte:
+		trimmed := strings.TrimSpace(string(typed))
+		return trimmed == "1" || strings.EqualFold(trimmed, "true")
 	case string:
 		trimmed := strings.TrimSpace(typed)
 		return trimmed == "1" || strings.EqualFold(trimmed, "true")
@@ -239,13 +249,21 @@ func boolFromAnyData(value any) bool {
 
 func toStringData(value any, fallback string) string {
 	switch typed := value.(type) {
+	case nil:
+		return fallback
+	case []byte:
+		// MariaDB/MySQL driver 把 TEXT 列 Scan 成 []byte——直接按字节转字符串，
+		// 不能走 fmt.Sprintf（会输出 "[104 97 ...]" 数组字面量）。
+		text := strings.TrimSpace(string(typed))
+		if text == "" {
+			return fallback
+		}
+		return text
 	case string:
 		if strings.TrimSpace(typed) == "" {
 			return fallback
 		}
 		return typed
-	case nil:
-		return fallback
 	default:
 		text := strings.TrimSpace(fmt.Sprintf("%v", value))
 		if text == "" {

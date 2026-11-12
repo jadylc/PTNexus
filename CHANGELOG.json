@@ -19,6 +19,13 @@
   ],
   "history": [
     {
+      "version": "v4.6.23",
+      "date": "2026.11.12",
+      "changes": [
+        "修复：MariaDB/MySQL 部署下一种多站页面全空——数据库 driver 把 TEXT 列 Scan 成 []byte，而新增的可发布判定按 fmt.Sprint 转字符串，[]byte 被输出成 [104 97 ...] 数组字面量：reviewedParams 的 hash key 全部失配（组全灭）、mediainfo/body 文本乱码（格式判定必败）、tags/title_components 解析丢失；现对 hash/文本/JSON/布尔四类单元格统一增加 []byte 分支（按字节转字符串），SQLite 不受影响（本地测试全绿而生产全空的 driver 差异根因）；crossseed 共用判定同步修复"
+      ]
+    },
+    {
       "version": "v4.6.22",
       "date": "2026.11.12",
       "changes": [

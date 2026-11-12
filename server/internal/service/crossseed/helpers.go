@@ -366,13 +366,21 @@ func toSet(values []string) map[string]struct{} {
 
 func toString(value any, fallback string) string {
 	switch typed := value.(type) {
+	case nil:
+		return fallback
+	case []byte:
+		// MariaDB/MySQL driver 把 TEXT 列 Scan 成 []byte——按字节转字符串，
+		// 不能走 fmt.Sprintf（会输出 "[104 97 ...]" 数组字面量）。
+		text := strings.TrimSpace(string(typed))
+		if text == "" {
+			return fallback
+		}
+		return text
 	case string:
 		if strings.TrimSpace(typed) == "" {
 			return fallback
 		}
 		return typed
-	case nil:
-		return fallback
 	default:
 		text := strings.TrimSpace(fmt.Sprintf("%v", value))
 		if text == "" {
