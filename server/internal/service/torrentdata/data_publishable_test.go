@@ -77,18 +77,14 @@ func TestGetDataOnlyPublishableShowsReviewedGroups(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetData returned error: %v", err)
 	}
-	// 二分第一步：SQL 预筛层（RequirePublishableCopy）单独验证——
-	// 不开 OnlyPublishable，手工开 filters 不行（GetData 内部组装），
-	// 改为直接调 repo.ListTorrentGroupKeysWithFilters 验证 join。
+	// 二分第一步：分组键查询层（不再有 SQL 预筛 join，所有分组都应返回）。
 	repo := repository.NewTorrentDataRepository(&repository.Store{DB: db, DBType: "sqlite"})
-	groupKeys, groupErr := repo.ListTorrentGroupKeysWithFilters(context.Background(), repository.TorrentListFilters{
-		RequirePublishableCopy: true,
-	})
+	groupKeys, groupErr := repo.ListTorrentGroupKeysWithFilters(context.Background(), repository.TorrentListFilters{})
 	if groupErr != nil {
 		t.Fatalf("ListTorrentGroupKeysWithFilters failed: %v", groupErr)
 	}
-	if len(groupKeys) != 1 || groupKeys[0].Name != "Adults.S01.2025" {
-		t.Fatalf("SQL prefilter expected 1 key [Adults.S01.2025], got %#v", groupKeys)
+	if len(groupKeys) != 2 {
+		t.Fatalf("expected 2 group keys (prefilter removed), got %#v", groupKeys)
 	}
 
 	// 二分第二步：Go 精确判定层（reviewedParams + IsRowPublishableData）。

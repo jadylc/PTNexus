@@ -61,9 +61,9 @@ func (s *TorrentDataService) GetData(ctx context.Context, params TorrentsDataPar
 		StateFilters:      params.StateFilters,
 		DownloaderFilters: params.DownloaderFilters,
 		ExcludeExisting:   params.ExcludeExisting,
-		// 只显示维护通过的种子：SQL 预筛"组内存在 is_reviewed=1 副本"，
-		// 精确判定（映射/简介/MediaInfo）在聚合后于 Go 侧完成。
-		RequirePublishableCopy: params.OnlyPublishable,
+		// OnlyPublishable 的过滤完全在 Go 层按 hash 精确判定（reviewedParams +
+		// IsRowPublishableData），不依赖 SQL 预筛 join——避免 MariaDB 下
+		// name/size 等值关联（排序规则/空格差异）把分组全滤掉。
 	}
 	databasePaginated := canPrePaginateTorrentGroups(params) && !params.OnlyPublishable
 	databasePaginatedTotal := 0

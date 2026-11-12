@@ -57,9 +57,6 @@ type TorrentListFilters struct {
 	DownloaderFilters []string
 	ExcludeExisting   bool
 	Groups            []TorrentNameSizeKey
-	// RequirePublishableCopy 只保留"存在维护通过副本（seed_parameters.is_reviewed=1）
-	// 的分组"——SQL 层必要条件预筛，精确判定（映射/简介/MediaInfo）在 Go 侧完成。
-	RequirePublishableCopy bool
 }
 
 // TorrentNameSizeKey 表示按种子名与体积聚合后的唯一业务分组。
@@ -501,20 +498,6 @@ func (r *TorrentDataRepository) buildTorrentListFromWhere(filters TorrentListFil
 	joins, joinArgs = appendTorrentGroupFilterJoin(joins, joinArgs, "path_match", "save_path", filters.PathFilters)
 	joins, joinArgs = appendTorrentGroupFilterJoin(joins, joinArgs, "state_match", "state", filters.StateFilters)
 	joins, joinArgs = appendTorrentGroupFilterJoin(joins, joinArgs, "downloader_match", "downloader_id", filters.DownloaderFilters)
-
-	if filters.RequirePublishableCopy {
-		// 只保留"存在维护通过副本"的分组（SQL 必要条件预筛：is_reviewed=1）。
-		joins += `
-		INNER JOIN (
-			SELECT DISTINCT t_rev.name AS name, t_rev.size AS size
-			FROM seed_parameters sp_rev
-			INNER JOIN torrents t_rev ON t_rev.hash = sp_rev.hash
-			WHERE sp_rev.is_reviewed = 1
-			  AND COALESCE(t_rev.is_hidden, 0) = 0
-			  AND TRIM(t_rev.name) != ''
-			  AND t_rev.size > 0
-		) publishable_groups ON publishable_groups.name = t.name AND publishable_groups.size = t.size`
-	}
 
 	if filters.ExcludeExisting {
 		// 与 ExistingSeedParameterGroups 同口径：按 hash 关联（抓取会规范化

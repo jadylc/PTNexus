@@ -124,6 +124,10 @@
 
 # 更新日志
 
+### v4.6.27（2026.11.12）
+
+- 修复：一种多站页面所有查询（含空搜）持续空白——only_publishable 的 SQL 预筛 INNER JOIN publishable_groups 按 name+size 等值关联，在 MariaDB 下因排序规则/尾随空格差异匹配不上，把主查询的 torrents 行全部滤空（而 metadata 查询无此 join 仍能返回 unique_paths，形成「有路径无数据」）；现移除该冗余预筛，维护通过判定完全由 Go 层按 hash 精确完成（reviewedParams + IsRowPublishableData），主查询与 metadata 口径一致
+
 ### v4.6.26（2026.11.12）
 
 - 修复：维护通过校验两入口口径统一——批量检测（autoCheckOneSeed）与维护面板「修改完成」保存此前校验项不同（保存路径无校验、批量检测全套），现共用 persist.CheckSeedMaintainability 同一函数：无法识别/海报/截图/正文完整性/标准参数/制作组/MediaInfo/格式全套校验，两个入口对同一行给出一致结论；修改完成不合规时拒绝保存（422）并提示具体问题
