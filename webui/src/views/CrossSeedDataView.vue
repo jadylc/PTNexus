@@ -1195,7 +1195,9 @@ const buildBatchCrossSeedPayload = (rows: SeedParameter[], targetSiteName: strin
 const routeToPublishLogs = async (queueGroupId?: string) => {
   await router.push({
     path: '/publish-logs',
-    query: (queueGroupId ? { queue_group_id: queueGroupId } : {}),
+    // 显式带 scene：跳转后覆盖发种日志页残留的已保存筛选；
+    // 新入队任务日志状态为 queued，不带 status（残留的 status=success 等会滤空列表）。
+    query: (queueGroupId ? { queue_group_id: queueGroupId, scene: 'multi_torrent' } : { scene: 'multi_torrent' }),
   })
 }
 

@@ -10,6 +10,34 @@ import (
 	"gorm.io/gorm"
 )
 
+// testValidMediainfo / testValidBody 是通过规范性校验的最小样例：
+// ValidateMediaInfoFormat 要求命中必需关键词组合；CheckIntroBodyCompleteness
+// 要求正文含 片名/产地/简介 三字段。
+const testValidMediainfo = `General
+Format                                   : Matroska
+File size                                : 5.87 GiB
+Duration                                 : 33 min 58 s
+Overall bit rate                         : 24.7 Mb/s
+
+Video
+Format                                   : HEVC
+Width                                    : 3 840 pixels
+Height                                   : 2 160 pixels
+
+Audio
+Format                                   : E-AC-3
+Language                                 : English
+
+Text #1
+Format                                   : UTF-8
+Language                                 : Mandarin
+`
+
+const testValidBody = `◎片名　Example Movie
+◎产地　美国
+◎简介　This is a test synopsis for the example movie used in fixtures.
+`
+
 func newCrossSeedTestStore(t testing.TB) *repository.Store {
 	t.Helper()
 
@@ -31,7 +59,9 @@ func newCrossSeedTestStore(t testing.TB) *repository.Store {
 		`CREATE TABLE sites (
 			site TEXT,
 			nickname TEXT,
-			migration INTEGER DEFAULT 1
+			migration INTEGER DEFAULT 1,
+			cookie TEXT DEFAULT '',
+			passkey TEXT DEFAULT ''
 		)`,
 		`CREATE TABLE seed_parameters (
 			hash TEXT NOT NULL,
@@ -50,6 +80,8 @@ func newCrossSeedTestStore(t testing.TB) *repository.Store {
 			tags TEXT,
 			title_components TEXT,
 			screenshot_review_status TEXT,
+			mediainfo TEXT,
+			body TEXT,
 			is_reviewed INTEGER DEFAULT 0,
 			created_at TEXT,
 			updated_at TEXT
@@ -130,10 +162,11 @@ func insertCrossSeedReviewRow(t *testing.T, db *gorm.DB, torrentID string, title
 	mustExecCrossSeedTest(t, db, `INSERT INTO seed_parameters (
 		hash, torrent_id, site_name, nickname, title, subtitle, type, medium, video_codec,
 		audio_codec, resolution, team, source, tags, title_components,
-		screenshot_review_status, is_reviewed, created_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		screenshot_review_status, mediainfo, body, is_reviewed, created_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		hash, torrentID, "hdsky", "HDSky", title, "", "category.movie", "medium.bluray", "video.h264",
-		"audio.dts", "resolution.r1080p", team, "", tags, titleComponents, "none", isReviewed, "2026-04-14 10:00:00", "2026-04-14 10:00:00")
+		"audio.dts", "resolution.r1080p", team, "", tags, titleComponents, "none",
+		testValidMediainfo, testValidBody, isReviewed, "2026-04-14 10:00:00", "2026-04-14 10:00:00")
 	mustExecCrossSeedTest(t, db, `INSERT INTO torrents (hash, name, size, save_path, downloader_id, state, last_seen, sites, is_hidden)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`,
 		hash, title, 100, "/downloads", "qb-1", "做种中", "2026-04-14 10:00:00", "HDSky")

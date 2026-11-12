@@ -140,8 +140,10 @@ func (s *CrossSeedService) queryDataUncached(params CrossSeedQueryParams) (map[s
 	whereConditions := make([]string, 0)
 	args := make([]any, 0)
 
-	// 过滤仅保留视频类型，排除电子书、有声书、音乐、软件、游戏等非视频内容
-	whereConditions = append(whereConditions, "sp.type IN ('category.movie', 'category.tv_series', 'category.animation', 'category.documentaries', 'category.tv_shows')")
+	// 排除明确的非视频类别（电子书/软件/学习/游戏），与一种多站页面口径对齐
+	// （那边不按 type 过滤）——此前只放行 5 类视频，短剧/音乐/MV/空类型的种子
+	// 在维护列表缺失、在一站多站却可见，两边对不上。
+	whereConditions = append(whereConditions, `(sp.type IS NULL OR sp.type = '' OR sp.type NOT IN ('category.ebook', 'category.software', 'category.study', 'category.game'))`)
 
 	search := strings.TrimSpace(params.Search)
 	if search != "" {

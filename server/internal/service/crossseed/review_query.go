@@ -23,7 +23,9 @@ func (s *CrossSeedService) queryReviewFilteredData(params CrossSeedQueryParams, 
 	fromClause := "FROM seed_parameters sp"
 	fromArgs := make([]any, 0)
 	whereConditions := []string{
-		"sp.type IN ('category.movie', 'category.tv_series', 'category.animation', 'category.documentaries', 'category.tv_shows')",
+		// 与普通路径同口径：只排除明确的非视频类别（电子书/软件/学习/游戏），
+		// 短剧/音乐/MV/空类型保留，避免与一种多站页面对不上。
+		"(sp.type IS NULL OR sp.type = '' OR sp.type NOT IN ('category.ebook', 'category.software', 'category.study', 'category.game'))",
 	}
 	args := make([]any, 0)
 	if search := strings.TrimSpace(params.Search); search != "" {
@@ -74,6 +76,7 @@ func (s *CrossSeedService) queryReviewFilteredData(params CrossSeedQueryParams, 
 		SELECT sp.hash, sp.torrent_id, sp.site_name,
 		       sp.type, sp.medium, sp.video_codec, sp.audio_codec, sp.resolution,
 		       sp.team, sp.source, sp.tags, sp.title_components, sp.is_reviewed,
+		       sp.mediainfo, sp.body,
 		       %s
 		%s
 		WHERE %s
@@ -194,9 +197,11 @@ func (s *CrossSeedService) loadCrossSeedPageDetails(pageRows []map[string]any, r
 		SELECT sp.hash, sp.torrent_id, sp.site_name, sp.nickname,
 		       COALESCE(ct.save_path, '') AS save_path,
 		       ct.downloader_id AS downloader_id,
+		       COALESCE(ct.size, 0) AS size,
 		       sp.title, sp.subtitle, sp.type, sp.medium, sp.video_codec,
 		       sp.audio_codec, sp.resolution, sp.team, sp.source, sp.tags,
 		       sp.title_components, sp.screenshot_review_status,
+		       sp.mediainfo, sp.body,
 		       %s,
 		       sp.is_reviewed, sp.updated_at
 		FROM seed_parameters sp
@@ -273,7 +278,11 @@ func stringsToAny(values []string) []any {
 }
 
 func (s *CrossSeedService) buildCrossSeedQueryResult(params CrossSeedQueryParams, pageData []map[string]any, total int, reverseMappings map[string]any) (map[string]any, error) {
-	targetSites, err := s.repo.RawStrings("SELECT nickname FROM sites WHERE migration IN (2, 3) ORDER BY nickname", "nickname")
+	// 目标站下拉只显示"可用"站点：migration=2/3 且凭据非空（Cookie 或 Pass Key
+	// 任一即可，与发布侧鉴权口径一致）——未配置凭据的站发布必失败，不应出现在候选里。
+	targetSites, err := s.repo.RawStrings(
+		"SELECT nickname FROM sites WHERE migration IN (2, 3) AND (COALESCE(cookie, '') != '' OR COALESCE(passkey, '') != '') ORDER BY nickname",
+		"nickname")
 	if err != nil {
 		targetSites = []string{}
 	}

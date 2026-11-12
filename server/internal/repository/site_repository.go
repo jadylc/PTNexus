@@ -43,6 +43,10 @@ func (r *SiteRepository) ListSourceAndTargetSites() ([]string, []string, error) 
 	targetRows, err := sqlDB.Query(`
 		SELECT nickname FROM sites
 		WHERE (migration = 2 OR migration = 3)
+		AND (
+			(COALESCE(cookie, '') != '')
+			OR (COALESCE(passkey, '') != '')
+		)
 		ORDER BY nickname
 	`)
 	if err != nil {

@@ -7,6 +7,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	processingmedia "github.com/pt-nexus/server/internal/service/processing/media"
+	processingrepair "github.com/pt-nexus/server/internal/service/processing/repair"
 )
 
 func parseISOTime(raw string) (time.Time, error) {
@@ -165,6 +168,27 @@ func isRowPublishable(item map[string]any, reverseMappings map[string]any) bool 
 		}
 	}
 
+	// MediaInfo 规范性：空或格式无效（既非 MediaInfo 也非 BDInfo，含命中禁止模式）
+	// 视为不规范，不允许发布——与抓取修复的"不规范"判定同源
+	// （processingmedia.ValidateMediaInfoFormat）。
+	mediainfo := strings.TrimSpace(toString(item["mediainfo"], ""))
+	if mediainfo == "" {
+		return false
+	}
+	if isMediainfo, isBDInfo, _ := processingmedia.ValidateMediaInfoFormat(mediainfo); !isMediainfo && !isBDInfo {
+		return false
+	}
+
+	// 简介规范性：正文为空，或缺少关键字段（片名/产地/简介）视为不规范，
+	// 与维护面板批转检测（CheckIntroBodyCompleteness）同口径。
+	body := strings.TrimSpace(toString(item["body"], ""))
+	if body == "" {
+		return false
+	}
+	if completeness := processingrepair.CheckIntroBodyCompleteness(body); !completeness.IsComplete {
+		return false
+	}
+
 	tags := parseStringArray(item["tags"])
 	if hasRestrictedStandardTag(tags) {
 		return false
@@ -237,6 +261,22 @@ func hasRowDataProblem(titleComponents []any, item map[string]any, reverseMappin
 		if !isValidStandardValue(value) || !isStandardValueMapped(reverseMappings, category, value) {
 			return true
 		}
+	}
+
+	// MediaInfo / 简介不规范同样计入数据问题（与 isRowPublishable 同口径）。
+	mediainfo := strings.TrimSpace(toString(item["mediainfo"], ""))
+	if mediainfo == "" {
+		return true
+	}
+	if isMediainfo, isBDInfo, _ := processingmedia.ValidateMediaInfoFormat(mediainfo); !isMediainfo && !isBDInfo {
+		return true
+	}
+	body := strings.TrimSpace(toString(item["body"], ""))
+	if body == "" {
+		return true
+	}
+	if completeness := processingrepair.CheckIntroBodyCompleteness(body); !completeness.IsComplete {
+		return true
 	}
 	return false
 }

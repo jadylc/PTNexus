@@ -1669,8 +1669,9 @@ const enqueueDirectTransfer = async () => {
     void fetchDataWithoutLoadingControl()
     await router.push({
       path: '/publish-logs',
+      // 只按 queue_group_id + scene 定位本批次全部日志（queued/success/failed 均可见）；
+      // 不带 status：队列任务状态流转快，固定 queued 会把已完成条目滤掉显示不全。
       query: buildDirectTransferRouteTarget({
-        status: 'queued',
         queueGroupId: String(response.data.group_id),
       }).query,
     })
