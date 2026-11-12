@@ -199,6 +199,16 @@ def delete_release_asset(owner: str, repo: str, release_id: int, asset_id: int, 
     api_request("DELETE", url, token)
 
 
+def tag_version_key(item: dict[str, Any]) -> tuple[int, ...]:
+    """tag 的版本号排序键（'v4.6.9' → (4, 6, 9)，数字段按数值比较）。"""
+    tag = str(item.get("tag_name", "")).strip()
+    parts = []
+    for chunk in tag.lstrip("vV").split("."):
+        digits = "".join(ch for ch in chunk if ch.isdigit())
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts)
+
+
 def prune_old_release_assets(
     owner: str,
     repo: str,
@@ -221,10 +231,12 @@ def prune_old_release_assets(
     except RuntimeError as exc:
         return [f"list releases failed, skip pruning: {exc}"]
 
-    # 目标版本及其前 keep_releases-1 个（按 tag 名排序不可靠，用 API 返回顺序，
-    # Gitee 按创建时间倒序）；当前 release 无论多旧都保留（正在上传）。
+    # Gitee releases 列表 API 不保证排序（默认创建时间正序，direction=desc
+    # 不可靠）——不能按返回顺序取"最近 N 个"，否则会保留最老的版本。
+    # 改为按 tag 的版本号排序（tag 形如 v4.6.23）。
+    sorted_releases = sorted(releases, key=tag_version_key, reverse=True)
     keep_tags: set[str] = set()
-    for item in releases[:keep_releases]:
+    for item in sorted_releases[:keep_releases]:
         tag = str(item.get("tag_name", "")).strip()
         if tag:
             keep_tags.add(tag)
