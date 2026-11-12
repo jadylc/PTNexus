@@ -59,6 +59,16 @@ func ApplyManualUpdateFromPayload(
 	standardized := buildResult.Standardized
 	record := buildResult.Record
 
+	// 维护通过的规范性把关（v4.6.20 需求：简介/媒体信息不规范不允许通过）：
+	// is_reviewed 置 true 前校验 MediaInfo 与简介，不合规拒绝保存——
+	// 用户在面板里修复后再点完成。
+	if problems := ValidateMaintenanceCompletion(record); len(problems) > 0 {
+		return map[string]any{
+			"success": false,
+			"message": "维护未通过，无法保存：" + strings.Join(problems, "；"),
+		}, 422
+	}
+
 	applyManualUpdateTeamAcknowledgment(repo, record)
 	if err := repo.UpsertSeedParameter(record); err != nil {
 		return map[string]any{"success": false, "message": "更新失败: " + err.Error()}, 500

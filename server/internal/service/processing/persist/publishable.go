@@ -9,16 +9,21 @@ import (
 	processingrepair "github.com/pt-nexus/server/internal/service/processing/repair"
 )
 
-// 本文件提供"行是否可发布（维护通过）"的统一判定，供跨种列表（crossseed）
-// 与一种多站列表（torrentdata）共用同一口径：
-//   字段齐全且映射有效 + 无禁转标签 + 无无法识别标题 + MediaInfo 规范 + 简介规范。
+// 本文件提供行级判定，供跨种列表（crossseed）与一种多站列表（torrentdata）共用：
+//   - IsRowPublishableData：发布资格 = 已审核 + 字段映射有效 + 无禁转标签；
+//   - ValidateMaintenanceCompletion：维护通过的规范性把关（MediaInfo/简介），
+//     由维护入口（面板"修改完成"、列表"批量检测"）在置 is_reviewed 前调用。
+//
+// 「无法识别」与 MediaInfo/简介规范性属维护质量检查，不在转种列表判死——
+// 存量老数据（is_reviewed=1 但标题含无法识别）仍可转种，用户重新维护时由
+// 维护入口自然修复。
 
 // publishableFieldCategories 参与有效性校验的标准字段类别。
 var publishableFieldCategories = []string{"type", "medium", "video_codec", "audio_codec", "resolution", "team", "source"}
 
-// IsRowPublishableData 判断一行种子参数是否"维护通过"（可发布）。
-// 参数/返回：item 为行数据 map（标准化字段、tags、title_components、mediainfo、body、
-// is_reviewed、is_deleted）；reverseMappings 为反向映射表；返回是否可发布。
+// IsRowPublishableData 判断一行种子参数是否"可转种"（发布资格判定）。
+// 参数/返回：item 为行数据 map（标准化字段、tags、is_reviewed、is_deleted）；
+// reverseMappings 为反向映射表；返回是否可转种。
 // 失败场景：不适用。
 // 副作用：无。
 func IsRowPublishableData(item map[string]any, reverseMappings map[string]any) bool {
@@ -36,24 +41,6 @@ func IsRowPublishableData(item map[string]any, reverseMappings map[string]any) b
 		}
 	}
 
-	// MediaInfo 规范性：空或格式无效（既非 MediaInfo 也非 BDInfo）判不规范。
-	mediainfo := strings.TrimSpace(toStringData(item["mediainfo"], ""))
-	if mediainfo == "" {
-		return false
-	}
-	if isMediainfo, isBDInfo, _ := processingmedia.ValidateMediaInfoFormat(mediainfo); !isMediainfo && !isBDInfo {
-		return false
-	}
-
-	// 简介规范性：正文为空或缺关键字段（片名/产地/简介）判不规范。
-	body := strings.TrimSpace(toStringData(item["body"], ""))
-	if body == "" {
-		return false
-	}
-	if completeness := processingrepair.CheckIntroBodyCompleteness(body); !completeness.IsComplete {
-		return false
-	}
-
 	tags := parseStringArrayData(item["tags"])
 	if hasRestrictedStandardTagData(tags) {
 		return false
@@ -64,7 +51,35 @@ func IsRowPublishableData(item map[string]any, reverseMappings map[string]any) b
 		}
 	}
 
-	return !hasUnrecognizedValueData(parseAnyArrayData(item["title_components"]))
+	return true
+}
+
+// ValidateMaintenanceCompletion 维护通过前的规范性校验（维护面板"修改完成"、
+// 批量检测共用口径）：MediaInfo 与简介必须规范。
+// 参数/返回：item 为行数据（mediainfo、body）；返回问题列表（空 = 通过）。
+// 失败场景：不适用。
+// 副作用：无。
+// 说明：v4.6.20 用户需求"简介或媒体信息不规范时不允许通过"的把关位置——
+// 校验在 is_reviewed 写入前，不在转种列表过滤端。
+func ValidateMaintenanceCompletion(item map[string]any) []string {
+	problems := make([]string, 0)
+
+	mediainfo := strings.TrimSpace(toStringData(item["mediainfo"], ""))
+	if mediainfo == "" {
+		problems = append(problems, "MediaInfo 为空")
+	} else if isMediainfo, isBDInfo, reason := processingmedia.ValidateMediaInfoFormat(mediainfo); !isMediainfo && !isBDInfo {
+		problems = append(problems, "MediaInfo 格式无效: "+reason)
+	}
+
+	body := strings.TrimSpace(toStringData(item["body"], ""))
+	if body == "" {
+		problems = append(problems, "简介正文为空")
+	} else if completeness := processingrepair.CheckIntroBodyCompleteness(body); !completeness.IsComplete {
+		problems = append(problems,
+			"简介缺少关键字段: "+strings.Join(completeness.MissingFields, "、"))
+	}
+
+	return problems
 }
 
 // HasRowDataProblemData 判断行是否存在数据问题（错误分类口径，与可发布判定互补共用）。

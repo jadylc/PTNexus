@@ -186,20 +186,31 @@ func TestQueryDataReviewStatusUsesPublishableClassification(t *testing.T) {
 	if err != nil {
 		t.Fatalf("QueryData reviewed returned error: %v", err)
 	}
-	if reviewed["total"].(int) != 1 {
-		t.Fatalf("expected reviewed total 1, got %#v", reviewed["total"])
+
+	// 分类语义（无法识别不再拦截转种——把关移到维护入口）：
+	// reviewed = 可转种：1001（健康）+ 1004（含无法识别但映射有效，仍可转）；
+	// unreviewed = 不可转且无维护问题：1003（禁转，业务约束）；
+	// error = 有维护问题：1002（映射无效）。1004 在 reviewed 分类中出现
+	// （分类优先级 reviewed > error），但其"无法识别"问题仍会引导用户维护。
+	if reviewed["total"].(int) != 2 {
+		t.Fatalf("expected reviewed total 2, got %#v", reviewed["total"])
 	}
-	data := reviewed["data"].([]map[string]any)
-	if len(data) != 1 || data[0]["torrent_id"] != "1001" {
-		t.Fatalf("expected only publishable row in reviewed data, got %#v", data)
+	reviewedIDs := map[string]struct{}{}
+	for _, row := range reviewed["data"].([]map[string]any) {
+		if id, ok := row["torrent_id"].(string); ok {
+			reviewedIDs[id] = struct{}{}
+		}
+	}
+	for _, want := range []string{"1001", "1004"} {
+		if _, ok := reviewedIDs[want]; !ok {
+			t.Fatalf("expected %s in reviewed classification, got %#v", want, reviewedIDs)
+		}
 	}
 
 	unreviewed, err := service.QueryData(CrossSeedQueryParams{Page: 1, PageSize: 20, ReviewStatus: "unreviewed"})
 	if err != nil {
 		t.Fatalf("QueryData unreviewed returned error: %v", err)
 	}
-	// 新语义：待检查只保留"无数据问题但不可发布"的行——Restricted（禁转属业务约束）1 条；
-	// BadTeam（字段值非法）与 Unrecognized（含无法识别字段）归入"错误"。
 	if unreviewed["total"].(int) != 1 {
 		t.Fatalf("expected unreviewed total 1, got %#v", unreviewed["total"])
 	}
@@ -208,24 +219,18 @@ func TestQueryDataReviewStatusUsesPublishableClassification(t *testing.T) {
 		t.Fatalf("expected only business-restricted row in unreviewed data, got %#v", unreviewedData)
 	}
 
-	// 错误 = 未删除但存在数据问题（字段值未映射 / 含无法识别字段）。
+	// 错误 = 未删除但存在维护问题（映射无效）；1004 因 reviewed 分类优先，
+	// 不再归入 error——其"无法识别"由维护入口把关。
 	errorsResult, err := service.QueryData(CrossSeedQueryParams{Page: 1, PageSize: 20, ReviewStatus: "error"})
 	if err != nil {
 		t.Fatalf("QueryData error returned error: %v", err)
 	}
-	if errorsResult["total"].(int) != 2 {
-		t.Fatalf("expected error total 2, got %#v", errorsResult["total"])
+	if errorsResult["total"].(int) != 1 {
+		t.Fatalf("expected error total 1, got %#v", errorsResult["total"])
 	}
-	errorIDs := map[string]struct{}{}
-	for _, row := range errorsResult["data"].([]map[string]any) {
-		if id, ok := row["torrent_id"].(string); ok {
-			errorIDs[id] = struct{}{}
-		}
-	}
-	for _, want := range []string{"1002", "1004"} {
-		if _, ok := errorIDs[want]; !ok {
-			t.Fatalf("expected %s in error classification, got %#v", want, errorIDs)
-		}
+	errorData := errorsResult["data"].([]map[string]any)
+	if len(errorData) != 1 || errorData[0]["torrent_id"] != "1002" {
+		t.Fatalf("expected only BadTeam row in error classification, got %#v", errorData)
 	}
 }
 

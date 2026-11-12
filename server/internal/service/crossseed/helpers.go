@@ -260,7 +260,9 @@ func matchesReviewStatus(item map[string]any, reviewStatus string) bool {
 	case "unreviewed":
 		return !deleted && !publishable && !hasProblem
 	case "error":
-		return !deleted && hasProblem
+		// 分类互斥：可转种的行（含无法识别等可维护提示的）不归入错误——
+		// 发布资格判定已放行（无法识别不再拦转种），维护提示由维护入口把关。
+		return !deleted && hasProblem && !publishable
 	case "deleted":
 		return deleted
 	default:
