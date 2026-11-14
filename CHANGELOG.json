@@ -19,6 +19,13 @@
   ],
   "history": [
     {
+      "version": "v4.6.36",
+      "date": "2026.11.14",
+      "changes": [
+        "修复：x264/x265 源种媒介被系统性误判为 Encode（WEB-DL 种子最终变 medium.encode）——MediaInfo 的 Encoding settings 编码器参数行含 bluray_compat=0，其中 bluray 字样被媒介推断当成蓝光标记，推出 medium.bluray 后再被末端规则按「蓝光+有 MediaInfo=压片」改成 encode；现清洗媒体文本时整体剔除 Encoding settings/编码设置 行（纯编码参数不含媒介信息），所有带该行的源种媒介识别恢复正常"
+      ]
+    },
+    {
       "version": "v4.6.35",
       "date": "2026.11.14",
       "changes": [

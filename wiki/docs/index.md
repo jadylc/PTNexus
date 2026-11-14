@@ -124,6 +124,10 @@
 
 # 更新日志
 
+### v4.6.36（2026.11.14）
+
+- 修复：x264/x265 源种媒介被系统性误判为 Encode（WEB-DL 种子最终变 medium.encode）——MediaInfo 的 Encoding settings 编码器参数行含 bluray_compat=0，其中 bluray 字样被媒介推断当成蓝光标记，推出 medium.bluray 后再被末端规则按「蓝光+有 MediaInfo=压片」改成 encode；现清洗媒体文本时整体剔除 Encoding settings/编码设置 行（纯编码参数不含媒介信息），所有带该行的源种媒介识别恢复正常
+
 ### v4.6.35（2026.11.14）
 
 - 修复：憨憨源站媒介被错误改成 Encode（详情页「媒介」明明是 WEB-DL）——站点明确给出的标准值此前会被标题/MediaInfo 推断值覆盖，推断成 bluray 后又在 finalize 阶段按「bluray + 有 MediaInfo = 压片」改成 medium.encode；现站点明确标准值（形如 medium.xxx 且非 other）优先于推断值，只有站点缺失或为 other 时才用推断补
