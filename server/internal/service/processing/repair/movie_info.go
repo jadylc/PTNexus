@@ -226,7 +226,10 @@ func logFetchMovieInfoResult(mediaType, source string, result MovieInfoResult, n
 }
 
 // reCSPTTokenIssue 匹配财神 PTGen（cspt.top）令牌失效/无效类错误特征。
-var reCSPTTokenIssue = regexp.MustCompile(`(?i)(token|令牌|授权|登录|密钥|无效|过期|失效|unauthorized|forbidden|401|403)`)
+// 只收精确的令牌/鉴权特征——不能用「无效」「过期」「授权」这类宽泛词：
+// PTGen 超时的业务错误是「GET响应无效: api failed: 查询超时…」，
+// 「响应无效」曾命中「无效」被误报为令牌异常（2026.11 实测）。
+var reCSPTTokenIssue = regexp.MustCompile(`(?i)(token|令牌|密钥|apikey|api[_ ]?key|unauthorized|forbidden|未授权|鉴权失败|401|403)`)
 
 // isCSPTCandidate 判断候选地址是否为财神 PTGen（cspt.top）。
 func isCSPTCandidate(candidate string) bool {
