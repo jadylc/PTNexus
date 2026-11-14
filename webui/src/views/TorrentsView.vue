@@ -1323,6 +1323,27 @@ const fetchDirectTransferSeedData = async (sourceSite: SourceSiteOption, torrent
     row.downloaderId ||
     (row.downloaderIds && row.downloaderIds.length > 0 ? row.downloaderIds[0] : '')
 
+  // 一种多站只展示"维护通过"的种子，参数已在 seed_parameters 中——
+  // 先直接读库，命中即用，不再重新抓取源站（抓取只作为兜底）。
+  const dbResponse = await axios.get('/api/migrate/get_db_seed_info', {
+    params: {
+      torrent_id: torrentId,
+      site_name: sourceSiteIdentifier,
+    },
+    timeout: 120000,
+  })
+
+  if (dbResponse.data?.success && dbResponse.data?.data) {
+    directTransferTaskId.value = String(dbResponse.data?.task_id || '')
+    directTransferUploadData.value = {
+      ...dbResponse.data.data,
+      save_path: row.save_path,
+    }
+    directTransferSourceSite.value = sourceSite.siteName
+    return
+  }
+
+  // 兜底：库中未命中（正常流程不会发生，列表已按维护通过过滤）时才抓取源站。
   const taskId = `direct_${torrentId}_${Date.now()}`
   const storeResponse = await axios.post(
     '/api/migrate/fetch_and_store',
@@ -1338,7 +1359,7 @@ const fetchDirectTransferSeedData = async (sourceSite: SourceSiteOption, torrent
     { timeout: 600000 },
   )
 
-  const dbResponse = await axios.get('/api/migrate/get_db_seed_info', {
+  const fallbackDbResponse = await axios.get('/api/migrate/get_db_seed_info', {
     params: {
       torrent_id: torrentId,
       site_name: sourceSiteIdentifier,
@@ -1346,13 +1367,15 @@ const fetchDirectTransferSeedData = async (sourceSite: SourceSiteOption, torrent
     timeout: 600000,
   })
 
-  if (!dbResponse.data?.success || !dbResponse.data?.data) {
-    throw new Error(dbResponse.data?.message || dbResponse.data?.error || '读取抓取结果失败')
+  if (!fallbackDbResponse.data?.success || !fallbackDbResponse.data?.data) {
+    throw new Error(
+      fallbackDbResponse.data?.message || fallbackDbResponse.data?.error || '读取抓取结果失败',
+    )
   }
 
   directTransferTaskId.value = String(storeResponse.data?.task_id || taskId)
   directTransferUploadData.value = {
-    ...dbResponse.data.data,
+    ...fallbackDbResponse.data.data,
     save_path: row.save_path,
   }
   directTransferSourceSite.value = sourceSite.siteName
@@ -1398,7 +1421,7 @@ const confirmSourceSiteAndProceed = async (sourceSite: SourceSiteOption | null) 
 
   const sourceSiteIdentifier =
     allSourceSitesStatus.value.find((s) => s.name === siteName)?.site || siteName.toLowerCase()
-  ElMessage.success(`正在准备站点 [${siteName}] 的转种数据，抓取源站数据可能耗时较长，请耐心等待...`)
+  ElMessage.success(`正在加载站点 [${siteName}] 已维护的种子数据...`)
   const sourceInfo: ISourceInfo = {
     name: siteName,
     site: sourceSiteIdentifier,
