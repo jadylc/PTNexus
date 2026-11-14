@@ -133,17 +133,27 @@ func CheckSeedMaintainability(normalized map[string]any) []string {
 	if team == "" {
 		team = stdParams["team"]
 	}
+	// 参数名用中文，便于用户在面板直接对应；附英文键便于核对标准值。
+	paramLabels := map[string]string{
+		"type":        "类型",
+		"medium":      "媒介",
+		"video_codec": "视频编码",
+		"audio_codec": "音频编码",
+		"resolution":  "分辨率",
+		"team":        "制作组",
+		"source":      "产地",
+	}
 	for _, key := range []string{"type", "medium", "video_codec", "audio_codec", "resolution"} {
 		if stdParams[key] == "" {
-			problems = append(problems, fmt.Sprintf("标准参数 %s 为空", key))
+			problems = append(problems, fmt.Sprintf("%s未填写（%s）", paramLabels[key], key))
 		}
 	}
 
 	// 5. 制作组非空且非 NOGROUP
 	if team == "" {
-		problems = append(problems, "无制作组")
+		problems = append(problems, "制作组未识别，请在面板手动选择")
 	} else if strings.EqualFold(team, "NOGROUP") {
-		problems = append(problems, "制作组为 NOGROUP")
+		problems = append(problems, "制作组为 NOGROUP，请在面板手动选择")
 	}
 
 	// 6. mediainfo 有效
@@ -158,13 +168,13 @@ func CheckSeedMaintainability(normalized map[string]any) []string {
 	for _, key := range []string{"type", "medium", "video_codec", "audio_codec", "resolution", "team", "source"} {
 		value := stdParams[key]
 		if value != "" && !flexibleMaintainabilityValueRegex.MatchString(value) {
-			problems = append(problems, fmt.Sprintf("标准参数 %s 格式无效: %s", key, value))
+			problems = append(problems, fmt.Sprintf("%s格式不正确（%s=%s），应为 xxx.yyy 形式", paramLabels[key], key, value))
 		}
 	}
 	for _, tag := range tags {
 		trimmed := strings.TrimSpace(tag)
 		if trimmed != "" && !flexibleMaintainabilityValueRegex.MatchString(trimmed) {
-			problems = append(problems, fmt.Sprintf("标签格式无效: %s", trimmed))
+			problems = append(problems, fmt.Sprintf("标签格式不正确（%s），应为 tag.xxx 形式", trimmed))
 		}
 	}
 

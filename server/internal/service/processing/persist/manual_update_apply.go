@@ -62,11 +62,15 @@ func ApplyManualUpdateFromPayload(
 	// 维护通过的规范性把关（与批量检测同一口径）：面板保存的产物先过
 	// NormalizeSeedRow（得到与批量检测同形态的行），再跑统一校验——
 	// 不合规拒绝保存并提示具体问题，用户修复后再点完成。
+	// 注意：必须把标准化参数并进校验行——批量检测的 QueryAndNormalizeSeed
+	// 自带 standardized_params，面板保存产物需手动补上，否则校验会把已填写的
+	// 标准参数一律判为空（2026.11 误报「标准参数 type 为空」的根因）。
 	normalizedRecord := NormalizeSeedRow(record)
+	normalizedRecord["standardized_params"] = standardized
 	if problems := CheckSeedMaintainability(normalizedRecord); len(problems) > 0 {
 		return map[string]any{
 			"success": false,
-			"message": "维护未通过，无法保存：" + strings.Join(problems, "；"),
+			"message": "维护未通过，请补全以下内容后重试：" + strings.Join(problems, "；"),
 		}, 422
 	}
 
