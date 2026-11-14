@@ -316,7 +316,10 @@ func applyHHanClubBasicInfo(data *SeedData, info map[string]string, runtime Runt
 		}
 	}
 
-	rawSource := strings.TrimSpace(firstNonEmpty(info["处理"], info["来源"]))
+	// 「来源」是产地/片源字段，「处理」是制作处理方式（如英剧/Encode/DIY）。
+	// 必须先取「来源」——此前把「处理」放在前面，详情页「处理: 英剧」会顶掉
+	// 正确的「来源: WEB-DL」（2026.11 实测）。
+	rawSource := strings.TrimSpace(firstNonEmpty(info["来源"], info["处理"]))
 	if rawSource != "" {
 		hints = appendHHanClubNonEmpty(hints, rawSource)
 		if mapped := mapHHanClubSource(rawSource); mapped != "" {
