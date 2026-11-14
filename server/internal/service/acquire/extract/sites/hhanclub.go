@@ -546,7 +546,25 @@ func preferHHanClubValue(current, candidate string, defaults ...string) string {
 			return existing
 		}
 	}
+	// 站点详情页明确给出的标准值优先于标题/MediaInfo 推断值：
+	// 憨憨「媒介」栏是发布者选的权威字段，推断（inferred）只是标题猜的。
+	// 此前推断值会覆盖站点值——详情页写 WEB-DL、而 MediaInfo 里出现 BluRay 字样时，
+	// 媒介被推成 bluray，随后 finalize 的 NormalizeMediumByMediaType 按
+	// 「bluray + 有 MediaInfo = 压片」改成 medium.encode（2026.11 实测）。
+	if isAuthoritativeSiteStandardValue(existing) {
+		return existing
+	}
 	return next
+}
+
+// isAuthoritativeSiteStandardValue 判断站点直接给出的值是否为明确的标准键
+// （形如 medium.xxx / video.xxx 且不是 other 占位）。
+func isAuthoritativeSiteStandardValue(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || !strings.Contains(trimmed, ".") {
+		return false
+	}
+	return !strings.HasSuffix(trimmed, ".other")
 }
 
 func extractHHanClubTags(doc *xhtml.Node) []string {

@@ -342,6 +342,10 @@ cd webui && pnpm run lint           # 前端 lint
 
 # 更新日志
 
+### v4.6.35（2026.11.14）
+
+- 修复：憨憨源站媒介被错误改成 Encode（详情页「媒介」明明是 WEB-DL）——站点明确给出的标准值此前会被标题/MediaInfo 推断值覆盖，推断成 bluray 后又在 finalize 阶段按「bluray + 有 MediaInfo = 压片」改成 medium.encode；现站点明确标准值（形如 medium.xxx 且非 other）优先于推断值，只有站点缺失或为 other 时才用推断补
+
 ### v4.6.34（2026.11.14）
 
 - 修复：憨憨（HHWEB）源站「来源」被「处理」字段顶替——原逻辑优先取「处理」（如英剧），导致产地误判为英国（source.uk）而真正的来源 WEB-DL 被丢弃；现改为「来源」优先、「处理」兜底
