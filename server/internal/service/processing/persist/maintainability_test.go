@@ -1,71 +1,57 @@
 package persist
 
 import (
+	"strings"
 	"testing"
 )
 
-// TestCheckSeedMaintainabilityWithStandardizedParams 回归 2026.11 误报：
-// 面板保存路径曾把"标准化参数未并入校验行"当成"标准参数全空"，导致
-// 填了参数也保存不了。这里验证 standardized_params 齐全时校验通过。
-func TestCheckSeedMaintainabilityWithStandardizedParams(t *testing.T) {
+// TestCheckSeedMaintainabilityOnlyIntroAndMediainfo 校验口径回归：
+// 只校验简介与媒体信息两项——标题含"无法识别"、海报/截图/标准参数缺失、
+// 制度组缺失等均不应拦截（2026.11 用户明确要求）。
+func TestCheckSeedMaintainabilityOnlyIntroAndMediainfo(t *testing.T) {
 	row := map[string]any{
-		"title_components": `[{"key":"制作组","value":"HHWEB"}]`,
-		"poster":           "https://img.example/poster.jpg",
-		"screenshots":      "https://img.example/s1.jpg",
-		"body":             "◎片　　名　Test\n◎产　　地　美国\n◎简介　test synopsis",
-		"mediainfo":        "General\nFormat : Matroska\nFile size : 1 GiB\nDuration : 1h\nOverall bit rate : 1 Mb/s\nVideo\nFormat : HEVC\nWidth : 1 pixels\nHeight : 1 pixels\nAudio\nFormat : E-AC-3\nLanguage : en",
-		"standardized_params": map[string]any{
-			"type":        "category.movie",
-			"medium":      "medium.webdl",
-			"video_codec": "video.h264",
-			"audio_codec": "audio.ddp",
-			"resolution":  "resolution.r1080p",
-			"team":        "team.hhweb",
-			"source":      "source.western",
-			"tags":        []any{"tag.中字"},
-		},
+		// 标题含无法识别、无海报无截图、标准参数全空——都不该拦
+		"title_components":    `[{"key":"无法识别","value":"DSNP"}]`,
+		"poster":              "",
+		"screenshots":         "",
+		"standardized_params": map[string]any{},
+		"body":                "◎片　　名　Test\n◎产　　地　美国\n◎简介　test synopsis",
+		"mediainfo":           "General\nFormat : Matroska\nFile size : 1 GiB\nDuration : 1h\nOverall bit rate : 1 Mb/s\nVideo\nFormat : HEVC\nWidth : 1 pixels\nHeight : 1 pixels\nAudio\nFormat : E-AC-3\nLanguage : en",
 	}
 
 	problems := CheckSeedMaintainability(row)
 	if len(problems) != 0 {
-		t.Fatalf("标准化参数齐全时不应报错，got %#v", problems)
+		t.Fatalf("只该校验简介与媒体信息，其他项不应拦截，实际问题: %#v", problems)
 	}
 }
 
-// TestCheckSeedMaintainabilityMissingStdParams 标准化参数缺失时报中文提示。
-func TestCheckSeedMaintainabilityMissingStdParams(t *testing.T) {
+// TestCheckSeedMaintainabilityIntroMissingField 简介缺关键字段时拦截。
+func TestCheckSeedMaintainabilityIntroMissingField(t *testing.T) {
 	row := map[string]any{
-		"poster":      "https://img.example/poster.jpg",
-		"screenshots": "https://img.example/s1.jpg",
-		"body":        "◎片　　名　Test\n◎产　　地　美国\n◎简介　test synopsis",
-		"mediainfo":   "General\nFormat : Matroska\nFile size : 1 GiB\nDuration : 1h\nOverall bit rate : 1 Mb/s\nVideo\nFormat : HEVC\nWidth : 1 pixels\nHeight : 1 pixels\nAudio\nFormat : E-AC-3\nLanguage : en",
-		"standardized_params": map[string]any{
-			"type": "category.movie",
-		},
+		"body":      "这是一段没有片名产地简介字段的文字",
+		"mediainfo": "General\nFormat : Matroska\nFile size : 1 GiB\nDuration : 1h\nOverall bit rate : 1 Mb/s\nVideo\nFormat : HEVC\nWidth : 1 pixels\nHeight : 1 pixels\nAudio\nFormat : E-AC-3\nLanguage : en",
 	}
-
 	problems := CheckSeedMaintainability(row)
 	if len(problems) == 0 {
-		t.Fatalf("缺失参数时应报错")
+		t.Fatalf("简介缺关键字段应拦截")
 	}
-	joined := ""
-	for _, p := range problems {
-		joined += p
-	}
-	for _, want := range []string{"媒介未填写", "视频编码未填写", "音频编码未填写", "分辨率未填写"} {
-		if !containsSub(joined, want) {
-			t.Fatalf("期望包含 %q，实际 %#v", want, problems)
-		}
+	joined := strings.Join(problems, "；")
+	if !strings.Contains(joined, "简介缺少关键字段") {
+		t.Fatalf("期望简介相关提示，实际: %#v", problems)
 	}
 }
 
-func containsSub(s, sub string) bool {
-	return len(s) >= len(sub) && (func() bool {
-		for i := 0; i+len(sub) <= len(s); i++ {
-			if s[i:i+len(sub)] == sub {
-				return true
-			}
-		}
-		return false
-	})()
+// TestCheckSeedMaintainabilityMediainfoInvalid 媒体信息为空或格式无效时拦截。
+func TestCheckSeedMaintainabilityMediainfoInvalid(t *testing.T) {
+	body := "◎片　　名　Test\n◎产　　地　美国\n◎简介　test synopsis"
+
+	empty := CheckSeedMaintainability(map[string]any{"body": body})
+	if len(empty) == 0 || !strings.Contains(strings.Join(empty, "；"), "媒体信息为空") {
+		t.Fatalf("媒体信息为空应拦截，实际: %#v", empty)
+	}
+
+	invalid := CheckSeedMaintainability(map[string]any{"body": body, "mediainfo": "这不是媒体信息"})
+	if len(invalid) == 0 || !strings.Contains(strings.Join(invalid, "；"), "媒体信息格式无效") {
+		t.Fatalf("媒体信息格式无效应拦截，实际: %#v", invalid)
+	}
 }
