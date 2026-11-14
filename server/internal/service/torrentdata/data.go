@@ -166,8 +166,25 @@ func (s *TorrentDataService) GetData(ctx context.Context, params TorrentsDataPar
 		}
 	}
 
+	// 按聚合键排序后遍历：Go map 遍历顺序随机，直接 range 会让同值排序结果不稳定
+	// （按做种数/大小排序时，同值行的相对顺序每次请求都不同，翻页重复/漏项）。
+	// 这里先按 name+size 排序聚合键，保证输出基线顺序确定，再由 sortData 二次排序。
+	aggregatedKeys := make([]string, 0, len(aggregated))
+	for key := range aggregated {
+		aggregatedKeys = append(aggregatedKeys, key)
+	}
+	sort.Slice(aggregatedKeys, func(i, j int) bool {
+		left := aggregated[aggregatedKeys[i]]
+		right := aggregated[aggregatedKeys[j]]
+		if left.Name != right.Name {
+			return customNameLess(left.Name, right.Name)
+		}
+		return left.Size < right.Size
+	})
+
 	allItems := make([]map[string]any, 0, len(aggregated))
-	for _, value := range aggregated {
+	for _, key := range aggregatedKeys {
+		value := aggregated[key]
 		states := make([]string, 0, len(value.StateSet))
 		for state := range value.StateSet {
 			states = append(states, state)

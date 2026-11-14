@@ -207,10 +207,21 @@ func (s *TorrentDataService) sortData(data []map[string]any, sortProp, sortOrder
 		sort.SliceStable(data, func(i, j int) bool {
 			left := numberValue(data[i][sortProp])
 			right := numberValue(data[j][sortProp])
-			if descending {
-				return left > right
+			if left != right {
+				if descending {
+					return left > right
+				}
+				return left < right
 			}
-			return left < right
+			// 同值时必须按名称（再按体积）做确定性二次排序：
+			// 输入来自聚合 map 的遍历，Go map 顺序随机——不补二次排序时，
+			// 同做种数的行每次请求顺序都不同，翻页会重复/漏项（2026.11 实测）。
+			leftName := stringValue(data[i]["name"], "")
+			rightName := stringValue(data[j]["name"], "")
+			if leftName != rightName {
+				return customNameLess(leftName, rightName)
+			}
+			return numberValue(data[i]["size"]) < numberValue(data[j]["size"])
 		})
 		return
 	}
