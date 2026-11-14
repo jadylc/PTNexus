@@ -124,6 +124,10 @@
 
 # 更新日志
 
+### v4.6.37（2026.11.14）
+
+- 撤销：v4.6.35 的「站点标准值优先于推断值」改动——该改动基于对媒介误判根因的错误假设，实际根因是 MediaInfo 的 Encoding settings 行（v4.6.36 已修复），v4.6.35 并非必要且改变了原有优先级语义，现恢复原逻辑；性验证：仅 v4.6.36 即可正确识别 WEB-DL 媒介
+
 ### v4.6.36（2026.11.14）
 
 - 修复：x264/x265 源种媒介被系统性误判为 Encode（WEB-DL 种子最终变 medium.encode）——MediaInfo 的 Encoding settings 编码器参数行含 bluray_compat=0，其中 bluray 字样被媒介推断当成蓝光标记，推出 medium.bluray 后再被末端规则按「蓝光+有 MediaInfo=压片」改成 encode；现清洗媒体文本时整体剔除 Encoding settings/编码设置 行（纯编码参数不含媒介信息），所有带该行的源种媒介识别恢复正常
