@@ -304,15 +304,28 @@ func (t standardFieldMappingTable) matchPartial(raw string) (string, bool) {
 	if rawLower == "" {
 		return "", false
 	}
+	// 单向包含 + 取最长命中：只认「站点原值里出现映射键」的方向，
+	// 不允许「映射键里出现站点原值」——后者会让短原值被长条目反向吃掉
+	// （如原值 WEB-DL 命中 "Encode" 之类的条目），并且 Go map 遍历无序，
+	// 命中哪个条目不确定。取最长命中保证 "WEB-DL/WEBRip" 优于 "WEB"。
+	bestKey := ""
+	bestLen := 0
 	for _, entry := range t.entries {
 		if entry.SourceLower == "" || strings.TrimSpace(entry.StandardKey) == "" {
 			continue
 		}
-		if strings.Contains(rawLower, entry.SourceLower) || strings.Contains(entry.SourceLower, rawLower) {
-			return entry.StandardKey, true
+		if !strings.Contains(rawLower, entry.SourceLower) {
+			continue
+		}
+		if len(entry.SourceLower) > bestLen {
+			bestLen = len(entry.SourceLower)
+			bestKey = entry.StandardKey
 		}
 	}
-	return "", false
+	if bestKey == "" {
+		return "", false
+	}
+	return bestKey, true
 }
 
 func loadGlobalStandardFieldMappingTable(mappingPath string, field string) standardFieldMappingTable {

@@ -1492,7 +1492,7 @@ const enqueueDirectTransfer = async () => {
     title: '发布任务入队',
     message: `准备加入 ${directTransferSelectedTargets.value.length} 个站点的发布队列`,
     progressText: '正在创建队列分组',
-    routeTarget: buildDirectTransferRouteTarget({ status: 'running' }),
+    routeTarget: buildDirectTransferRouteTarget(),
   })
 
   try {
@@ -1522,10 +1522,7 @@ const enqueueDirectTransfer = async () => {
       title: '发布任务入队',
       message: `已加入队列分组 ${response.data.group_id}`,
       progressText: `共 ${response.data.count || 0} 个站点`,
-      routeTarget: buildDirectTransferRouteTarget({
-        status: 'running',
-        queueGroupId: String(response.data.group_id),
-      }),
+      routeTarget: buildDirectTransferRouteTarget({ queueGroupId: String(response.data.group_id) }),
     })
     ElMessage.success(`已加入队列：${response.data.group_id}`)
     // 入队成功后将跳转到发种日志页，无需在此触发全量 refresh_data + 全量数据加载，
@@ -1594,7 +1591,7 @@ const publishDirectTransfer = async () => {
     title: '直接转种发布',
     message: `准备发布到 ${directTransferSelectedTargets.value.length} 个站点`,
     progressText: '正在启动发布任务',
-    routeTarget: buildDirectTransferRouteTarget({ status: 'running' }),
+    routeTarget: buildDirectTransferRouteTarget(),
   })
 
   try {
@@ -1624,18 +1621,12 @@ const publishDirectTransfer = async () => {
       title: '直接转种发布',
       message: `已启动批量发布 ${response.data.batch_id}`,
       progressText: `并发 ${response.data.concurrency || 1}`,
-      routeTarget: buildDirectTransferRouteTarget({
-        status: 'running',
-        search: directTransferTaskId.value,
-      }),
+      routeTarget: buildDirectTransferRouteTarget({ search: directTransferTaskId.value }),
     })
     ElMessage.success('批量发布任务已启动，请到任务面板或发布日志查看进度')
     await router.push({
       path: '/publish-logs',
-      query: buildDirectTransferRouteTarget({
-        status: 'running',
-        search: directTransferTaskId.value,
-      }).query,
+      query: buildDirectTransferRouteTarget({ search: directTransferTaskId.value }).query,
     })
     closeDirectTransferDialog()
   } catch (error: unknown) {
